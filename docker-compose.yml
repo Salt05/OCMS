@@ -1,0 +1,70 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: zalo-crm-app
+    restart: unless-stopped
+    ports:
+      - "3080:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-crmuser}:${DB_PASSWORD}@db:5432/${DB_NAME:-zalocrm}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - file_storage:/var/lib/zalo-crm/files
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  db:
+    image: postgres:16-alpine
+    container_name: zalo-crm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-crmuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-zalocrm}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-crmuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c max_connections=50
+
+  backup:
+    image: prodrigestivill/postgres-backup-local
+    container_name: zalo-crm-backup
+    restart: unless-stopped
+    volumes:
+      - ./backups:/backups
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${DB_NAME:-zalocrm}
+      POSTGRES_USER: ${DB_USER:-crmuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 3
+    depends_on:
+      - db
+
+volumes:
+  pg_data:
+  file_storage:

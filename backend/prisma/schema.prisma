@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Top-level org — every resource is scoped to an org
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  teams         Team[]
+  users         User[]
+  zaloAccounts  ZaloAccount[]
+  contacts      Contact[]
+  conversations Conversation[]
+  appointments  Appointment[]
+  activityLogs  ActivityLog[]
+  dailyStats    DailyMessageStat[]
+  settings      AppSetting[]
+
+  @@map("organizations")
+}
+
+// Team groups within an organization
+model Team {
+  id        String   @id @default(uuid())
+  orgId     String   @map("org_id")
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  users User[]
+
+  @@map("teams")
+}
+
+// CRM user with role-based access
+model User {
+  id           String   @id @default(uuid())
+  orgId        String   @map("org_id")
+  teamId       String?  @map("team_id")
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  fullName     String   @map("full_name")
+  role         String   @default("member") // owner, admin, member
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  org              Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  team             Team?               @relation(fields: [teamId], references: [id])
+  zaloAccounts     ZaloAccount[]
+  zaloAccess       ZaloAccountAccess[]
+  assignedContacts Contact[]           @relation("AssignedContacts")
+  appointments     Appointment[]
+  repliedMessages  Message[]           @relation("RepliedMessages")
+  activityLogs     ActivityLog[]
+
+  @@map("users")
+}
+
+// Zalo account linked to a user (one user may own multiple Zalo accounts)
+model ZaloAccount {
+  id              String    @id @default(uuid())
+  orgId           String    @map("org_id")
+  ownerUserId     String    @map("owner_user_id")
+  zaloUid         String?   @unique @map("zalo_uid")
+  displayName     String?   @map("display_name")
+  avatarUrl       String?   @map("avatar_url")
+  phone           String?
+  status          String    @default("disconnected") // connected, disconnected, qr_pending
+  sessionData     Json?     @map("session_data")
+  lastConnectedAt DateTime? @map("last_connected_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  org           Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner         User                @relation(fields: [ownerUserId], references: [id])
+  access        ZaloAccountAccess[]
+  conversations Conversation[]
+  dailyStats    DailyMessageStat[]
+
+  @@map("zalo_accounts")
+}
+
+// ACL: which users can access which Zalo accounts
+model ZaloAccountAccess {
+  id            String   @id @default(uuid())
+  zaloAccountId String   @map("zalo_account_id")
+  userId        String   @map("user_id")
+  permission    String   @default("read") // read, chat, admin
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  zaloAccount ZaloAccount @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([zaloAccountId, userId])
+  @@map("zalo_account_access")
+}
+
+// CRM contact record — generic pipeline with status field
+model Contact {
+  id               String    @id @default(uuid())
+  orgId            String    @map("org_id")
+  zaloUid          String?   @map("zalo_uid")
+  phone            String?
+  email            String?   @map("email")
+  fullName         String?   @map("full_name")
+  avatarUrl        String?   @map("avatar_url")
+  source           String?   // FB, TT, GT, CN, etc.
+  sourceDate       DateTime? @map("source_date")
+  firstContactDate DateTime? @map("first_contact_date")
+  status           String?   @default("new") // new/contacted/interested/converted/lost
+  nextAppointment  DateTime? @map("next_appointment")
+  assignedUserId   String?   @map("assigned_user_id")
+  notes            String?
+  tags             Json      @default("[]")
+  metadata         Json      @default("{}")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignedUser  User?          @relation("AssignedContacts", fields: [assignedUserId], references: [id])
+  conversations Conversation[]
+  appointments  Appointment[]
+
+  @@map("contacts")
+}
+
+// A chat thread between a Zalo account and a contact (or group)
+model Conversation {
+  id               String    @id @default(uuid())
+  orgId            String    @map("org_id")
+  zaloAccountId    String    @map("zalo_account_id")
+  contactId        String?   @map("contact_id")
+  threadType       String    @default("user") // user, group
+  externalThreadId String?   @map("external_thread_id")
+  lastMessageAt    DateTime? @map("last_message_at")
+  unreadCount      Int       @default(0) @map("unread_count")
+  isReplied        Boolean   @default(true) @map("is_replied")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  zaloAccount ZaloAccount  @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+  contact     Contact?     @relation(fields: [contactId], references: [id])
+  messages    Message[]
+
+  @@unique([zaloAccountId, externalThreadId])
+  @@map("conversations")
+}
+
+// Individual message within a conversation
+model Message {
+  id              String    @id @default(uuid())
+  conversationId  String    @map("conversation_id")
+  zaloMsgId       String?   @map("zalo_msg_id")
+  senderType      String    @map("sender_type") // self, contact
+  senderUid       String?   @map("sender_uid")
+  senderName      String?   @map("sender_name")
+  content         String?
+  contentType     String    @default("text") @map("content_type") // text, image, file, sticker, voice, video, link
+  attachments     Json      @default("[]")
+  isDeleted       Boolean   @default(false) @map("is_deleted")
+  deletedAt       DateTime? @map("deleted_at")
+  sentAt          DateTime  @map("sent_at")
+  repliedByUserId String?   @map("replied_by_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  repliedBy    User?        @relation("RepliedMessages", fields: [repliedByUserId], references: [id])
+
+  @@map("messages")
+}
+
+// Appointment scheduled for a contact
+model Appointment {
+  id              String   @id @default(uuid())
+  orgId           String   @map("org_id")
+  contactId       String   @map("contact_id")
+  assignedUserId  String?  @map("assigned_user_id")
+  appointmentDate DateTime @map("appointment_date")
+  appointmentTime String?  @map("appointment_time")
+  type            String?
+  status          String   @default("scheduled") // scheduled, completed, cancelled, no_show
+  notes           String?
+  reminderSent    Boolean  @default(false) @map("reminder_sent")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignedUser User?        @relation(fields: [assignedUserId], references: [id])
+
+  @@map("appointments")
+}
+
+// Audit trail for user actions
+model ActivityLog {
+  id         String   @id @default(uuid())
+  orgId      String   @map("org_id")
+  userId     String?  @map("user_id")
+  action     String
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  details    Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User?        @relation(fields: [userId], references: [id])
+
+  @@map("activity_logs")
+}
+
+// Daily messaging statistics per user per Zalo account
+model DailyMessageStat {
+  id                String   @id @default(uuid())
+  orgId             String   @map("org_id")
+  userId            String   @map("user_id")
+  zaloAccountId     String   @map("zalo_account_id")
+  statDate          DateTime @map("stat_date") @db.Date
+  messagesSent      Int      @default(0) @map("messages_sent")
+  messagesReceived  Int      @default(0) @map("messages_received")
+  messagesUnread    Int      @default(0) @map("messages_unread")
+  messagesUnreplied Int      @default(0) @map("messages_unreplied")
+  avgResponseTime   Int?     @map("avg_response_time_seconds")
+
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  zaloAccount ZaloAccount  @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, zaloAccountId, statDate])
+  @@map("daily_message_stats")
+}
+
+// Encrypted or plain key-value settings per org
+model AppSetting {
+  id             String   @id @default(uuid())
+  orgId          String   @map("org_id")
+  settingKey     String   @map("setting_key")
+  valuePlain     String?  @map("value_plain")
+  valueEncrypted Bytes?   @map("value_encrypted")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, settingKey])
+  @@map("app_settings")
+}

@@ -1,0 +1,25 @@
+version: "3.8"
+
+# Development-only compose: starts only the database.
+# Run the backend with: cd backend && npm run dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: zalo-crm-db-dev
+    environment:
+      POSTGRES_USER: crmuser
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: zalocrm
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crmuser"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  pg_data_dev:
