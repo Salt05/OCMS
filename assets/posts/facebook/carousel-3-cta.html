@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1200, height=628">
+<title>ZaloCRM — CTA</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1200px; height: 628px; font-family: 'Plus Jakarta Sans', sans-serif; background: linear-gradient(-45deg, #0A192F, #112240, #004d7a, #008fb3); background-size: 400% 400%; color: #E6F1FF; overflow: hidden; display: flex; align-items: center; justify-content: center; text-align: center; }
+
+.content { max-width: 800px; }
+
+.logo { font-size: 56px; font-weight: 800; margin-bottom: 20px; }
+.logo span { color: #00F2FF; }
+
+.tagline { font-size: 24px; color: #8892b0; margin-bottom: 40px; line-height: 1.5; }
+
+.stats { display: flex; justify-content: center; gap: 40px; margin-bottom: 40px; }
+.stat { text-align: center; }
+.stat-num { font-size: 42px; font-weight: 800; color: #00F2FF; }
+.stat-label { font-size: 13px; color: #8892b0; margin-top: 4px; }
+
+.steps { display: flex; gap: 20px; margin-bottom: 40px; }
+.step { background: rgba(17,34,64,0.7); border: 1px solid rgba(0,242,255,0.15); border-radius: 16px; padding: 20px; flex: 1; }
+.step-num { font-size: 28px; font-weight: 800; color: #00F2FF; margin-bottom: 6px; }
+.step-text { font-size: 14px; color: #ccd6f6; line-height: 1.4; }
+
+.cta { display: inline-block; background: #00F2FF; color: #0A192F; padding: 14px 36px; border-radius: 24px; font-size: 18px; font-weight: 700; }
+
+.github { font-size: 14px; color: #8892b0; margin-top: 16px; }
+
+.free { position: absolute; top: 30px; right: 40px; background: rgba(76,175,80,0.2); color: #4CAF50; padding: 8px 20px; border-radius: 20px; font-weight: 700; font-size: 14px; border: 1px solid rgba(76,175,80,0.3); }
+</style>
+</head>
+<body>
+<div class="free">✨ 100% MIỄN PHÍ</div>
+<div class="content">
+  <div class="logo">Zalo<span>CRM</span></div>
+  <p class="tagline">Quản lý nhiều Zalo cá nhân • Chat real-time • CRM khách hàng</p>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-num">20</div><div class="stat-label">Zalo cùng lúc</div></div>
+    <div class="stat"><div class="stat-num">∞</div><div class="stat-label">Khách hàng</div></div>
+    <div class="stat"><div class="stat-num">3'</div><div class="stat-label">Phút cài đặt</div></div>
+    <div class="stat"><div class="stat-num">0đ</div><div class="stat-label">Chi phí</div></div>
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-text">Clone repo<br>từ GitHub</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-text">Docker<br>compose up</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-text">Quét QR<br>bắt đầu chat</div>
+    </div>
+  </div>
+
+  <div class="cta">⭐ Star trên GitHub ngay!</div>
+  <div class="github">github.com/vuongnguyenbinh/ZaloCRM</div>
+</div>
+</body>
+</html>

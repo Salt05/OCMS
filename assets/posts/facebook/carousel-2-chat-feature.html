@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1200, height=628">
+<title>ZaloCRM — Chat Feature</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1200px; height: 628px; font-family: 'Plus Jakarta Sans', sans-serif; background: #0A192F; color: #E6F1FF; overflow: hidden; display: flex; }
+
+.left { width: 480px; padding: 50px 40px; display: flex; flex-direction: column; justify-content: center; background: linear-gradient(180deg, #0A192F, #112240); }
+.right { flex: 1; padding: 30px; display: flex; align-items: center; justify-content: center; }
+
+.badge { display: inline-block; background: rgba(0,242,255,0.15); color: #00F2FF; padding: 5px 14px; border-radius: 16px; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; border: 1px solid rgba(0,242,255,0.3); margin-bottom: 16px; }
+
+h2 { font-size: 36px; font-weight: 800; line-height: 1.2; margin-bottom: 14px; }
+h2 span { color: #00F2FF; }
+
+.desc { font-size: 16px; color: #8892b0; line-height: 1.6; margin-bottom: 24px; }
+
+.checklist { list-style: none; }
+.checklist li { font-size: 15px; padding: 6px 0; display: flex; align-items: center; gap: 10px; }
+.checklist li::before { content: '✅'; font-size: 14px; }
+
+.logo { margin-top: auto; font-size: 22px; font-weight: 800; padding-top: 20px; }
+.logo span { color: #00F2FF; }
+
+/* Mock chat interface */
+.mock-chat { width: 100%; height: 100%; background: rgba(17,34,64,0.6); border-radius: 20px; border: 1px solid rgba(0,242,255,0.1); overflow: hidden; display: flex; flex-direction: column; }
+
+.mock-header { padding: 14px 18px; border-bottom: 1px solid rgba(0,242,255,0.1); display: flex; align-items: center; gap: 10px; }
+.mock-avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #00F2FF, #0077B6); display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.mock-name { font-weight: 700; font-size: 14px; }
+.mock-status { font-size: 10px; color: #4CAF50; }
+
+.mock-messages { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 10px; justify-content: flex-end; }
+
+.msg { max-width: 80%; padding: 10px 14px; border-radius: 16px; font-size: 13px; line-height: 1.4; }
+.msg-in { background: rgba(0,242,255,0.08); border: 1px solid rgba(0,242,255,0.15); border-top-left-radius: 4px; align-self: flex-start; }
+.msg-out { background: linear-gradient(135deg, #0077B6, #005f8a); color: #fff; border-top-right-radius: 4px; align-self: flex-end; }
+.msg-time { font-size: 9px; color: #556; margin-top: 3px; }
+
+.mock-input { padding: 10px 14px; border-top: 1px solid rgba(0,242,255,0.1); display: flex; gap: 8px; align-items: center; }
+.mock-input-field { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 8px 12px; color: #8892b0; font-size: 12px; }
+.mock-send { width: 32px; height: 32px; border-radius: 10px; background: #00F2FF; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="left">
+  <div class="badge">Tính năng chính</div>
+  <h2>Chat <span>real-time</span><br>từ trình duyệt</h2>
+  <p class="desc">Trả lời khách hàng ngay trên web — không cần mở Zalo trên máy tính</p>
+  <ul class="checklist">
+    <li>Gửi/nhận tin nhắn tức thì</li>
+    <li>Xem ảnh, file, sticker</li>
+    <li>Chat nhóm + cá nhân</li>
+    <li>Tin bị xóa vẫn lưu lại</li>
+    <li>Cập nhật CRM ngay trong chat</li>
+    <li>Lọc theo từng Zalo</li>
+  </ul>
+  <div class="logo">Zalo<span>CRM</span></div>
+</div>
+<div class="right">
+  <div class="mock-chat">
+    <div class="mock-header">
+      <div class="mock-avatar">N</div>
+      <div>
+        <div class="mock-name">Nguyễn Thị Hương</div>
+        <div class="mock-status">● Online</div>
+      </div>
+    </div>
+    <div class="mock-messages">
+      <div class="msg msg-in">Chào shop, mình muốn hỏi về sản phẩm XYZ ạ</div>
+      <div class="msg msg-out">Chào chị Hương! Dạ sản phẩm XYZ đang có chương trình giảm 20% ạ</div>
+      <div class="msg msg-in">Giá bao nhiêu vậy shop?</div>
+      <div class="msg msg-out">Dạ giá gốc 500k, sau giảm còn 400k ạ. Chị đặt em ship luôn nhé?</div>
+      <div class="msg msg-in">Ok em, đặt cho chị 2 cái nhé</div>
+      <div class="msg msg-out">Dạ chị cho em xin địa chỉ ship ạ 🙏</div>
+    </div>
+    <div class="mock-input">
+      <div class="mock-input-field">Nhập tin nhắn...</div>
+      <div class="mock-send">➤</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
