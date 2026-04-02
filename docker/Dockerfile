@@ -24,7 +24,6 @@ WORKDIR /app
 COPY --from=backend-builder /app/backend/dist       /app/dist
 COPY --from=backend-builder /app/backend/node_modules /app/node_modules
 COPY --from=backend-builder /app/backend/prisma     /app/prisma
-COPY --from=backend-builder /app/backend/prisma.config.ts /app/prisma.config.ts
 COPY --from=backend-builder /app/backend/package.json /app/package.json
 COPY --from=frontend-builder /app/frontend/dist     /app/static
 

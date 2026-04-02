@@ -54,9 +54,20 @@ async function bootstrap() {
     secret: config.jwtSecret,
   });
 
+  // Rate limiting with higher limits and per-key tracking
   await app.register(rateLimit, {
-    max: 500,
+    max: 1000,
     timeWindow: '1 minute',
+    // Use different limits for different clients
+    keyGenerator: (request) => {
+      // Use API key for authenticated requests
+      const apiKey = request.headers['x-api-key'] as string;
+      if (apiKey) {
+        return `api:${apiKey}`;
+      }
+      // Use IP for other requests
+      return request.ip;
+    },
   });
 
   // Serve compiled frontend assets in production
@@ -159,7 +170,7 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  // Reconnect Zalo accounts that have saved sessions
+  // Reconnect Zalo accounts that have saved sessions (staggered to avoid rate limits)
   try {
     const accounts = await prisma.zaloAccount.findMany({
       where: { sessionData: { not: Prisma.JsonNull } },
@@ -173,6 +184,8 @@ async function bootstrap() {
         userAgent: string;
       } | null;
       if (session?.imei) {
+        // Stagger reconnects: 10 seconds between each account to avoid rate limits
+        await new Promise((r) => setTimeout(r, 10_000));
         zaloPool.reconnect(account.id, session).catch((err) => {
           logger.warn(`Auto-reconnect failed for account ${account.id}:`, err);
         });

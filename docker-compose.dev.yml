@@ -1,25 +1,57 @@
+# Development Docker Compose - Hot Reload Enabled
 version: "3.8"
 
-# Development-only compose: starts only the database.
-# Run the backend with: cd backend && npm run dev
-
 services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: zalo-crm-app-dev
+    restart: unless-stopped
+    ports:
+      - "3080:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://${DB_USER:-crmuser}:${DB_PASSWORD}@db:5432/${DB_NAME:-zalocrm}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Mount backend source for hot reload
+      - ./backend:/app/backend
+      # Mount frontend source for hot reload
+      - ./frontend:/app/frontend
+      # Named volumes for node_modules to avoid host OS conflicts
+      - backend_node_modules:/app/backend/node_modules
+      - frontend_node_modules:/app/frontend/node_modules
+      - file_storage:/var/lib/zalo-crm/files
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
   db:
     image: postgres:16-alpine
     container_name: zalo-crm-db-dev
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: crmuser
-      POSTGRES_PASSWORD: devpassword
-      POSTGRES_DB: zalocrm
-    ports:
-      - "5433:5432"
+      POSTGRES_USER: ${DB_USER:-crmuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-zalocrm}
     volumes:
-      - pg_data_dev:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crmuser"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-crmuser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  pg_data_dev:
+  pg_data:
+  backend_node_modules:
+  frontend_node_modules:
+  file_storage:

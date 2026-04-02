@@ -1,0 +1,25 @@
+# Development Dockerfile - Hot Reload Enabled
+FROM node:20-alpine
+
+# Install watchman for better file watching
+RUN apk add --no-cache watchman
+
+WORKDIR /app
+
+# Copy package files for both backend and frontend
+COPY backend/package.json backend/package-lock.json ./backend/
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+
+# Install dependencies
+RUN cd backend && npm ci
+RUN cd frontend && npm ci
+
+# Copy source code (will be mounted as volume)
+COPY backend/ ./backend/
+COPY frontend/ ./frontend/
+
+# Generate Prisma client
+RUN cd backend && npx prisma generate
+
+# Default command - runs in development mode with tsx watch
+CMD ["npm", "run", "dev", "--prefix", "backend"]
