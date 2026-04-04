@@ -53,6 +53,9 @@
         :appointments="contactAppointments"
         @refresh="reloadAppointments"
       />
+
+      <!-- Orders sub-component -->
+      <ChatOrders v-if="props.contactId" :contact-id="props.contactId" />
     </div>
   </div>
 </template>
@@ -62,6 +65,7 @@ import { SOURCE_OPTIONS, STATUS_OPTIONS } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 import { useChatContactPanel } from '@/composables/use-chat-contact-panel';
 import ChatAppointments from './ChatAppointments.vue';
+import ChatOrders from './ChatOrders.vue';
 
 const props = defineProps<{
   contactId: string | null;

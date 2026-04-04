@@ -107,6 +107,7 @@ const menuItems = [
   { title: 'Khách hàng', icon: 'mdi-account-group-outline', path: '/contacts' },
   { title: 'Tài khoản Zalo', icon: 'mdi-cellphone-link', path: '/zalo-accounts' },
   { title: 'Lịch hẹn', icon: 'mdi-calendar-clock-outline', path: '/appointments' },
+  { title: 'Đơn hàng', icon: 'mdi-cart-outline', path: '/orders' },
   { title: 'Báo cáo', icon: 'mdi-chart-arc', path: '/reports' },
   { title: 'Nhân viên', icon: 'mdi-account-cog-outline', path: '/settings' },
   { title: 'API & Webhook', icon: 'mdi-api', path: '/api-settings' },

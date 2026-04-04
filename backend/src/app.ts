@@ -37,6 +37,7 @@ import { searchRoutes } from './modules/search/search-routes.js';
 import { startZaloHealthCheck } from './modules/zalo/zalo-health-check.js';
 import { publicApiRoutes } from './modules/api/public-api-routes.js';
 import { webhookSettingsRoutes } from './modules/api/webhook-settings-routes.js';
+import { orderRoutes } from './modules/orders/order-routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -122,6 +123,7 @@ async function bootstrap() {
   await app.register(searchRoutes);
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
+  await app.register(orderRoutes);
 
   // Liveness/readiness probe — also checks DB connectivity
   app.get('/health', async () => {

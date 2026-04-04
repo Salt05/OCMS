@@ -8,6 +8,28 @@
 
     <KpiCards :kpi="kpi" class="mb-4" />
 
+    <!-- Order KPI cards -->
+    <v-row class="mb-4">
+      <v-col cols="6" sm="3">
+        <v-card variant="outlined">
+          <v-card-text class="text-center pa-3">
+            <v-icon icon="mdi-cart-outline" color="primary" size="28" class="mb-1" />
+            <div class="text-h5 font-weight-bold">{{ orderStats?.totalOrders ?? '—' }}</div>
+            <div class="text-caption text-grey">Đơn hàng mới</div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="6" sm="3">
+        <v-card variant="outlined">
+          <v-card-text class="text-center pa-3">
+            <v-icon icon="mdi-calendar-today" color="orange" size="28" class="mb-1" />
+            <div class="text-h6 font-weight-bold">{{ formatVND(orderStats?.todayRevenue ?? 0) }}</div>
+            <div class="text-caption text-grey">Doanh thu hôm nay</div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <v-row class="mb-4">
       <v-col cols="12" md="8">
         <MessageVolumeChart :data="messageVolume" />
@@ -39,8 +61,12 @@ import { useDashboard } from '@/composables/use-dashboard';
 
 const {
   kpi, messageVolume, pipeline, sources, appointments,
-  loading, fetchAll,
+  orderStats, loading, fetchAll,
 } = useDashboard();
+
+function formatVND(n: number) {
+  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n);
+}
 
 onMounted(() => fetchAll());
 </script>

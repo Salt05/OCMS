@@ -37,7 +37,12 @@ export function useDashboard() {
   const pipeline = ref<PipelineItem[]>([]);
   const sources = ref<SourceItem[]>([]);
   const appointments = ref<AppointmentStatusItem[]>([]);
+  const orderStats = ref<any>(null);
   const loading = ref(false);
+
+  async function fetchOrderStats() {
+    try { const res = await api.get('/orders/stats'); orderStats.value = res.data; } catch {}
+  }
 
   async function fetchAll() {
     loading.value = true;
@@ -54,6 +59,7 @@ export function useDashboard() {
       pipeline.value = pipRes.data;
       sources.value = srcRes.data;
       appointments.value = aptRes.data;
+      await fetchOrderStats();
     } catch (err) {
       console.error('Dashboard fetch error:', err);
     } finally {
@@ -63,6 +69,6 @@ export function useDashboard() {
 
   return {
     kpi, messageVolume, pipeline, sources, appointments,
-    loading, fetchAll,
+    orderStats, loading, fetchAll, fetchOrderStats,
   };
 }
