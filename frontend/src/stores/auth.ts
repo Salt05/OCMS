@@ -54,8 +54,11 @@ export const useAuthStore = defineStore('auth', () => {
         orgId: d.orgId || d.org_id || '',
         orgName: d.org?.name || d.orgName || '',
       };
-    } catch {
-      logout();
+    } catch (err: any) {
+      // Only logout on 401 (invalid token) — not on network errors
+      if (err?.response?.status === 401) {
+        logout();
+      }
     }
   }
 

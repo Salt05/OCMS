@@ -53,6 +53,17 @@ const router = useRouter();
 const authStore = useAuthStore();
 
 onMounted(async () => {
+  // If already authenticated, skip login page
+  if (authStore.token) {
+    try {
+      await authStore.fetchProfile();
+      if (authStore.isAuthenticated) {
+        router.replace('/');
+        return;
+      }
+    } catch {}
+  }
+  // Check if first-time setup needed
   try {
     const needs = await authStore.checkSetup();
     if (needs) router.replace('/setup');
