@@ -1,12 +1,10 @@
 import axios from 'axios';
-import { router } from '@/router';
 
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
 });
 
-// JWT interceptor
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
@@ -15,15 +13,17 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor — handle 401
+let isRedirecting = false;
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      // Only redirect if not already on login page to avoid infinite loops
-      if (!window.location.pathname.includes('/login')) {
-        router.push('/login');
+    if (error.response?.status === 401 && !isRedirecting) {
+      const path = window.location.pathname;
+      if (path !== '/login' && path !== '/setup') {
+        isRedirecting = true;
+        localStorage.removeItem('token');
+        window.location.href = '/login';
       }
     }
     return Promise.reject(error);
