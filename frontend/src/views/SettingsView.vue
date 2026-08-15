@@ -1,7 +1,7 @@
 <template>
   <div>
-    <h1 class="text-h4 mb-4">
-      <v-icon class="mr-2" style="color: #00F2FF;">mdi-cog-outline</v-icon>
+    <h1 class="editorial-heading mb-4">
+      <v-icon class="mr-2 page-icon">lucide-settings</v-icon>
       Cài đặt
     </h1>
 
@@ -15,7 +15,7 @@
       <!-- Tab 1: User management -->
       <v-window-item value="users">
         <div class="d-flex align-center mb-4">
-          <v-btn v-if="authStore.isAdmin" color="primary" prepend-icon="mdi-plus" @click="openCreate">
+          <v-btn v-if="authStore.isAdmin" color="primary" prepend-icon="lucide-plus" @click="openCreate">
             Thêm nhân viên
           </v-btn>
         </div>
@@ -36,13 +36,13 @@
             </template>
             <template #item.actions="{ item }">
               <v-btn v-if="authStore.isAdmin" icon size="small" title="Chỉnh sửa" @click="openEdit(item)">
-                <v-icon>mdi-pencil</v-icon>
+                <v-icon>lucide-pencil</v-icon>
               </v-btn>
               <v-btn v-if="authStore.isAdmin" icon size="small" title="Đặt lại mật khẩu" @click="openPassword(item)">
-                <v-icon>mdi-lock-reset</v-icon>
+                <v-icon>lucide-key-round</v-icon>
               </v-btn>
               <v-btn v-if="authStore.isOwner && item.id !== authStore.user?.id" icon size="small" color="error" title="Vô hiệu hóa" @click="confirmDelete(item)">
-                <v-icon>mdi-delete</v-icon>
+                <v-icon>lucide-trash-2</v-icon>
               </v-btn>
             </template>
           </v-data-table>

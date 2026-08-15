@@ -40,10 +40,11 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(403).send({ error: 'Không có quyền' });
     }
 
-    const { email, fullName, password, role = 'member', teamId } = request.body as any;
-    if (!email || !fullName || !password) {
+    const { email: rawEmail, fullName, password, role = 'member', teamId } = request.body as any;
+    if (!rawEmail || !fullName || !password) {
       return reply.status(400).send({ error: 'Email, họ tên, mật khẩu là bắt buộc' });
     }
+    const email = rawEmail.toLowerCase().trim();
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return reply.status(400).send({ error: 'Email đã tồn tại' });
@@ -87,7 +88,7 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(403).send({ error: 'Không có quyền' });
     }
 
-    const { fullName, email, role, teamId, isActive } = request.body as any;
+    const { fullName, email: rawEmail, role, teamId, isActive } = request.body as any;
 
     if (id === currentUser.id && role && role !== currentUser.role) {
       return reply.status(400).send({ error: 'Không thể thay đổi role của chính mình' });
@@ -95,7 +96,7 @@ export async function userRoutes(app: FastifyInstance) {
 
     const updateData: any = {};
     if (fullName !== undefined) updateData.fullName = fullName;
-    if (email !== undefined) updateData.email = email;
+    if (rawEmail !== undefined) updateData.email = rawEmail.toLowerCase().trim();
     if (role !== undefined && currentUser.role === 'owner') updateData.role = role;
     if (teamId !== undefined) updateData.teamId = teamId || null;
     if (isActive !== undefined && currentUser.role === 'owner') updateData.isActive = isActive;

@@ -32,8 +32,8 @@ const chartData = computed(() => {
   return {
     labels: props.data.map(d => d.date.slice(5)), // MM-DD
     datasets: [
-      { label: 'Đã gửi', data: props.data.map(d => d.sent), backgroundColor: '#1565C0' },
-      { label: 'Đã nhận', data: props.data.map(d => d.received), backgroundColor: '#4CAF50' },
+      { label: 'Đã gửi', data: props.data.map(d => d.sent), backgroundColor: '#121212' },
+      { label: 'Đã nhận', data: props.data.map(d => d.received), backgroundColor: '#7b7974' },
     ],
   };
 });

@@ -2,11 +2,11 @@
   <div>
     <v-divider class="my-3" />
     <div class="d-flex align-center mb-2">
-      <v-icon size="16" color="warning" class="mr-1">mdi-calendar-clock</v-icon>
+      <v-icon size="16" color="warning" class="mr-1">lucide-calendar-clock</v-icon>
       <span class="text-caption font-weight-bold">Lịch hẹn ({{ appointments.length }})</span>
       <v-spacer />
       <v-btn size="x-small" variant="text" color="primary" @click="showForm = !showForm">
-        <v-icon size="14">mdi-plus</v-icon>
+        <v-icon size="14">lucide-plus</v-icon>
       </v-btn>
     </div>
 
@@ -77,7 +77,7 @@
           {{ statusLabel(apt.status) }}
         </v-chip>
         <v-btn icon size="x-small" variant="text" color="primary" @click="startEdit(apt)">
-          <v-icon size="12">mdi-pencil</v-icon>
+          <v-icon size="12">lucide-pencil</v-icon>
         </v-btn>
       </div>
 

@@ -2,12 +2,12 @@
   <v-dialog v-model="open" max-width="520">
     <v-card>
       <v-card-title class="d-flex align-center">
-        <v-icon class="mr-2" color="cyan">mdi-shield-account</v-icon>
+        <v-icon class="mr-2 page-icon">lucide-shield-check</v-icon>
         Phân quyền truy cập — {{ accountName }}
       </v-card-title>
 
       <v-card-text>
-        <v-progress-linear v-if="loading" indeterminate color="cyan" class="mb-3" />
+        <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" />
 
         <!-- Current access list -->
         <div v-if="accessList.length" class="mb-4">
@@ -15,7 +15,7 @@
           <v-list density="compact" rounded="lg" variant="tonal">
             <v-list-item v-for="a in accessList" :key="a.id">
               <template #prepend>
-                <v-icon color="cyan">mdi-account</v-icon>
+                <v-icon class="page-icon">lucide-user</v-icon>
               </template>
               <v-list-item-title>{{ a.fullName }}</v-list-item-title>
               <v-list-item-subtitle>{{ a.email }}</v-list-item-subtitle>
@@ -33,7 +33,7 @@
                   @update:model-value="handleUpdatePermission(a.id, $event)"
                 />
                 <v-btn icon size="x-small" color="error" variant="text" @click="handleRemoveAccess(a.id)">
-                  <v-icon>mdi-delete</v-icon>
+                  <v-icon>lucide-trash-2</v-icon>
                 </v-btn>
               </template>
             </v-list-item>

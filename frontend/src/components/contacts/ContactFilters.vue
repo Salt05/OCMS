@@ -4,7 +4,7 @@
     <v-col cols="12" sm="4">
       <v-text-field
         v-model="filters.search"
-        prepend-inner-icon="mdi-magnify"
+        prepend-inner-icon="lucide-search"
         label="Tìm kiếm tên / SĐT / email"
         clearable
         hide-details

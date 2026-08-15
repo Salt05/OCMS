@@ -3,25 +3,25 @@
     <!-- Empty state -->
     <div v-if="!conversation" class="d-flex align-center justify-center flex-grow-1">
       <div class="text-center text-grey">
-        <v-icon icon="mdi-chat-outline" size="96" color="grey-lighten-2" />
+        <v-icon icon="lucide-message-circle" size="96" color="grey-lighten-2" />
         <p class="text-h6 mt-4">Chọn cuộc trò chuyện</p>
       </div>
     </div>
 
     <template v-else>
       <!-- Header -->
-      <div class="pa-3 d-flex align-center" style="border-bottom: 1px solid var(--border-glow, rgba(0,242,255,0.1));">
+      <div class="pa-3 d-flex align-center chat-header">
         <v-avatar size="36" color="grey-lighten-2" class="mr-3">
-          <v-icon v-if="conversation.threadType === 'group'" icon="mdi-account-group" />
+          <v-icon v-if="conversation.threadType === 'group'" icon="lucide-users" />
           <v-img v-else-if="conversation.contact?.avatarUrl" :src="conversation.contact.avatarUrl" />
-          <v-icon v-else icon="mdi-account" />
+          <v-icon v-else icon="lucide-user" />
         </v-avatar>
         <div class="flex-grow-1">
           <div class="font-weight-medium">{{ conversation.contact?.fullName || 'Unknown' }}</div>
           <div class="text-caption text-grey">{{ conversation.zaloAccount?.displayName || 'Zalo' }}</div>
         </div>
         <v-btn
-          :icon="showContactPanel ? 'mdi-account-details' : 'mdi-account-details-outline'"
+          :icon="showContactPanel ? 'lucide-contact' : 'lucide-contact'"
           size="small" variant="text"
           :color="showContactPanel ? 'primary' : undefined"
           @click="$emit('toggle-contact-panel')"
@@ -33,7 +33,7 @@
         <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
         <div v-for="msg in messages" :key="msg.id" class="mb-2 d-flex" :class="msg.senderType === 'self' ? 'justify-end' : 'justify-start'">
           <div style="max-width: 70%;">
-            <div v-if="conversation.threadType === 'group' && msg.senderType !== 'self'" class="text-caption mb-1" style="color: #00F2FF; font-weight: 500;">
+            <div v-if="conversation.threadType === 'group' && msg.senderType !== 'self'" class="text-caption mb-1 text-graphite font-weight-medium">
               {{ msg.senderName || 'Unknown' }}
             </div>
             <div class="message-bubble pa-2 px-3 rounded-lg" :class="msg.senderType === 'self' ? 'bg-primary text-white' : 'bg-white'" style="word-wrap: break-word;">
@@ -47,13 +47,13 @@
               </div>
               <!-- File/PDF -->
               <div v-else-if="getFileInfo(msg)" class="file-card">
-                <v-icon size="20" class="mr-2" color="info">mdi-file-document-outline</v-icon>
+                <v-icon size="20" class="mr-2" color="info">lucide-file-text</v-icon>
                 <div class="flex-grow-1">
                   <div class="text-body-2 font-weight-medium">{{ getFileInfo(msg)!.name }}</div>
                   <div class="text-caption" style="opacity: 0.6;">{{ getFileInfo(msg)!.size }}</div>
                 </div>
                 <v-btn v-if="getFileInfo(msg)!.href" icon size="x-small" variant="text" @click="openFile(getFileInfo(msg)!.href)">
-                  <v-icon size="16">mdi-download</v-icon>
+                  <v-icon size="16">lucide-download</v-icon>
                 </v-btn>
               </div>
               <!-- Sticker/Video/Voice/GIF -->
@@ -64,14 +64,14 @@
               <!-- Reminder/Calendar -->
               <div v-else-if="isReminderMessage(msg)" class="reminder-card">
                 <div class="d-flex align-center mb-1">
-                  <v-icon size="16" color="warning" class="mr-1">mdi-calendar-clock</v-icon>
-                  <span class="text-caption font-weight-bold" style="color: #FFB74D;">Nhắc hẹn</span>
+                  <v-icon size="16" color="warning" class="mr-1">lucide-calendar-clock</v-icon>
+                  <span class="text-caption font-weight-medium text-graphite">Nhắc hẹn</span>
                 </div>
                 <div class="text-body-2">{{ getReminderTitle(msg) }}</div>
                 <div v-if="getReminderTime(msg)" class="text-caption mt-1" style="opacity: 0.7;">
-                  <v-icon size="12" class="mr-1">mdi-clock-outline</v-icon>{{ getReminderTime(msg) }}
+                  <v-icon size="12" class="mr-1">lucide-clock</v-icon>{{ getReminderTime(msg) }}
                 </div>
-                <v-btn size="x-small" variant="tonal" color="warning" class="mt-2" prepend-icon="mdi-calendar-sync" @click="syncAppointment(msg)">
+                <v-btn size="x-small" variant="tonal" color="warning" class="mt-2" prepend-icon="lucide-calendar-sync" @click="syncAppointment(msg)">
                   Đồng bộ lịch
                 </v-btn>
               </div>
@@ -90,7 +90,7 @@
       <!-- Input -->
       <div class="pa-2 d-flex align-end chat-input-area">
         <v-textarea v-model="inputText" placeholder="Nhập tin nhắn..." variant="solo-filled" density="compact" hide-details auto-grow rows="1" max-rows="3" @keydown.enter.exact.prevent="handleSend" class="flex-grow-1 mr-2" />
-        <v-btn icon color="primary" :loading="sending" :disabled="!inputText.trim()" @click="handleSend"><v-icon>mdi-send</v-icon></v-btn>
+        <v-btn icon color="primary" :loading="sending" :disabled="!inputText.trim()" @click="handleSend"><v-icon>lucide-send</v-icon></v-btn>
       </div>
     </template>
 
@@ -98,7 +98,7 @@
     <v-dialog v-model="showImagePreview" max-width="900" content-class="elevation-0">
       <div class="text-center" @click="showImagePreview = false" style="cursor: pointer;">
         <img :src="previewImageUrl" alt="Preview" style="max-width: 100%; max-height: 85vh; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);" />
-        <div class="text-caption mt-2" style="color: #aaa;">Nhấn để đóng</div>
+        <div class="text-caption mt-2 text-ashen">Nhấn để đóng</div>
       </div>
     </v-dialog>
 
@@ -224,9 +224,21 @@ watch(() => props.messages.length, async () => { await nextTick(); if (messagesC
 </script>
 
 <style scoped>
-.message-bubble { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
-.reminder-card { padding: 8px 12px; border-left: 3px solid #FFB74D; border-radius: 8px; background: rgba(255, 183, 77, 0.08); }
-.file-card { display: flex; align-items: center; padding: 8px 12px; border-radius: 8px; background: rgba(0, 242, 255, 0.05); border: 1px solid rgba(0, 242, 255, 0.1); }
-.chat-image { max-width: 100%; max-height: 300px; border-radius: 12px; cursor: pointer; transition: transform 0.2s; }
+.message-bubble { box-shadow: none; }
+.reminder-card {
+  padding: 8px 12px;
+  border-left: 3px solid var(--color-graphite);
+  border-radius: var(--radius-inputs);
+  background: var(--color-soft-stone);
+}
+.file-card {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius-inputs);
+  background: var(--color-soft-stone);
+  border: 1px solid var(--color-chalk);
+}
+.chat-image { max-width: 100%; max-height: 300px; border-radius: var(--radius-cards); cursor: pointer; transition: transform 0.2s var(--ease-claude); }
 .chat-image:hover { transform: scale(1.02); }
 </style>

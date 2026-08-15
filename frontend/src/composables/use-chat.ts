@@ -105,17 +105,26 @@ export function useChat() {
   }
 
   async function sendMessage(content: string) {
-    if (!selectedConvId.value || !content.trim()) return;
-    sendingMsg.value = true;
-    try {
-      const res = await api.post(`/conversations/${selectedConvId.value}/messages`, { content });
-      messages.value.push(res.data);
-    } catch (err) {
-      console.error('Failed to send message:', err);
-    } finally {
-      sendingMsg.value = false;
-    }
+  if (!selectedConvId.value || !content.trim()) return;
+
+  sendingMsg.value = true;
+
+  try {
+    await api.post(
+      `/conversations/${selectedConvId.value}/messages`,
+      {
+        content: content.trim(),
+      },
+    );
+  } catch (err) {
+    console.error(
+      'Failed to send message:',
+      err,
+    );
+  } finally {
+    sendingMsg.value = false;
   }
+}
 
   function initSocket() {
     socket = io({ transports: ['websocket', 'polling'] });

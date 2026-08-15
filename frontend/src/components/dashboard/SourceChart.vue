@@ -20,10 +20,10 @@ const props = defineProps<{
 }>();
 
 const sourceColors: Record<string, string> = {
-  'FB': '#1877F2',
-  'TT': '#000000',
-  'GT': '#FF6F00',
-  'CN': '#4CAF50',
+  'FB': '#373734',
+  'TT': '#121212',
+  'GT': '#d97757',
+  'CN': '#7b7974',
 };
 
 function getCount(item: { _count: { _all: number } | number }): number {

@@ -3,11 +3,11 @@
     <v-text-field
       v-model="query"
       placeholder="Tìm kiếm..."
-      prepend-inner-icon="mdi-magnify"
+      prepend-inner-icon="lucide-search"
       variant="solo-filled"
       density="compact"
       hide-details
-      rounded="xl"
+      rounded="lg"
       clearable
       @update:model-value="debouncedSearch"
     />
@@ -28,9 +28,9 @@
             @click="goTo('/contacts', c.id)"
             density="compact"
           >
-            <template #prepend><v-icon size="18" color="primary">mdi-account</v-icon></template>
+            <template #prepend><v-icon size="18" color="primary">lucide-user</v-icon></template>
             <v-list-item-title>{{ c.fullName || c.phone }}</v-list-item-title>
-            <v-list-item-subtitle v-if="c.diseaseName">{{ c.diseaseName }}</v-list-item-subtitle>
+            <v-list-item-subtitle v-if="c.fullName && c.phone">{{ c.phone }}</v-list-item-subtitle>
           </v-list-item>
         </template>
         <!-- Messages -->
@@ -43,7 +43,7 @@
             @click="goTo('/chat', m.conversation?.id)"
             density="compact"
           >
-            <template #prepend><v-icon size="18" color="info">mdi-chat</v-icon></template>
+            <template #prepend><v-icon size="18" color="info">lucide-message-circle</v-icon></template>
             <v-list-item-title class="text-truncate" style="max-width: 300px;">
               {{ truncate(m.content, 60) }}
             </v-list-item-title>
@@ -60,7 +60,7 @@
             @click="goTo('/appointments')"
             density="compact"
           >
-            <template #prepend><v-icon size="18" color="warning">mdi-calendar</v-icon></template>
+            <template #prepend><v-icon size="18" color="warning">lucide-calendar</v-icon></template>
             <v-list-item-title>{{ a.contact?.fullName }} · {{ formatDate(a.appointmentDate) }}</v-list-item-title>
             <v-list-item-subtitle>{{ a.notes }}</v-list-item-subtitle>
           </v-list-item>
@@ -85,8 +85,6 @@ interface ContactResult {
   id: string;
   fullName: string | null;
   phone: string | null;
-  diseaseCode: string | null;
-  diseaseName: string | null;
 }
 
 interface MessageResult {

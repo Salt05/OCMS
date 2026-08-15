@@ -1,0 +1,149 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;550;600&display=swap');
+
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('./fonts/AnthropicSerif/AnthropicSerif-Display-Regular-Static.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('./fonts/AnthropicSerif/AnthropicSerif-Display-RegularItalic-Static.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('./fonts/AnthropicSerif/AnthropicSerif-Text-Medium-Static.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('./fonts/AnthropicSerif/AnthropicSerif-Text-Bold-Static.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+:root {
+  /* Colors */
+  --color-bone-parchment: #f8f8f6;
+  --color-paper-white: #ffffff;
+  --color-soft-stone: #efeeeb;
+  --color-carbon-ink: #121212;
+  --color-graphite: #373734;
+  --color-ashen: #7b7974;
+  --color-pebble: #9c9a92;
+  --color-mist: #b7b7b5;
+  --color-chalk: #e7e6e1;
+  --color-obsidian: #000000;
+  --color-clay: #d97757;
+
+  /* Typography */
+  --font-anthropic-serif: 'Anthropic Serif', ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
+  --font-anthropic-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  --text-caption: 11px;
+  --leading-caption: 1.5;
+  --text-body: 14px;
+  --leading-body: 1.5;
+  --text-heading-sm: 24px;
+  --leading-heading-sm: 1.33;
+  --text-heading: 30px;
+  --leading-heading: 1.2;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-w550: 550;
+  --font-weight-w580: 580;
+
+  /* Spacing */
+  --spacing-unit: 8px;
+  --spacing-8: 8px;
+  --spacing-16: 16px;
+  --spacing-24: 24px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-64: 64px;
+  --spacing-80: 80px;
+
+  /* Layout */
+  --page-max-width: 1200px;
+  --card-padding: 32px;
+  --element-gap: 10px;
+
+  /* Border Radius */
+  --radius-nav: 8px;
+  --radius-cards: 16px;
+  --radius-inputs: 8px;
+  --radius-buttons: 8px;
+  --radius-elevatedcards: 24px;
+
+  /* Shadows */
+  --shadow-lg: rgba(0, 0, 0, 0.04) 0px 4px 20px 0px;
+  --shadow-lg-2: oklab(0.431435 -0.02915 -0.125723 / 0.1) 0px 4px 24px 0px;
+
+  /* Surfaces */
+  --surface-page-canvas: #f8f8f6;
+  --surface-card-surface: #ffffff;
+  --surface-nested-surface: #efeeeb;
+  --surface-dark-band: #000000;
+
+  /* Transitions */
+  --ease-claude: ease;
+  --duration-claude: 0.2s;
+}
+
+/* Editorial typography utilities */
+.editorial-heading {
+  font-family: var(--font-anthropic-serif);
+  font-weight: var(--font-weight-regular);
+  font-size: var(--text-heading-sm);
+  line-height: var(--leading-heading-sm);
+  color: var(--color-carbon-ink);
+  letter-spacing: normal;
+}
+
+.editorial-heading-lg {
+  font-family: var(--font-anthropic-serif);
+  font-weight: var(--font-weight-regular);
+  font-size: var(--text-heading);
+  line-height: var(--leading-heading);
+  color: var(--color-carbon-ink);
+}
+
+.brand-accent {
+  color: var(--color-clay);
+}
+
+.brand-mark {
+  background: var(--color-soft-stone);
+  border: 1px solid var(--color-chalk);
+  border-radius: var(--radius-cards);
+}
+.v-theme--dark .brand-mark {
+  background: #2e2e2b;
+  border-color: #373734;
+}
+
+.parchment-bg {
+  background: var(--color-bone-parchment) !important;
+}
+
+.page-icon {
+  color: var(--color-carbon-ink);
+}
+
+/* Keep page-title icons aligned with the heading text. Vuetify's default
+   icon size is 1.5em, which makes these icons disproportionately large. */
+.page-icon.v-icon--size-default {
+  font-size: 1em;
+}
+
+.text-ashen {
+  color: var(--color-ashen);
+}
+
+.text-graphite {
+  color: var(--color-graphite);
+}

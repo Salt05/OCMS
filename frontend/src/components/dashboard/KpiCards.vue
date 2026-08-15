@@ -29,11 +29,11 @@ const props = defineProps<{
 }>();
 
 const cards = computed(() => [
-  { title: 'Tin nhắn hôm nay', value: props.kpi?.messagesToday ?? '—', icon: 'mdi-chat', color: 'primary' },
-  { title: 'Chưa trả lời', value: props.kpi?.messagesUnreplied ?? '—', icon: 'mdi-chat-alert', color: 'warning' },
-  { title: 'Chưa đọc', value: props.kpi?.messagesUnread ?? '—', icon: 'mdi-email-outline', color: 'orange' },
-  { title: 'Lịch hẹn hôm nay', value: props.kpi?.appointmentsToday ?? '—', icon: 'mdi-calendar-today', color: 'success' },
-  { title: 'KH mới tuần này', value: props.kpi?.newContactsThisWeek ?? '—', icon: 'mdi-account-plus', color: 'info' },
-  { title: 'Tổng khách hàng', value: props.kpi?.totalContacts ?? '—', icon: 'mdi-account-group', color: 'secondary' },
+  { title: 'Tin nhắn hôm nay', value: props.kpi?.messagesToday ?? '—', icon: 'lucide-message-circle', color: 'primary' },
+  { title: 'Chưa trả lời', value: props.kpi?.messagesUnreplied ?? '—', icon: 'lucide-message-circle-warning', color: 'warning' },
+  { title: 'Chưa đọc', value: props.kpi?.messagesUnread ?? '—', icon: 'lucide-mail', color: 'orange' },
+  { title: 'Lịch hẹn hôm nay', value: props.kpi?.appointmentsToday ?? '—', icon: 'lucide-calendar-days', color: 'success' },
+  { title: 'KH mới tuần này', value: props.kpi?.newContactsThisWeek ?? '—', icon: 'lucide-user-plus', color: 'info' },
+  { title: 'Tổng khách hàng', value: props.kpi?.totalContacts ?? '—', icon: 'lucide-users', color: 'secondary' },
 ]);
 </script>

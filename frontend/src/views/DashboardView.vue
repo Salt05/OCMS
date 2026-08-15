@@ -1,7 +1,7 @@
 <template>
   <div>
-    <h1 class="text-h4 mb-4">
-      <v-icon class="mr-2" style="color: #00F2FF;">mdi-view-dashboard</v-icon>
+    <h1 class="editorial-heading mb-4">
+      <v-icon class="mr-2 page-icon">lucide-layout-dashboard</v-icon>
       Dashboard
     </h1>
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
@@ -13,7 +13,7 @@
       <v-col cols="6" sm="3">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
-            <v-icon icon="mdi-cart-outline" color="primary" size="28" class="mb-1" />
+            <v-icon icon="lucide-shopping-cart" color="primary" size="28" class="mb-1" />
             <div class="text-h5 font-weight-bold">{{ orderStats?.totalOrders ?? '—' }}</div>
             <div class="text-caption text-grey">Đơn hàng mới</div>
           </v-card-text>
@@ -22,7 +22,7 @@
       <v-col cols="6" sm="3">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
-            <v-icon icon="mdi-calendar-today" color="orange" size="28" class="mb-1" />
+            <v-icon icon="lucide-calendar-days" color="orange" size="28" class="mb-1" />
             <div class="text-h6 font-weight-bold">{{ formatVND(orderStats?.todayRevenue ?? 0) }}</div>
             <div class="text-caption text-grey">Doanh thu hôm nay</div>
           </v-card-text>

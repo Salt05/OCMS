@@ -2,9 +2,9 @@
   <div>
     <!-- Toolbar -->
     <div class="d-flex align-center mb-4 flex-wrap gap-2">
-      <h1 class="text-h5 mr-4">Lịch hẹn</h1>
+      <h1 class="editorial-heading mr-4">Lịch hẹn</h1>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="showCreateDialog = true">
+      <v-btn color="primary" prepend-icon="lucide-plus" @click="showCreateDialog = true">
         Tạo lịch hẹn
       </v-btn>
     </div>
@@ -75,7 +75,7 @@
             size="small"
             variant="text"
             color="success"
-            icon="mdi-check"
+            icon="lucide-check"
             title="Hoàn thành"
             @click.stop="onMarkComplete(item.id)"
           />
@@ -84,7 +84,7 @@
             size="small"
             variant="text"
             color="grey"
-            icon="mdi-cancel"
+            icon="lucide-ban"
             title="Huỷ"
             @click.stop="onCancel(item.id)"
           />
@@ -92,7 +92,7 @@
             size="small"
             variant="text"
             color="error"
-            icon="mdi-delete"
+            icon="lucide-trash-2"
             title="Xoá"
             @click.stop="onDelete(item.id)"
           />
@@ -106,7 +106,7 @@
         <v-card-title class="d-flex align-center">
           Tạo lịch hẹn
           <v-spacer />
-          <v-btn icon="mdi-close" variant="text" @click="showCreateDialog = false" />
+          <v-btn icon="lucide-x" variant="text" @click="showCreateDialog = false" />
         </v-card-title>
         <v-divider />
         <v-card-text>

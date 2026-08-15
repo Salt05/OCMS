@@ -134,6 +134,21 @@ export function useContacts() {
     }
   }
 
+  async function deleteContacts(ids: string[]): Promise<boolean> {
+    if (!ids.length) return false;
+    deleting.value = true;
+    try {
+      await Promise.all(ids.map(id => api.delete(`/contacts/${id}`)));
+      await fetchContacts();
+      return true;
+    } catch (err) {
+      console.error('Failed to delete contacts:', err);
+      return false;
+    } finally {
+      deleting.value = false;
+    }
+  }
+
   function resetFilters() {
     filters.search = '';
     filters.source = '';
@@ -146,7 +161,7 @@ export function useContacts() {
     contacts, total, loading, saving, deleting,
     filters, pagination,
     fetchContacts, fetchContact,
-    createContact, updateContact, deleteContact,
+    createContact, updateContact, deleteContact, deleteContacts,
     resetFilters,
   };
 }

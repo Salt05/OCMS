@@ -20,10 +20,10 @@ const props = defineProps<{
 }>();
 
 const statusColors: Record<string, string> = {
-  'scheduled': '#42A5F5',
-  'completed': '#66BB6A',
-  'cancelled': '#9E9E9E',
-  'no_show': '#EF5350',
+  'scheduled': '#373734',
+  'completed': '#121212',
+  'cancelled': '#9c9a92',
+  'no_show': '#7b7974',
 };
 
 const statusLabels: Record<string, string> = {

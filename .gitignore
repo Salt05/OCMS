@@ -1,6 +1,25 @@
+# Dependencies
 node_modules/
 dist/
+build/
+.output/
+
+# Environment variables
 .env
-*.log
-backups/
+.env.local
+.env.*.local
+
+# IDE/Editor
+.vscode/
+.idea/
 .DS_Store
+
+# Docker/Data
+backups/
+docker/data/
+docker/logs/
+
+# Prisma
+backend/prisma/migrations/
+backend/prisma/dev.db
+backend/prisma/dev.db-journal

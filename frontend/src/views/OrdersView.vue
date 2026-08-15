@@ -1,12 +1,12 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h1 class="text-h4">
-        <v-icon class="mr-2" style="color: #00F2FF;">mdi-cart-outline</v-icon>
+      <h1 class="editorial-heading">
+        <v-icon class="mr-2 page-icon">lucide-shopping-cart</v-icon>
         Đơn hàng
       </h1>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Tạo đơn</v-btn>
+      <v-btn color="primary" prepend-icon="lucide-plus" @click="openCreate">Tạo đơn</v-btn>
     </div>
 
     <!-- Stats cards -->
@@ -14,7 +14,7 @@
       <v-col cols="6" sm="3">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
-            <v-icon icon="mdi-cart" color="primary" size="28" class="mb-1" />
+            <v-icon icon="lucide-shopping-cart" color="primary" size="28" class="mb-1" />
             <div class="text-h5 font-weight-bold">{{ stats?.totalOrders ?? '—' }}</div>
             <div class="text-caption text-grey">Tổng đơn</div>
           </v-card-text>
@@ -23,7 +23,7 @@
       <v-col cols="6" sm="3">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
-            <v-icon icon="mdi-check-circle" color="green" size="28" class="mb-1" />
+            <v-icon icon="lucide-circle-check-big" color="green" size="28" class="mb-1" />
             <div class="text-h5 font-weight-bold">{{ stats?.completedOrders ?? '—' }}</div>
             <div class="text-caption text-grey">Hoàn thành</div>
           </v-card-text>
@@ -32,7 +32,7 @@
       <v-col cols="6" sm="3">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
-            <v-icon icon="mdi-currency-usd" color="teal" size="28" class="mb-1" />
+            <v-icon icon="lucide-circle-dollar-sign" color="teal" size="28" class="mb-1" />
             <div class="text-h6 font-weight-bold">{{ formatVND(stats?.totalRevenue ?? 0) }}</div>
             <div class="text-caption text-grey">Doanh thu</div>
           </v-card-text>
@@ -41,7 +41,7 @@
       <v-col cols="6" sm="3">
         <v-card variant="outlined">
           <v-card-text class="text-center pa-3">
-            <v-icon icon="mdi-calendar-today" color="orange" size="28" class="mb-1" />
+            <v-icon icon="lucide-calendar-days" color="orange" size="28" class="mb-1" />
             <div class="text-h6 font-weight-bold">{{ formatVND(stats?.todayRevenue ?? 0) }}</div>
             <div class="text-caption text-grey">Doanh thu hôm nay</div>
           </v-card-text>
@@ -53,7 +53,7 @@
     <v-row class="mb-3">
       <v-col cols="12" sm="6" md="4">
         <v-text-field v-model="search" label="Tìm kiếm mã đơn, khách hàng..." density="compact"
-          variant="outlined" prepend-inner-icon="mdi-magnify" hide-details clearable @update:model-value="onSearch" />
+          variant="outlined" prepend-inner-icon="lucide-search" hide-details clearable @update:model-value="onSearch" />
       </v-col>
       <v-col cols="12" sm="6" md="3">
         <v-select v-model="statusFilter" label="Trạng thái" :items="statusFilterItems"
@@ -94,10 +94,10 @@
             <td class="text-caption">{{ formatDate(o.createdAt) }}</td>
             <td>
               <v-btn icon size="x-small" variant="text" @click="openEdit(o)">
-                <v-icon size="16">mdi-pencil</v-icon>
+                <v-icon size="16">lucide-pencil</v-icon>
               </v-btn>
               <v-btn icon size="x-small" variant="text" color="error" @click="confirmDelete(o.id)">
-                <v-icon size="16">mdi-delete</v-icon>
+                <v-icon size="16">lucide-trash-2</v-icon>
               </v-btn>
             </td>
           </tr>

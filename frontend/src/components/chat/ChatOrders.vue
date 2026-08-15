@@ -2,11 +2,11 @@
   <div>
     <v-divider class="my-3" />
     <div class="d-flex align-center mb-2">
-      <v-icon size="16" color="success" class="mr-1">mdi-cart</v-icon>
+      <v-icon size="16" color="success" class="mr-1">lucide-shopping-cart</v-icon>
       <span class="text-caption font-weight-bold">Đơn hàng ({{ contactOrders.length }})</span>
       <v-spacer />
       <v-btn size="x-small" variant="text" color="primary" @click="showCreate = !showCreate">
-        <v-icon size="14">mdi-plus</v-icon>
+        <v-icon size="14">lucide-plus</v-icon>
       </v-btn>
     </div>
 

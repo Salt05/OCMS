@@ -49,8 +49,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
             _count: { select: { conversations: true, appointments: true } },
           },
           orderBy: { updatedAt: 'desc' },
-          skip: (pageNum - 1) * limitNum,
-          take: limitNum,
+          ...(limitNum > 0 ? { skip: (pageNum - 1) * limitNum, take: limitNum } : {}),
         }),
         prisma.contact.count({ where }),
       ]);

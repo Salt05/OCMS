@@ -2,31 +2,37 @@
   <div>
     <!-- Toolbar -->
     <div class="d-flex align-center mb-4 flex-wrap gap-2">
-      <h1 class="text-h5 mr-4">Khách hàng</h1>
+      <h1 class="editorial-heading mr-4">Khách hàng</h1>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Thêm KH</v-btn>
+      <v-btn v-if="selected.length > 0" color="error" variant="tonal" prepend-icon="lucide-trash-2" @click="confirmBulkDelete" class="mr-2">
+        Xóa ({{ selected.length }})
+      </v-btn>
+      <v-btn color="primary" prepend-icon="lucide-plus" @click="openCreate">Thêm KH</v-btn>
     </div>
 
     <!-- Filters -->
     <ContactFilters :filters="filters" @search="onFilterChange" />
 
     <!-- Data table -->
-    <v-data-table
+    <v-data-table-server
+      v-model="selected"
+      v-model:items-per-page="pagination.limit"
+      v-model:page="pagination.page"
       :headers="headers"
       :items="contacts"
       :loading="loading"
-      :items-per-page="pagination.limit"
       :items-length="total"
       item-value="id"
+      show-select
       hover
+      @update:options="fetchContacts"
       @click:row="onRowClick"
-      @update:page="onPageChange"
     >
       <!-- Avatar -->
       <template #item.avatarUrl="{ item }">
         <v-avatar size="32" color="grey-lighten-2">
           <v-img v-if="item.avatarUrl" :src="item.avatarUrl" />
-          <v-icon v-else size="18">mdi-account</v-icon>
+          <v-icon v-else size="18">lucide-user</v-icon>
         </v-avatar>
       </template>
 
@@ -74,7 +80,7 @@
       <template #item.assignedUser="{ item }">
         <span class="text-body-2">{{ item.assignedUser?.fullName ?? '—' }}</span>
       </template>
-    </v-data-table>
+    </v-data-table-server>
 
     <!-- Contact detail/edit dialog -->
     <ContactDetailDialog
@@ -93,9 +99,10 @@ import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
 import { useContacts, SOURCE_OPTIONS, STATUS_OPTIONS } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 
-const { contacts, total, loading, filters, pagination, fetchContacts } = useContacts();
+const { contacts, total, loading, filters, pagination, fetchContacts, deleteContacts } = useContacts();
 
 const showDialog = ref(false);
+const selected = ref<string[]>([]);
 const selectedContact = ref<Contact | null>(null);
 
 const headers = [
@@ -121,8 +128,8 @@ function statusLabel(value: string) {
 function statusColor(status: string) {
   const map: Record<string, string> = {
     new: 'grey',
-    contacted: 'blue',
-    interested: 'orange',
+    contacted: 'primary',
+    interested: 'accent',
     converted: 'success',
     lost: 'error',
   };
@@ -136,11 +143,6 @@ function formatDate(date: string) {
 
 function onFilterChange() {
   pagination.page = 1;
-  fetchContacts();
-}
-
-function onPageChange(page: number) {
-  pagination.page = page;
   fetchContacts();
 }
 
@@ -160,6 +162,15 @@ function onSaved() {
 
 function onDeleted() {
   fetchContacts();
+}
+
+async function confirmBulkDelete() {
+  if (confirm(`Bạn có chắc muốn xóa ${selected.value.length} khách hàng đã chọn?`)) {
+    const success = await deleteContacts(selected.value);
+    if (success) {
+      selected.value = [];
+    }
+  }
 }
 
 onMounted(() => fetchContacts());

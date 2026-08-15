@@ -1,5 +1,5 @@
 <template>
-  <div class="conversation-list d-flex flex-column" style="width: 100%; border-right: 1px solid var(--border-glow, rgba(0,242,255,0.1)); height: 100%;">
+  <div class="conversation-list d-flex flex-column" style="width: 100%; border-right: 1px solid var(--color-chalk); height: 100%;">
     <!-- Account filter + Search -->
     <div class="pa-2">
       <v-select
@@ -19,7 +19,7 @@
         :model-value="search"
         @update:model-value="$emit('update:search', $event)"
         placeholder="Tìm kiếm..."
-        prepend-inner-icon="mdi-magnify"
+        prepend-inner-icon="lucide-search"
         variant="solo-filled"
         density="compact"
         hide-details
@@ -37,13 +37,13 @@
         :active="conv.id === selectedId"
         @click="$emit('select', conv.id)"
         class="py-2"
-        :class="{ 'conversation-active': conv.id === selectedId, 'bg-blue-lighten-5': conv.unreadCount > 0 && conv.id !== selectedId }"
+        :class="{ 'conversation-active': conv.id === selectedId, 'conversation-unread': conv.unreadCount > 0 && conv.id !== selectedId }"
       >
         <template #prepend>
           <v-avatar size="40" color="grey-lighten-2">
-            <v-icon v-if="conv.threadType === 'group'" icon="mdi-account-group" />
+            <v-icon v-if="conv.threadType === 'group'" icon="lucide-users" />
             <v-img v-else-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl" />
-            <v-icon v-else icon="mdi-account" />
+            <v-icon v-else icon="lucide-user" />
           </v-avatar>
         </template>
 

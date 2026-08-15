@@ -1,0 +1,2 @@
+Set-Location "C:\Users\ADMIN\OneDrive\Project\Work\ZaloCRM\backend"
+npx prisma studio --url "postgresql://crmuser:zalocrm_secure_password@localhost:5433/zalocrm"

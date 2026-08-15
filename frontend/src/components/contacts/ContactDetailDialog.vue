@@ -4,7 +4,7 @@
       <v-card-title class="d-flex align-center">
         <span>{{ isNew ? 'Thêm khách hàng' : 'Chi tiết khách hàng' }}</span>
         <v-spacer />
-        <v-btn icon="mdi-close" variant="text" @click="close" />
+        <v-btn icon="lucide-x" variant="text" @click="close" />
       </v-card-title>
 
       <v-divider />

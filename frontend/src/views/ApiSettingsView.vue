@@ -1,7 +1,7 @@
 <template>
   <div style="max-width: 700px;">
-    <h1 class="text-h5 mb-4">
-      <v-icon class="mr-2" style="color: #00F2FF;">mdi-api</v-icon>
+    <h1 class="editorial-heading mb-4">
+      <v-icon class="mr-2 page-icon">lucide-webhook</v-icon>
       API & Webhook
     </h1>
 
@@ -13,13 +13,13 @@
           v-model="apiKey"
           label="API Key"
           readonly
-          append-inner-icon="mdi-content-copy"
+          append-inner-icon="lucide-copy"
           @click:append-inner="copyKey"
         />
         <v-btn
           color="primary"
           variant="outlined"
-          prepend-icon="mdi-refresh"
+          prepend-icon="lucide-refresh-cw"
           :loading="generatingKey"
           @click="generateKey"
         >

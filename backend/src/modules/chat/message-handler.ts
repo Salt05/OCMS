@@ -59,20 +59,38 @@ export async function handleIncomingMessage(
     const conversation = await findOrCreateConversation(msg, account.orgId, contactId);
 
     const sentAt = new Date(msg.timestamp);
-    const message = await prisma.message.create({
-      data: {
-        id: randomUUID(),
+    if (msg.msgId) {
+  const existingMessage =
+    await prisma.message.findFirst({
+      where: {
         conversationId: conversation.id,
-        zaloMsgId: msg.msgId || null,
-        senderType: msg.isSelf ? 'self' : 'contact',
-        senderUid: msg.senderUid,
-        senderName: msg.senderName || null,
-        content: msg.content || '',
-        contentType: msg.contentType || 'text',
-        attachments: msg.attachments ?? [],
-        sentAt,
+        zaloMsgId: msg.msgId,
       },
     });
+
+  if (existingMessage) {
+    logger.warn(
+      `[message-handler] Duplicate Zalo message ignored: ${msg.msgId}`,
+    );
+
+    return null;
+  }
+}
+
+const message = await prisma.message.create({
+  data: {
+    id: randomUUID(),
+    conversationId: conversation.id,
+    zaloMsgId: msg.msgId || null,
+    senderType: msg.isSelf ? 'self' : 'contact',
+    senderUid: msg.senderUid,
+    senderName: msg.senderName || null,
+    content: msg.content || '',
+    contentType: msg.contentType || 'text',
+    attachments: msg.attachments ?? [],
+    sentAt,
+  },
+});
 
     await updateConversationAfterMessage(conversation.id, sentAt, msg.isSelf);
 

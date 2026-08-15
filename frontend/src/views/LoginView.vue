@@ -1,14 +1,14 @@
 <template>
-  <v-card class="pa-8" style="backdrop-filter: blur(20px);" elevation="0">
+  <v-card class="auth-card" elevation="0">
     <div class="text-center mb-8">
       <div
-        class="ai-core-orb mx-auto mb-4 d-flex align-center justify-center"
-        style="width: 64px; height: 64px; background: linear-gradient(135deg, #00F2FF, #0077B6);"
+        class="brand-mark mx-auto mb-4 d-flex align-center justify-center"
+        style="width: 64px; height: 64px;"
       >
-        <v-icon size="32" color="white">mdi-robot</v-icon>
-      </div>
-      <h1 class="text-h5 font-weight-bold">Zalo<span style="color: #00F2FF;">CRM</span></h1>
-      <p class="text-caption mt-1" style="color: #8892b0;">Liquid Silicon • Multi-Account Zalo Management</p>
+          <img :src="isDark ? logoDark : logoLight" alt="LAPET Logo" style="width: 32px; height: 32px; object-fit: contain;" />
+        </div>
+        <h1 class="editorial-heading mb-1">LA<span class="brand-accent">PET</span></h1>
+      <p class="text-caption mt-1 text-ashen">Quản lý Zalo đa tài khoản</p>
     </div>
 
     <v-form @submit.prevent="handleLogin">
@@ -16,7 +16,7 @@
         v-model="email"
         label="Email"
         type="email"
-        prepend-inner-icon="mdi-email-outline"
+        prepend-inner-icon="lucide-mail"
         required
         class="mb-3"
       />
@@ -24,12 +24,12 @@
         v-model="password"
         label="Mật khẩu"
         type="password"
-        prepend-inner-icon="mdi-lock-outline"
+        prepend-inner-icon="lucide-lock"
         required
         class="mb-5"
       />
-      <v-btn type="submit" color="primary" block size="large" :loading="loading" rounded="xl">
-        <v-icon start>mdi-login</v-icon>
+      <v-btn type="submit" color="primary" block size="large" :loading="loading" rounded="lg">
+        <v-icon start>lucide-log-in</v-icon>
         Đăng nhập
       </v-btn>
     </v-form>
@@ -41,9 +41,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useTheme } from 'vuetify';
+import logoLight from '@/assets/logo-light.png';
+import logoDark from '@/assets/logo-dark.png';
+
+const theme = useTheme();
+const isDark = computed(() => theme.global.name.value === 'dark');
 
 const email = ref('');
 const password = ref('');

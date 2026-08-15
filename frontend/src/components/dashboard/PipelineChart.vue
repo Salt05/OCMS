@@ -20,11 +20,11 @@ const props = defineProps<{
 }>();
 
 const statusColors: Record<string, string> = {
-  new: '#9E9E9E',
-  contacted: '#42A5F5',
-  interested: '#FF9800',
-  converted: '#66BB6A',
-  lost: '#EF5350',
+  new: '#9c9a92',
+  contacted: '#7b7974',
+  interested: '#d97757',
+  converted: '#373734',
+  lost: '#b7b7b5',
 };
 
 const statusLabels: Record<string, string> = {

@@ -8,7 +8,7 @@
           color="error"
           overlap
         >
-          <v-icon>mdi-bell-outline</v-icon>
+          <v-icon>lucide-bell</v-icon>
         </v-badge>
       </v-btn>
     </template>
@@ -24,10 +24,10 @@
         >
           <template #prepend>
             <v-icon
-              :color="n.type === 'error' ? 'red' : n.type === 'warning' ? 'orange' : 'blue'"
+              :color="n.type === 'error' ? 'error' : n.type === 'warning' ? 'warning' : 'secondary'"
               size="20"
             >
-              {{ n.type === 'error' ? 'mdi-alert-circle' : n.type === 'warning' ? 'mdi-alert' : 'mdi-information' }}
+              {{ n.type === 'error' ? 'lucide-circle-alert' : n.type === 'warning' ? 'lucide-triangle-alert' : 'lucide-info' }}
             </v-icon>
           </template>
           <v-list-item-title class="text-body-2">{{ n.title }}</v-list-item-title>

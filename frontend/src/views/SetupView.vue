@@ -1,15 +1,15 @@
 <template>
-  <v-card class="pa-6" elevation="8">
+  <v-card class="pa-6 auth-card" elevation="0">
     <div class="text-center mb-6">
-      <v-icon icon="mdi-cog" size="64" color="primary" />
-      <h1 class="text-h5 mt-2">Thiết lập ban đầu</h1>
+      <v-icon icon="lucide-settings" size="64" class="page-icon" />
+      <h1 class="editorial-heading mt-2">Thiết lập ban đầu</h1>
       <p class="text-body-2 text-grey mt-1">Tạo tổ chức và tài khoản quản trị viên</p>
     </div>
     <v-form @submit.prevent="handleSetup" ref="form">
-      <v-text-field v-model="orgName" label="Tên tổ chức / phòng khám" prepend-inner-icon="mdi-domain" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
-      <v-text-field v-model="fullName" label="Họ tên quản trị viên" prepend-inner-icon="mdi-account" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
-      <v-text-field v-model="email" label="Email đăng nhập" type="email" prepend-inner-icon="mdi-email" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
-      <v-text-field v-model="password" label="Mật khẩu" type="password" prepend-inner-icon="mdi-lock" :rules="[v => v.length >= 6 || 'Tối thiểu 6 ký tự']" class="mb-4" />
+      <v-text-field v-model="orgName" label="Tên tổ chức / phòng khám" prepend-inner-icon="lucide-building-2" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
+      <v-text-field v-model="fullName" label="Họ tên quản trị viên" prepend-inner-icon="lucide-user" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
+      <v-text-field v-model="email" label="Email đăng nhập" type="email" prepend-inner-icon="lucide-mail" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
+      <v-text-field v-model="password" label="Mật khẩu" type="password" prepend-inner-icon="lucide-lock" :rules="[v => v.length >= 6 || 'Tối thiểu 6 ký tự']" class="mb-4" />
       <v-btn type="submit" color="primary" block size="large" :loading="loading">Tạo tài khoản</v-btn>
     </v-form>
     <v-alert v-if="error" type="error" class="mt-4" density="compact" closable>{{ error }}</v-alert>

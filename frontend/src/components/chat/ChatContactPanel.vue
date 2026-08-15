@@ -5,11 +5,11 @@
   >
     <!-- Header -->
     <div class="pa-3 d-flex align-center" style="border-bottom: 1px solid rgba(0,0,0,0.12);">
-      <v-icon icon="mdi-account-details" class="mr-2" />
+      <v-icon icon="lucide-contact" class="mr-2" />
       <span class="font-weight-medium">Thông tin khách hàng</span>
       <v-spacer />
       <v-btn icon size="small" variant="text" @click="$emit('close')">
-        <v-icon>mdi-close</v-icon>
+        <v-icon>lucide-x</v-icon>
       </v-btn>
     </div>
 

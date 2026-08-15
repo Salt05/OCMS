@@ -1,9 +1,9 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h1 class="text-h4">Tài khoản Zalo</h1>
+      <h1 class="editorial-heading">Tài khoản Zalo</h1>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="showAddDialog = true">Thêm Zalo</v-btn>
+      <v-btn color="primary" prepend-icon="lucide-plus" @click="showAddDialog = true">Thêm Zalo</v-btn>
     </div>
 
     <v-card>
@@ -14,20 +14,20 @@
           </v-chip>
         </template>
         <template #item.actions="{ item }">
-          <v-btn v-if="authStore.isAdmin" icon size="small" color="cyan" title="Phân quyền truy cập" @click="openAccess(item)">
-            <v-icon>mdi-shield-account</v-icon>
+          <v-btn v-if="authStore.isAdmin" icon size="small" color="primary" title="Phân quyền truy cập" @click="openAccess(item)">
+            <v-icon>lucide-shield-check</v-icon>
           </v-btn>
           <v-btn icon size="small" color="success" @click="syncContacts(item.id)" title="Đồng bộ danh bạ Zalo" :loading="syncing === item.id">
-            <v-icon>mdi-account-sync</v-icon>
+            <v-icon>lucide-user-round-cog</v-icon>
           </v-btn>
           <v-btn v-if="item.liveStatus !== 'connected'" icon size="small" color="primary" @click="loginAccount(item.id)" title="Đăng nhập QR">
-            <v-icon>mdi-qrcode</v-icon>
+            <v-icon>lucide-qr-code</v-icon>
           </v-btn>
           <v-btn v-if="item.liveStatus === 'disconnected' && item.sessionData" icon size="small" color="info" @click="reconnectAccount(item.id)" title="Kết nối lại">
-            <v-icon>mdi-refresh</v-icon>
+            <v-icon>lucide-refresh-cw</v-icon>
           </v-btn>
           <v-btn icon size="small" color="error" @click="confirmDelete(item)" title="Xóa">
-            <v-icon>mdi-delete</v-icon>
+            <v-icon>lucide-trash-2</v-icon>
           </v-btn>
         </template>
       </v-data-table>
@@ -57,7 +57,7 @@
             <img :src="'data:image/png;base64,' + qrImage" alt="QR Code" style="max-width: 280px;" />
           </div>
           <div v-else-if="qrScanned" class="mb-4">
-            <v-icon icon="mdi-check-circle" size="64" color="success" />
+            <v-icon icon="lucide-circle-check-big" size="64" color="success" />
             <p class="text-h6 mt-2">Đã quét! Xác nhận trên điện thoại...</p>
             <p v-if="scannedName" class="text-body-2">{{ scannedName }}</p>
           </div>

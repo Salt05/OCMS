@@ -1,7 +1,7 @@
 <template>
   <v-card variant="outlined">
     <v-card-title class="text-body-1">
-      <v-icon class="mr-1" color="primary">mdi-account-group</v-icon>
+      <v-icon class="mr-1" color="primary">lucide-users</v-icon>
       Hiệu suất nhân viên
     </v-card-title>
     <v-table density="compact">

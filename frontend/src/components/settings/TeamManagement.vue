@@ -3,7 +3,7 @@
     <div class="d-flex align-center mb-4">
       <span class="text-h6">Danh sách đội nhóm</span>
       <v-spacer />
-      <v-btn v-if="authStore.isAdmin" color="primary" prepend-icon="mdi-plus" @click="openCreate">
+      <v-btn v-if="authStore.isAdmin" color="primary" prepend-icon="lucide-plus" @click="openCreate">
         Thêm đội nhóm
       </v-btn>
     </div>
@@ -12,7 +12,7 @@
       {{ error }}
     </v-alert>
 
-    <v-progress-linear v-if="loading" indeterminate color="cyan" class="mb-2" />
+    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
 
     <div v-if="teams.length === 0 && !loading" class="text-center py-8 text-medium-emphasis">
       Chưa có đội nhóm nào
@@ -22,7 +22,7 @@
       <v-expansion-panel v-for="team in teams" :key="team.id" @click="onPanelClick(team.id)">
         <v-expansion-panel-title>
           <div class="d-flex align-center w-100">
-            <v-icon class="mr-2" color="cyan">mdi-account-group</v-icon>
+            <v-icon class="mr-2 page-icon">lucide-users</v-icon>
             <span class="font-weight-medium">{{ team.name }}</span>
             <v-chip size="x-small" class="ml-2" variant="tonal">
               {{ memberMap[team.id]?.length ?? 0 }} thành viên
@@ -30,10 +30,10 @@
             <v-spacer />
             <template v-if="authStore.isAdmin">
               <v-btn icon size="x-small" variant="text" class="mr-1" @click.stop="openEdit(team)" title="Sửa">
-                <v-icon>mdi-pencil</v-icon>
+                <v-icon>lucide-pencil</v-icon>
               </v-btn>
               <v-btn icon size="x-small" variant="text" color="error" @click.stop="openDelete(team)" title="Xóa">
-                <v-icon>mdi-delete</v-icon>
+                <v-icon>lucide-trash-2</v-icon>
               </v-btn>
             </template>
           </div>
@@ -48,7 +48,7 @@
               @click:close="authStore.isAdmin && handleRemoveMember(team.id, m.userId)"
             >
               <v-avatar start>
-                <v-icon>mdi-account</v-icon>
+                <v-icon>lucide-user</v-icon>
               </v-avatar>
               {{ m.fullName }}
             </v-chip>
@@ -56,7 +56,7 @@
               Chưa có thành viên
             </span>
           </div>
-          <v-btn v-if="authStore.isAdmin" size="small" variant="tonal" prepend-icon="mdi-account-plus" @click="openAddMember(team)">
+          <v-btn v-if="authStore.isAdmin" size="small" variant="tonal" prepend-icon="lucide-user-plus" @click="openAddMember(team)">
             Thêm thành viên
           </v-btn>
         </v-expansion-panel-text>
