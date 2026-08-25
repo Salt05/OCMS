@@ -17,10 +17,66 @@ export function detectContentType(msgType: string | undefined, content: any): st
   if (msgType.includes('gif')) return 'gif';
   if (msgType.includes('link')) return 'link';
   if (msgType.includes('location')) return 'location';
-  if (msgType.includes('file') || msgType.includes('doc')) return 'file';
+  if (msgType.includes('file') || msgType.includes('doc')) {
+    if (typeof content === 'object' && content !== null) {
+      let ext = '';
+      try {
+        const params = typeof content.params === 'string' ? JSON.parse(content.params) : content.params;
+        ext = (params?.fileExt || '').toLowerCase();
+      } catch {}
+      if (!ext && content.title) {
+        ext = (content.title.split('.').pop() || '').toLowerCase();
+      }
+      if (['mp4', 'mov', 'webm', 'avi', 'mkv', '3gp', 'm4v', 'ogv'].includes(ext)) {
+        return 'video';
+      }
+    }
+    return 'file';
+  }
   if (msgType.includes('recommended') || msgType.includes('card')) return 'contact_card';
   if (typeof content === 'object' && content !== null) return 'rich';
   return 'text';
+}
+
+/**
+ * Extract attachments metadata (image url, thumbnail, dimensions, file info) from rawContent
+ */
+export function extractAttachments(msgType: string | undefined, content: any): any[] {
+  const attachments: any[] = [];
+  if (!content) return attachments;
+
+  let parsed = content;
+  if (typeof content === 'string') {
+    try {
+      if (content.startsWith('{') || content.startsWith('[')) {
+        parsed = JSON.parse(content);
+      }
+    } catch {}
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    for (const item of items) {
+      const url = item.hdUrl || item.href || item.url || item.thumb || item.normalUrl;
+      const thumbUrl = item.thumb || item.url || item.href || item.normalUrl;
+      if (url || thumbUrl) {
+        const type =
+          item.type ||
+          (msgType?.includes('video') ? 'video' : msgType?.includes('file') ? 'file' : 'image');
+        attachments.push({
+          type,
+          url: url || thumbUrl,
+          thumbUrl: thumbUrl || url,
+          title: item.title || item.name || '',
+          size: item.size || item.fileSize || 0,
+          width: item.width || 0,
+          height: item.height || 0,
+        });
+      }
+    }
+  }
+
+  return attachments;
 }
 
 /**

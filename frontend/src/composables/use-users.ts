@@ -12,6 +12,7 @@ export interface OrgUser {
   role: string;
   isActive: boolean;
   teamId: string | null;
+  odooId?: string | null;
   createdAt: string;
   team?: { id: string; name: string } | null;
 }
@@ -52,7 +53,7 @@ export function useUsers() {
 
   async function updateUser(
     id: string,
-    data: Partial<{ fullName: string; email: string; role: string; teamId: string; isActive: boolean }>,
+    data: Partial<{ fullName: string; email: string; role: string; teamId: string; isActive: boolean; odooId: string | null }>,
   ): Promise<{ ok: boolean; error?: string }> {
     try {
       await api.put(`/users/${id}`, data);

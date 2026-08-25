@@ -20,45 +20,46 @@ export function startZaloHealthCheck(): void {
 
       for (const acc of accounts) {
         const status = zaloPool.getStatus(acc.id);
-        if (status !== 'connected' && status !== 'connecting' && status !== 'qr_pending') {
+        if (status !== 'connected' && !zaloPool.isReconnecting(acc.id) && status !== 'qr_pending') {
           const session = acc.sessionData as any;
           if (session?.imei) {
-            logger.info(`[health-check] Reconnecting ${acc.displayName || acc.id}...`);
-            zaloPool.reconnect(acc.id, session).catch((err) => {
-              logger.warn(`[health-check] Reconnect failed for ${acc.id}:`, err);
+            logger.info(`[ZALO HEALTH-CHECK] 🔍 Phát hiện tài khoản ${acc.displayName || acc.id} đang ngắt kết nối. Đang tự động phục hồi...`);
+            zaloPool.reconnect(acc.id, session, 1).catch((err) => {
+              logger.warn(`[ZALO HEALTH-CHECK] ⚠️ Reconnect thất bại cho ${acc.displayName || acc.id}:`, err);
             });
           }
         }
       }
     } catch (err) {
-      logger.error('[health-check] Error during health check:', err);
+      logger.error('[ZALO HEALTH-CHECK] Error during health check:', err);
     }
   });
 
   // Daily at 04:00 UTC (11:00 AM VN): refresh all sessions to keep cookies alive
   cron.schedule('0 4 * * *', async () => {
-    logger.info('[health-check] Daily session refresh starting...');
+    logger.info('[ZALO HEALTH-CHECK] 🌅 Bắt đầu làm mới phiên hàng ngày (Daily session refresh)...');
     try {
       const accounts = await prisma.zaloAccount.findMany({
         where: { sessionData: { not: Prisma.JsonNull } },
-        select: { id: true, sessionData: true },
+        select: { id: true, displayName: true, sessionData: true },
       });
 
       for (const acc of accounts) {
         const session = acc.sessionData as any;
         if (session?.imei) {
+          logger.info(`[ZALO HEALTH-CHECK] 🔄 Làm mới phiên cho ${acc.displayName || acc.id}...`);
           // Disconnect then reconnect to force cookie refresh
           zaloPool.disconnect(acc.id);
           await new Promise((r) => setTimeout(r, 5000));
-          zaloPool.reconnect(acc.id, session).catch((err) => {
-            logger.warn(`[health-check] Daily refresh failed for ${acc.id}:`, err);
+          zaloPool.reconnect(acc.id, session, 1).catch((err) => {
+            logger.warn(`[ZALO HEALTH-CHECK] ⚠️ Làm mới phiên thất bại cho ${acc.displayName || acc.id}:`, err);
           });
         }
         // Stagger reconnects by 10 seconds per account to avoid rate limits
         await new Promise((r) => setTimeout(r, 10000));
       }
     } catch (err) {
-      logger.error('[health-check] Error during daily refresh:', err);
+      logger.error('[ZALO HEALTH-CHECK] Error during daily refresh:', err);
     }
   });
 

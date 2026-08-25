@@ -23,6 +23,15 @@ model Organization {
   dailyStats    DailyMessageStat[]
   settings      AppSetting[]
   orders        Order[]
+  tags          Tag[]
+  tagGroups     TagGroup[]
+  quickMessages QuickMessage[]
+  productCaches    ProductCache[]
+  customerProfiles CustomerProfile[]
+  orderHistories   OrderHistory[]
+  knowledgeBase    KnowledgeBase[]
+  chatbotConfigs   ChatbotConfig[]
+  syncStates       OdooSyncState[]
 
   @@map("organizations")
 }
@@ -52,6 +61,7 @@ model User {
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
+  odooId       String?  @map("odoo_id")
 
   org              Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
   team             Team?               @relation(fields: [teamId], references: [id])
@@ -62,6 +72,8 @@ model User {
   repliedMessages  Message[]           @relation("RepliedMessages")
   activityLogs     ActivityLog[]
   createdOrders    Order[]             @relation("CreatedOrders")
+  quickMessages    QuickMessage[]
+  notifications    Notification[]
 
   @@map("users")
 }
@@ -109,6 +121,7 @@ model Contact {
   id               String    @id @default(uuid())
   orgId            String    @map("org_id")
   zaloUid          String?   @map("zalo_uid")
+  zaloName         String?   @map("zalo_name")
   phone            String?
   email            String?   @map("email")
   fullName         String?   @map("full_name")
@@ -117,7 +130,11 @@ model Contact {
   sourceDate       DateTime? @map("source_date")
   firstContactDate DateTime? @map("first_contact_date")
   status           String?   @default("new") // new/contacted/interested/converted/lost
-  nextAppointment  DateTime? @map("next_appointment")
+  customerId       String?   @map("customer_id")
+  contactType      String    @default("customer") @map("contact_type")
+  address          String?   @map("address")
+  zone             String?   @map("zone")
+  salesperson      String?   @map("salesperson")
   assignedUserId   String?   @map("assigned_user_id")
   notes            String?
   tags             Json      @default("[]")
@@ -131,6 +148,7 @@ model Contact {
   appointments  Appointment[]
   orders        Order[]
 
+  @@unique([orgId, zaloUid])
   @@map("contacts")
 }
 
@@ -152,6 +170,7 @@ model Conversation {
   contact     Contact?     @relation(fields: [contactId], references: [id])
   messages    Message[]
   orders      Order[]
+  notifications Notification[]
 
   @@unique([zaloAccountId, externalThreadId])
   @@map("conversations")
@@ -168,14 +187,19 @@ model Message {
   content         String?
   contentType     String    @default("text") @map("content_type") // text, image, file, sticker, voice, video, link
   attachments     Json      @default("[]")
+  reactions       Json      @default("[]")
   isDeleted       Boolean   @default(false) @map("is_deleted")
   deletedAt       DateTime? @map("deleted_at")
   sentAt          DateTime  @map("sent_at")
   repliedByUserId String?   @map("replied_by_user_id")
+  isNote          Boolean   @default(false) @map("is_note")
+  replyToId       String?   @map("reply_to_id")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   repliedBy    User?        @relation("RepliedMessages", fields: [repliedByUserId], references: [id])
+  replyTo      Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      Message[]    @relation("MessageReplies")
 
   @@map("messages")
 }
@@ -274,4 +298,238 @@ model Order {
   conversation Conversation? @relation(fields: [conversationId], references: [id])
 
   @@map("orders")
+}
+
+// Organization-scoped tags with custom colors
+model Tag {
+  id        String   @id @default(uuid())
+  orgId     String   @map("org_id")
+  name      String
+  color     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, name])
+  @@map("tags")
+}
+
+// Organization-scoped tag groups for quick filtering
+model TagGroup {
+  id        String   @id @default(uuid())
+  orgId     String   @map("org_id")
+  name      String
+  color     String?
+  tags      Json     @default("[]")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, name])
+  @@map("tag_groups")
+}
+
+// Organization-scoped canned responses/quick templates
+model QuickMessage {
+  id          String   @id @default(uuid())
+  orgId       String   @map("org_id")
+  userId      String?  @map("user_id")
+  shortcut    String
+  title       String
+  content     String   @db.Text
+  attachments Json     @default("[]")
+  isShared    Boolean  @default(false) @map("is_shared")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, shortcut])
+  @@map("quick_messages")
+}
+
+model Notification {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  type           String   // "mention", "reply", etc.
+  title          String
+  detail         String
+  isRead         Boolean  @default(false) @map("is_read")
+  conversationId String?  @map("conversation_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@map("notifications")
+}
+
+// Track incremental sync state per Odoo model
+model OdooSyncState {
+  id            String   @id @default(uuid())
+  orgId         String   @map("org_id")
+  modelName     String   @map("model_name") // e.g. 'res.partner', 'sale.order'
+  lastSyncedAt  DateTime @map("last_synced_at")
+  lastWriteDate String?  @map("last_write_date") // Odoo write_date string
+  recordCount   Int      @default(0) @map("record_count")
+  status        String   @default("idle") // idle, syncing, error
+  errorMessage  String?  @map("error_message")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, modelName])
+  @@map("odoo_sync_states")
+}
+
+// Structured product catalog cached from Odoo + Directus
+model ProductCache {
+  id             String   @id @default(uuid())
+  orgId          String   @map("org_id")
+  odooId         Int      @map("odoo_id")
+  sku            String?  // default_code from Odoo
+  name           String
+  displayName    String?  @map("display_name")
+  listPrice      Float    @default(0) @map("list_price")
+  wholesalePrice Float    @default(0) @map("wholesale_price")
+  retailPrice    Float    @default(0) @map("retail_price")
+  uomName        String?  @map("uom_name")
+  weight         String?
+  specification  String?
+  imageUrl       String?  @map("image_url")
+  description    String?  @db.Text
+  ingredients    String?  @db.Text
+  target         String?  // target audience (e.g. "Chó con 3-6 tháng")
+  preservation   String?  // storage instructions
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, odooId])
+  @@map("product_cache")
+}
+
+// Customer profile synced from Odoo res.partner
+model CustomerProfile {
+  id               String   @id @default(uuid())
+  orgId            String   @map("org_id")
+  odooPartnerId    Int      @map("odoo_partner_id")
+  name             String
+  phone            String?
+  mobile           String?
+  email            String?
+  street           String?
+  city             String?
+  zone             String?
+  fullAddress      String?  @map("full_address")
+  vat              String?  // Tax ID
+  salesperson      String?
+  salespersonId    Int?     @map("salesperson_id") // Odoo user_id
+  paymentTermName  String?  @map("payment_term_name")
+  totalOrders      Int      @default(0) @map("total_orders")
+  totalRevenue     Float    @default(0) @map("total_revenue")
+  lastOrderDate    DateTime? @map("last_order_date")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  org          Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orderHistory OrderHistory[]
+
+  @@unique([orgId, odooPartnerId])
+  @@map("customer_profiles")
+}
+
+// Order history synced from Odoo sale.order
+model OrderHistory {
+  id                String   @id @default(uuid())
+  orgId             String   @map("org_id")
+  odooOrderId       Int      @map("odoo_order_id")
+  orderCode         String   @map("order_code") // e.g. S02300
+  customerProfileId String?  @map("customer_profile_id")
+  odooPartnerId     Int      @map("odoo_partner_id")
+  partnerName       String?  @map("partner_name")
+  dateOrder         DateTime @map("date_order")
+  state             String   // draft, sale, done, cancel
+  amountUntaxed     Float    @default(0) @map("amount_untaxed")
+  amountTax         Float    @default(0) @map("amount_tax")
+  amountTotal       Float    @default(0) @map("amount_total")
+  invoiceStatus     String?  @map("invoice_status")
+  salesperson       String?
+  salespersonId     Int?     @map("salesperson_id")
+  note              String?  @db.Text
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id])
+  lines           OrderLineHistory[]
+
+  @@unique([orgId, odooOrderId])
+  @@map("order_histories")
+}
+
+// Order line details synced from Odoo sale.order.line
+model OrderLineHistory {
+  id              String @id @default(uuid())
+  orderHistoryId  String @map("order_history_id")
+  odooLineId      Int    @map("odoo_line_id")
+  productName     String @map("product_name")
+  productSku      String? @map("product_sku")
+  odooProductId   Int?   @map("odoo_product_id")
+  quantity        Float  @default(0)
+  priceUnit       Float  @default(0) @map("price_unit")
+  discount        Float  @default(0)
+  priceSubtotal   Float  @default(0) @map("price_subtotal")
+  qtyDelivered    Float  @default(0) @map("qty_delivered")
+  qtyInvoiced     Float  @default(0) @map("qty_invoiced")
+
+  orderHistory OrderHistory @relation(fields: [orderHistoryId], references: [id], onDelete: Cascade)
+
+  @@unique([orderHistoryId, odooLineId])
+  @@map("order_line_histories")
+}
+
+// Knowledge base items for chatbot (FAQ, policies, product guides)
+model KnowledgeBase {
+  id          String   @id @default(uuid())
+  orgId       String   @map("org_id")
+  category    String   // faq, policy, product_guide, script
+  title       String
+  content     String   @db.Text
+  keywords    String?  @db.Text // comma-separated keywords for search
+  isPublic    Boolean  @default(true) @map("is_public") // visible to customer bot?
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("knowledge_base")
+}
+
+// Chatbot configuration per organization
+model ChatbotConfig {
+  id             String   @id @default(uuid())
+  orgId          String   @map("org_id")
+  provider       String   @default("google") // google, openai, anthropic
+  apiKey         String   @map("api_key")
+  modelName      String   @default("gemini-2.0-flash") @map("model_name")
+  systemPrompt   String?  @map("system_prompt") @db.Text
+  temperature    Float    @default(0.7)
+  maxTokens      Int      @default(2048) @map("max_tokens")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("chatbot_configs")
 }

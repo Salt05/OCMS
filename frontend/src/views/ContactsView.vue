@@ -30,18 +30,17 @@
     >
       <!-- Avatar -->
       <template #item.avatarUrl="{ item }">
-        <v-avatar size="32" color="grey-lighten-2">
+        <v-avatar size="34" color="primary" variant="tonal">
           <v-img v-if="item.avatarUrl" :src="item.avatarUrl" />
           <v-icon v-else size="18">lucide-user</v-icon>
         </v-avatar>
       </template>
 
-      <!-- Source chip -->
-      <template #item.source="{ item }">
-        <v-chip v-if="item.source" size="small" variant="tonal">
-          {{ sourceLabel(item.source) }}
-        </v-chip>
-        <span v-else class="text-grey">—</span>
+      <!-- Full name -->
+      <template #item.fullName="{ item }">
+        <span class="font-weight-bold text-body-1" style="color: rgb(var(--v-theme-on-surface));">
+          {{ item.fullName || '—' }}
+        </span>
       </template>
 
       <!-- Email -->
@@ -63,17 +62,12 @@
         <span v-else class="text-grey">—</span>
       </template>
 
-      <!-- Next appointment date -->
-      <template #item.nextAppointment="{ item }">
-        <span v-if="item.nextAppointment" class="text-body-2">
-          {{ formatDate(item.nextAppointment) }}
-        </span>
+      <!-- Customer ID -->
+      <template #item.customerId="{ item }">
+        <v-chip v-if="item.customerId" size="small" variant="tonal" color="primary">
+          {{ item.customerId }}
+        </v-chip>
         <span v-else class="text-grey">—</span>
-      </template>
-
-      <!-- First contact date -->
-      <template #item.firstContactDate="{ item }">
-        {{ item.firstContactDate ? new Date(item.firstContactDate).toLocaleDateString('vi-VN') : '—' }}
       </template>
 
       <!-- Assigned user -->
@@ -96,7 +90,7 @@
 import { ref, onMounted } from 'vue';
 import ContactFilters from '@/components/contacts/ContactFilters.vue';
 import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
-import { useContacts, SOURCE_OPTIONS, STATUS_OPTIONS } from '@/composables/use-contacts';
+import { useContacts, STATUS_OPTIONS } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 
 const { contacts, total, loading, filters, pagination, fetchContacts, deleteContacts } = useContacts();
@@ -108,18 +102,12 @@ const selectedContact = ref<Contact | null>(null);
 const headers = [
   { title: '', key: 'avatarUrl', sortable: false, width: '48px' },
   { title: 'Tên', key: 'fullName', sortable: true },
+  { title: 'Mã KH', key: 'customerId', sortable: true },
   { title: 'SĐT', key: 'phone', sortable: false },
   { title: 'Email', key: 'email', sortable: false },
-  { title: 'Nguồn', key: 'source', sortable: false },
   { title: 'Trạng thái', key: 'status', sortable: false },
-  { title: 'Tái khám', key: 'nextAppointment', sortable: true },
-  { title: 'Ngày tiếp nhận', key: 'firstContactDate', sortable: true },
   { title: 'Sale', key: 'assignedUser', sortable: false },
 ];
-
-function sourceLabel(value: string) {
-  return SOURCE_OPTIONS.find(o => o.value === value)?.text ?? value;
-}
 
 function statusLabel(value: string) {
   return STATUS_OPTIONS.find(o => o.value === value)?.text ?? value;
@@ -134,11 +122,6 @@ function statusColor(status: string) {
     lost: 'error',
   };
   return map[status] ?? 'grey';
-}
-
-function formatDate(date: string) {
-  if (!date) return '';
-  return new Date(date).toLocaleDateString('vi-VN');
 }
 
 function onFilterChange() {

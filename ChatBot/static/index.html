@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LaPet Agent - Chatbot Phân Tích Dữ Liệu CRM</title>
+    <!-- Google Fonts: Space Grotesk, Roboto Slab, Space Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Roboto+Slab:wght@500;700;800&family=Space+Grotesk:wght@500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Plotly CDN for interactive charts -->
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <!-- Marked CDN for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css?v=7.0">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- ================= SIDEBAR ================= -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <img src="/static/logo.png" alt="LaPet Logo" class="brand-logo-img">
+                    <div class="brand-text">
+                        <span class="brand-name">LaPet Agent</span>
+                    </div>
+                </div>
+                <button class="btn-icon" id="btn-toggle-sidebar-collapse" title="Thu gọn thanh bên">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                </button>
+            </div>
+
+            <div class="sidebar-action">
+                <button class="btn-new-chat" id="btn-new-chat">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>Cuộc trò chuyện mới</span>
+                </button>
+            </div>
+
+            <div class="sidebar-search">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                <input type="text" id="search-conversations" placeholder="Tìm đoạn chat...">
+            </div>
+
+            <div class="conversations-list" id="conversations-list">
+                <!-- Dynamic conversation items rendered here -->
+                <div class="conversations-loading">Đang tải lịch sử...</div>
+            </div>
+        </aside>
+
+        <!-- ================= MAIN CHAT CONTAINER ================= -->
+        <main class="main-content">
+            <!-- Top Navbar -->
+            <header class="top-nav">
+                <div class="nav-left">
+                    <button class="btn-icon btn-sidebar-toggle" id="btn-sidebar-toggle" title="Mở / Thu gọn Lịch sử chat">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    </button>
+                    <div class="chat-title-info">
+                        <h2 class="active-chat-title" id="active-chat-title">Cuộc trò chuyện mới</h2>
+                    </div>
+                </div>
+
+                <div class="nav-right">
+                    <!-- Nút Dev Tools gọn gàng ở góc (Giữ nguyên text + badge) -->
+                    <button class="btn-dev-panel" id="btn-toggle-dev-panel" title="Mở Developer Tasks & Traces (Popup)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        <span>Dev Tasks</span>
+                        <span class="task-counter-pill" id="nav-task-count">0/0</span>
+                    </button>
+
+                    <!-- Nút Đóng / Mở Bảng Dữ Liệu bên Phải (Dùng icon < / >) -->
+                    <button class="btn-toggle-panel-icon" id="btn-toggle-data-panel" title="Mở / Đóng Bảng Dữ Liệu & Biểu Đồ">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" id="data-panel-toggle-icon"><polyline points="15 18 9 12 15 6"/></svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chat Messages Scroll Area -->
+            <div class="chat-viewport" id="chat-viewport">
+                <!-- Welcome View (Shown when no messages) -->
+                <div class="welcome-screen" id="welcome-screen">
+                    <h1 class="welcome-title">Xin chào! LaPet Agent có thể giúp gì cho bạn hôm nay?</h1>
+                    <p class="welcome-subtitle">Hệ thống đã nạp dữ liệu CRM (khách hàng, 18k đơn hàng, doanh thu, sản phẩm). Bạn có thể hỏi bằng tiếng Việt tự nhiên để truy vấn số liệu và vẽ biểu đồ.</p>
+
+                    <div class="prompt-grid">
+                        <div class="prompt-card" onclick="sendSuggestedPrompt('Thống kê số lượng khách hàng theo từng Zone?')">
+                            <div class="prompt-icon">📊</div>
+                            <div class="prompt-text">Thống kê số lượng khách hàng theo từng Zone</div>
+                            <div class="prompt-hint">GROUP BY Zone & COUNT(*)</div>
+                        </div>
+                        <div class="prompt-card" onclick="sendSuggestedPrompt('Top 5 công ty có số lượng khách hàng nhiều nhất là gì?')">
+                            <div class="prompt-icon">🏆</div>
+                            <div class="prompt-text">Top 5 công ty có nhiều khách hàng nhất</div>
+                            <div class="prompt-hint">Sắp xếp giảm dần LIMIT 5</div>
+                        </div>
+                        <div class="prompt-card" onclick="sendSuggestedPrompt('Bảng dữ liệu có tổng cộng bao nhiêu dòng và gồm những cột nào?')">
+                            <div class="prompt-icon">📋</div>
+                            <div class="prompt-text">Bảng dữ liệu có bao nhiêu dòng và cột?</div>
+                            <div class="prompt-hint">Kiểm tra thông tin Schema</div>
+                        </div>
+                        <div class="prompt-card" onclick="sendSuggestedPrompt('Vẽ biểu đồ tròn (pie chart) thể hiện tỷ lệ khách hàng theo Zone')">
+                            <div class="prompt-icon">📈</div>
+                            <div class="prompt-text">Vẽ biểu đồ tròn tỷ lệ khách hàng theo Zone</div>
+                            <div class="prompt-hint">Tự động sinh biểu đồ Plotly</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Messages List -->
+                <div class="messages-list" id="messages-list" style="display: none;"></div>
+
+                <!-- Status Progress Indicator when processing -->
+                <div class="status-banner" id="status-banner" style="display: none;">
+                    <div class="spinner"></div>
+                    <span id="status-banner-text">Đang phân tích câu hỏi và truy vấn dữ liệu...</span>
+                </div>
+            </div>
+
+            <!-- Bottom Floating Chat Input Area -->
+            <div class="chat-input-wrapper">
+                <div class="chat-input-box">
+                    <textarea 
+                        id="user-input" 
+                        rows="1" 
+                        placeholder="Hỏi bất kỳ điều gì về bảng dữ liệu customers... (Shift + Enter để xuống dòng)"
+                    ></textarea>
+                    <button class="btn-send" id="btn-send" title="Gửi tin nhắn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                    </button>
+                </div>
+                <div class="input-disclaimer">
+                    Dữ liệu được truy vấn an toàn và lưu vĩnh viễn trong CSDL SQLite theo tài khoản của bạn.
+                </div>
+            </div>
+        </main>
+
+        <!-- ================= RIGHT DATA & CHARTS SIDE PANEL (VSCode-like Resizable) ================= -->
+        <aside class="data-side-panel collapsed" id="data-side-panel">
+            <div class="resize-handle-left" id="data-panel-resize-handle" title="Kéo để thay đổi kích thước"></div>
+            
+            <div class="data-panel-header">
+                <div class="data-panel-title-area">
+                    <div class="data-panel-badge">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+                    </div>
+                    <span class="data-panel-title">Dữ Liệu & Biểu Đồ</span>
+                </div>
+                <div class="data-panel-header-actions">
+                    <button class="btn-icon" id="btn-close-data-panel" title="Đóng bảng dữ liệu">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tabs: Bảng dữ liệu | Biểu đồ -->
+            <div class="data-panel-tabs">
+                <button class="data-tab-btn active" id="tab-btn-table" onclick="switchDataTab('table')">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+                    <span>Bảng Dữ Liệu</span>
+                </button>
+                <button class="data-tab-btn" id="tab-btn-chart" onclick="switchDataTab('chart')">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    <span>Biểu Đồ</span>
+                </button>
+            </div>
+
+            <!-- Content Area -->
+            <div class="data-panel-content">
+                <!-- Tab 1: Table -->
+                <div class="data-tab-pane active" id="pane-table">
+                    <div class="data-table-toolbar">
+                        <div class="data-search-box">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                            <input type="text" id="data-table-search" placeholder="Lọc dữ liệu..." oninput="filterDataTable(this.value)">
+                        </div>
+                        <div class="data-toolbar-actions">
+                            <span class="data-count-badge" id="data-row-count">0 dòng</span>
+                            <button class="btn-export-csv" id="btn-export-csv" onclick="exportCurrentTableToCSV()" title="Tải xuống file CSV">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                                <span>CSV</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="data-table-container" id="data-table-container">
+                        <div class="data-empty-state">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+                            <p>Chưa có dữ liệu nào được chọn.</p>
+                            <span>Rê chuột vào tin nhắn AI có truy vấn và bấm icon <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline; vertical-align:middle;"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg> để xem bảng chi tiết.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Chart -->
+                <div class="data-tab-pane" id="pane-chart">
+                    <div class="data-chart-container" id="data-chart-panel-container">
+                        <div class="data-empty-state">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                            <p>Chưa có biểu đồ nào được vẽ.</p>
+                            <span>Yêu cầu AI vẽ biểu đồ cột/tròn/đường để xem trực quan tại đây.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ================= DEV TOOLS POPUP MODAL ================= -->
+        <div class="modal-overlay" id="dev-modal" style="display: none;">
+            <div class="dev-modal-card">
+                <div class="dev-modal-header">
+                    <div class="dev-drawer-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        <span>Developer Tasks & Traces</span>
+                    </div>
+                    <button class="btn-icon" id="btn-close-dev-drawer" title="Đóng popup">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="dev-modal-body">
+                    <div class="dev-section">
+                        <div class="dev-section-title">TIẾN TRÌNH THỰC THI (TASKS)</div>
+                        <div class="task-list" id="dev-task-list">
+                            <div class="task-empty">Chưa có tác vụ nào được thực thi.</div>
+                        </div>
+                    </div>
+
+                    <div class="dev-section">
+                        <div class="dev-section-title">THÔNG SỐ HỆ THỐNG</div>
+                        <div class="dev-info-grid">
+                            <div class="dev-info-item">
+                                <span class="info-label">Database Store:</span>
+                                <span class="info-val">SQLite (chatbot.db)</span>
+                            </div>
+                            <div class="dev-info-item">
+                                <span class="info-label">SQL Engine:</span>
+                                <span class="info-val">DuckDB (In-Memory)</span>
+                            </div>
+                            <div class="dev-info-item">
+                                <span class="info-label">Auth System:</span>
+                                <span class="info-val">JWT (HS256)</span>
+                            </div>
+                            <div class="dev-info-item">
+                                <span class="info-label">SSE Endpoint:</span>
+                                <span class="info-val">/api/vanna/v2/chat_sse</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= AUTH MODAL (LOGIN / REGISTER) ================= -->
+        <div class="modal-overlay" id="auth-modal" style="display: none;">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <img src="/static/logo.png" class="modal-logo-img" alt="LaPet Logo">
+                    <h2 class="modal-title">Đăng Nhập LaPet Agent</h2>
+                    <p class="modal-subtitle">Đăng nhập để đồng bộ và lưu trữ lịch sử chat trên mọi thiết bị.</p>
+                </div>
+
+                <!-- Tabs -->
+                <div class="auth-tabs">
+                    <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Đăng Nhập</button>
+                    <button class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">Đăng Ký</button>
+                </div>
+
+                <form id="auth-form" onsubmit="handleAuthSubmit(event)">
+                    <div class="form-group" id="group-username" style="display: none;">
+                        <label>Tên hiển thị</label>
+                        <input type="text" id="auth-username" placeholder="Nguyễn Văn A">
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="auth-email" placeholder="name@company.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mật khẩu</label>
+                        <input type="password" id="auth-password" placeholder="••••••••" required>
+                    </div>
+                    
+                    <div class="auth-error" id="auth-error" style="display: none;"></div>
+                    
+                    <button type="submit" class="btn-auth-submit" id="btn-auth-submit">Đăng Nhập</button>
+                    
+                    <div class="guest-action">
+                        <button type="button" class="btn-guest" onclick="continueAsGuest()">Tiếp tục với tư cách Khách (Guest)</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=7.0"></script>
+</body>
+</html>

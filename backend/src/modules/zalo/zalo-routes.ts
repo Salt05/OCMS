@@ -3,6 +3,7 @@
  * All endpoints require authentication via authMiddleware.
  */
 import type { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { zaloPool } from './zalo-pool.js';
 import { prisma } from '../../shared/database/prisma-client.js';
@@ -10,6 +11,41 @@ import { prisma } from '../../shared/database/prisma-client.js';
 export async function zaloRoutes(app: FastifyInstance): Promise<void> {
   // All routes in this plugin require auth
   app.addHook('preHandler', authMiddleware);
+
+  // POST /api/v1/zalo-accounts/reconnect-all — force check and reconnect all disconnected accounts in org
+  app.post('/api/v1/zalo-accounts/reconnect-all', async (request) => {
+    const user = request.user!;
+    const accounts = await prisma.zaloAccount.findMany({
+      where: {
+        orgId: user.orgId,
+        sessionData: { not: Prisma.JsonNull },
+      },
+      select: { id: true, displayName: true, sessionData: true },
+    });
+
+    let reconnectedCount = 0;
+    let alreadyConnectedCount = 0;
+
+    for (const acc of accounts) {
+      const status = zaloPool.getStatus(acc.id);
+      if (status === 'connected') {
+        alreadyConnectedCount++;
+      } else {
+        const session = acc.sessionData as any;
+        if (session?.imei) {
+          reconnectedCount++;
+          zaloPool.reconnect(acc.id, session, 1).catch(() => {});
+        }
+      }
+    }
+
+    return {
+      message: `Đã kích hoạt kiểm tra: ${alreadyConnectedCount} tài khoản đang hoạt động, ${reconnectedCount} tài khoản đang được kết nối lại`,
+      reconnectedCount,
+      alreadyConnectedCount,
+      totalCount: accounts.length,
+    };
+  });
 
   // GET /api/v1/zalo-accounts — list accounts with live status from pool
   app.get('/api/v1/zalo-accounts', async (request) => {

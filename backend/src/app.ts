@@ -8,9 +8,11 @@ import cors from '@fastify/cors';
 import fastifyJwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
+import multipart from '@fastify/multipart';
 import { Server } from 'socket.io';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 
 import { Prisma } from '@prisma/client';
 import { config } from './config/index.js';
@@ -38,6 +40,12 @@ import { startZaloHealthCheck } from './modules/zalo/zalo-health-check.js';
 import { publicApiRoutes } from './modules/api/public-api-routes.js';
 import { webhookSettingsRoutes } from './modules/api/webhook-settings-routes.js';
 import { orderRoutes } from './modules/orders/order-routes.js';
+import { tagRoutes } from './modules/tags/tag-routes.js';
+import { quickMessageRoutes } from './modules/quick-messages/quick-message-routes.js';
+import { odooRoutes } from './modules/odoo/odoo-routes.js';
+import { syncRoutes } from './modules/sync/sync-routes.js';
+import { odooSyncService } from './modules/sync/odoo-sync-service.js';
+import cron from 'node-cron';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,6 +77,23 @@ async function bootstrap() {
       // Use IP for other requests
       return request.ip;
     },
+  });
+
+  // Multipart file upload support (25 MB limit)
+  await app.register(multipart, {
+    limits: {
+      fileSize: 25 * 1024 * 1024, // 25 MB
+    },
+  });
+
+  // Serve persistent uploaded files
+  if (!fs.existsSync(config.uploadDir)) {
+    fs.mkdirSync(config.uploadDir, { recursive: true });
+  }
+  await app.register(fastifyStatic, {
+    root: config.uploadDir,
+    prefix: '/uploads/',
+    decorateReply: false,
   });
 
   // Serve compiled frontend assets in production
@@ -124,6 +149,10 @@ async function bootstrap() {
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
   await app.register(orderRoutes);
+  await app.register(tagRoutes);
+  await app.register(quickMessageRoutes);
+  await app.register(odooRoutes);
+  await app.register(syncRoutes);
 
   // Liveness/readiness probe — also checks DB connectivity
   app.get('/health', async () => {
@@ -135,9 +164,35 @@ async function bootstrap() {
     }
   });
 
+  // Public debug route for stickers
+  app.get('/stickers-test', async () => {
+    const account = await prisma.zaloAccount.findFirst({
+      where: { status: 'connected' },
+      select: { id: true }
+    });
+    if (!account) return { error: 'No connected account' };
+    const instance = zaloPool.getInstance(account.id);
+    if (!instance?.api) return { error: 'No api instance' };
+    try {
+      const stickers = await instance.api.searchSticker('like');
+      if (stickers && stickers.length > 0) {
+        const details = await instance.api.getStickersDetail([stickers[0].sticker_id || stickers[0].stickerId]);
+        return { stickers, details };
+      }
+      return { stickers, error: 'No stickers found' };
+    } catch (err: any) {
+      return { error: err.message };
+    }
+  });
+
   // API version banner
   app.get('/api/v1/status', async () => {
     return { version: '1.0.0', name: 'Zalo CRM' };
+  });
+
+  // Favicon handler
+  app.get('/favicon.ico', async (_request, reply) => {
+    return reply.status(204).send();
   });
 
   // SPA fallback — serve index.html for non-API routes in production
@@ -167,6 +222,22 @@ async function bootstrap() {
     logger.info(`Environment: ${config.nodeEnv}`);
     startAppointmentReminder(io);
     startZaloHealthCheck();
+
+    // ── Odoo Data Sync ───────────────────────────────────────────────────────
+    // Run incremental sync every 5 minutes
+    cron.schedule('*/5 * * * *', () => {
+      odooSyncService.runIncrementalSync().catch(err => {
+        logger.warn('[cron] Incremental sync error:', err.message);
+      });
+    });
+    logger.info('[sync] Cron job registered: incremental sync every 5 minutes');
+
+    // Run initial sync 30 seconds after server start (non-blocking)
+    setTimeout(() => {
+      odooSyncService.runIncrementalSync().catch(err => {
+        logger.warn('[sync] Initial sync error:', err.message);
+      });
+    }, 30_000);
   } catch (err) {
     logger.error('Failed to start server:', err);
     process.exit(1);

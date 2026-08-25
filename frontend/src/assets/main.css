@@ -78,6 +78,36 @@ body {
   border-right: 1px solid var(--color-chalk) !important;
 }
 
+.contact-detail-drawer.v-navigation-drawer,
+.v-navigation-drawer.contact-detail-drawer {
+  z-index: 1050 !important;
+}
+
+.contact-detail-drawer .v-navigation-drawer__content {
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+}
+
+.contact-detail-drawer .v-tabs,
+.contact-detail-drawer .v-slide-group {
+  min-height: 48px !important;
+  height: 48px !important;
+  flex-shrink: 0 !important;
+}
+
+.contact-detail-drawer .v-slide-group__container,
+.contact-detail-drawer .v-slide-group__content {
+  min-height: 48px !important;
+  height: 48px !important;
+}
+
+.contact-detail-drawer .v-tab {
+  min-height: 44px !important;
+  height: 44px !important;
+}
+
 .v-theme--dark .v-navigation-drawer {
   background: #1f1f1c !important;
   border-right-color: #373734 !important;
@@ -174,6 +204,60 @@ body {
   background: var(--color-soft-stone) !important;
 }
 
+.v-theme--dark .v-btn--variant-text {
+  color: #d1d1cf !important;
+}
+
+.v-theme--dark .v-btn--variant-text:hover {
+  color: #ffffff !important;
+  background: #2e2e2b !important;
+}
+
+/* Top bar action buttons */
+.topbar-btn {
+  color: var(--color-graphite) !important;
+  border-radius: var(--radius-buttons) !important;
+  transition: all var(--duration-claude) var(--ease-claude) !important;
+}
+
+.topbar-btn:hover {
+  color: var(--color-carbon-ink) !important;
+  background: var(--color-soft-stone) !important;
+}
+
+.v-theme--dark .topbar-btn {
+  color: #d1d1cf !important;
+}
+
+.v-theme--dark .topbar-btn:hover {
+  color: #ffffff !important;
+  background: #2e2e2b !important;
+}
+
+.topbar-btn.theme-toggle-btn {
+  color: var(--color-graphite) !important;
+}
+
+.v-theme--dark .topbar-btn.theme-toggle-btn {
+  color: #fbbf24 !important;
+}
+
+.v-theme--dark .topbar-btn.theme-toggle-btn:hover {
+  color: #fde68a !important;
+  background: rgba(251, 191, 36, 0.15) !important;
+}
+
+.topbar-btn.logout-btn:hover {
+  color: #dc2626 !important;
+  background: rgba(220, 38, 38, 0.08) !important;
+}
+
+.v-theme--dark .topbar-btn.logout-btn:hover {
+  color: #f87171 !important;
+  background: rgba(248, 113, 113, 0.15) !important;
+}
+
+
 /* Chat bubbles */
 .message-bubble {
   animation: fade-slide-up 0.3s var(--ease-claude);
@@ -265,11 +349,16 @@ body {
 }
 
 /* Tabs */
+.v-tabs {
+  --v-tabs-height: 44px;
+}
+
 .v-tab {
   color: var(--color-graphite) !important;
   font-weight: var(--font-weight-medium) !important;
   text-transform: none !important;
   letter-spacing: normal !important;
+  min-height: 44px !important;
 }
 
 .v-tab--selected {
@@ -360,20 +449,241 @@ body {
   padding: var(--spacing-32) !important;
 }
 
-/* Online status badge */
+/* Online / Reconnecting / Disconnected status badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-buttons);
+  cursor: pointer;
+  user-select: none;
+  transition: all var(--duration-claude) var(--ease-claude);
+}
+
+.status-badge:hover {
+  opacity: 0.9;
+  transform: translateY(-0.5px);
+}
+
+.status-badge .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.status-badge .status-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Online State */
 .status-badge-online {
   background: var(--color-soft-stone);
   border: 1px solid var(--color-chalk);
 }
-
 .status-badge-online .status-dot {
-  background: var(--color-graphite);
+  background: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2);
 }
-
 .status-badge-online .status-label {
   color: var(--color-graphite);
-  letter-spacing: 0.5px;
 }
+.v-theme--dark .status-badge-online {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+.v-theme--dark .status-badge-online .status-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.35);
+}
+.v-theme--dark .status-badge-online .status-label {
+  color: #4ade80;
+}
+
+/* Reconnecting State */
+.status-badge-reconnecting {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+.status-badge-reconnecting .status-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+  animation: pulse-amber 1.5s infinite;
+}
+.status-badge-reconnecting .status-label {
+  color: #b45309;
+}
+.v-theme--dark .status-badge-reconnecting {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.v-theme--dark .status-badge-reconnecting .status-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.35);
+  animation: pulse-amber 1.5s infinite;
+}
+.v-theme--dark .status-badge-reconnecting .status-label {
+  color: #fbbf24;
+}
+
+/* Disconnected / Offline State */
+.status-badge-disconnected {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+.status-badge-disconnected .status-dot {
+  background: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.25);
+  animation: pulse-red 1.5s infinite;
+}
+.status-badge-disconnected .status-label {
+  color: #dc2626;
+}
+.v-theme--dark .status-badge-disconnected {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.v-theme--dark .status-badge-disconnected .status-dot {
+  background: #f87171;
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.35);
+  animation: pulse-red 1.5s infinite;
+}
+.v-theme--dark .status-badge-disconnected .status-label {
+  color: #f87171;
+}
+
+@keyframes pulse-amber {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+@keyframes pulse-red {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+
+/* User profile badge (Admin) */
+.topbar-user-badge {
+  background: var(--color-soft-stone);
+  border: 1px solid var(--color-chalk);
+  color: var(--color-carbon-ink);
+  padding: 4px 10px;
+  border-radius: var(--radius-buttons);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--duration-claude) var(--ease-claude);
+}
+
+.topbar-user-badge .topbar-avatar {
+  background: var(--color-paper-white);
+  color: var(--color-graphite);
+}
+
+.topbar-user-badge .topbar-username {
+  color: var(--color-carbon-ink);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.v-theme--dark .topbar-user-badge {
+  background: #2e2e2b;
+  border-color: #373734;
+  color: #efeeeb;
+}
+
+.v-theme--dark .topbar-user-badge .topbar-avatar {
+  background: #373734;
+  color: #efeeeb;
+}
+
+.v-theme--dark .topbar-user-badge .topbar-username {
+  color: #efeeeb;
+}
+
+/* Notification menu card */
+.notification-card {
+  background: var(--color-paper-white) !important;
+  border: 1px solid var(--color-chalk) !important;
+}
+
+.v-theme--dark .notification-card {
+  background: #252522 !important;
+  border-color: #373734 !important;
+}
+
+.notification-item:hover {
+  background: var(--color-soft-stone) !important;
+}
+
+.v-theme--dark .notification-item:hover {
+  background: #2e2e2b !important;
+}
+
+/* Status Popover Pill Badges & Values */
+.status-pill-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.3px;
+  display: inline-block;
+}
+
+.status-pill-badge.pill-success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.v-theme--dark .status-pill-badge.pill-success {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.status-pill-badge.pill-warning {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.v-theme--dark .status-pill-badge.pill-warning {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+.status-pill-badge.pill-error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.v-theme--dark .status-pill-badge.pill-error {
+  background: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+}
+
+.text-success-val {
+  color: #16a34a !important;
+}
+
+.v-theme--dark .text-success-val {
+  color: #4ade80 !important;
+}
+
+.text-error-val {
+  color: #dc2626 !important;
+}
+
+.v-theme--dark .text-error-val {
+  color: #f87171 !important;
+}
+
+
 
 /* Main content area */
 .v-main {

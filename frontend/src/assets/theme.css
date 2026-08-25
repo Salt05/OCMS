@@ -147,3 +147,146 @@
 .text-graphite {
   color: var(--color-graphite);
 }
+
+/* Dark theme variable overrides */
+.v-theme--dark {
+  --color-bone-parchment: #1a1a18;
+  --color-paper-white: #252522;
+  --color-soft-stone: #2e2e2b;
+  --color-carbon-ink: #efeeeb;
+  --color-graphite: #b7b7b5;
+  --color-ashen: #9c9a92;
+  --color-pebble: #7b7974;
+  --color-mist: #4a4a46;
+  --color-chalk: #373734;
+  --color-obsidian: #ffffff;
+  --color-clay: #e08264;
+}
+
+.v-theme--dark .editorial-heading,
+.v-theme--dark .editorial-heading-lg {
+  color: #efeeeb;
+}
+
+.v-theme--dark .page-icon {
+  color: #efeeeb;
+}
+
+.v-theme--dark .text-graphite {
+  color: #d1d1cf;
+}
+
+.v-theme--dark .text-ashen {
+  color: #9c9a92;
+}
+
+/* ════════════ Form Inputs, Labels & Hints Contrast Enhancements ════════════ */
+
+/* Light Mode Input & Label Contrast */
+.v-field--variant-outlined {
+  --v-field-border-opacity: 0.28;
+  border-radius: 8px;
+}
+
+.v-field--variant-outlined:hover {
+  --v-field-border-opacity: 0.6;
+}
+
+.v-field--variant-outlined.v-field--focused {
+  --v-field-border-opacity: 1;
+}
+
+.v-field-label {
+  font-weight: 550 !important;
+  color: #374151 !important; /* Xám đậm rõ nét ở Light mode */
+  opacity: 0.9 !important;
+  letter-spacing: 0.15px;
+}
+
+.v-field-label--floating {
+  font-weight: 600 !important;
+  color: #1f2937 !important; /* Xám đậm nét nổi bật trên border notch */
+  opacity: 1 !important;
+}
+
+.v-field--focused .v-field-label,
+.v-field--focused .v-field-label--floating {
+  color: #0068ff !important;
+  opacity: 1 !important;
+}
+
+.v-field__prepend-inner > .v-icon,
+.v-field__prepend-inner i {
+  color: #4b5563 !important;
+  opacity: 0.85 !important;
+}
+
+.v-field--focused .v-field__prepend-inner > .v-icon,
+.v-field--focused .v-field__prepend-inner i {
+  color: #0068ff !important;
+  opacity: 1 !important;
+}
+
+.v-input__details {
+  padding-top: 4px;
+}
+
+.v-messages__message {
+  color: #4b5563 !important;
+  font-weight: 500;
+  font-size: 11.5px;
+}
+
+/* Dark Mode Input & Label Contrast */
+.v-theme--dark .v-field--variant-outlined {
+  --v-field-border-opacity: 0.35;
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.v-theme--dark .v-field--variant-outlined:hover {
+  --v-field-border-opacity: 0.7;
+}
+
+.v-theme--dark .v-field--variant-outlined.v-field--focused {
+  --v-field-border-opacity: 1;
+}
+
+.v-theme--dark .v-field-label {
+  color: #d1d5db !important; /* Xám bạc sáng rõ nét ở Dark mode */
+  opacity: 0.95 !important;
+  font-weight: 550 !important;
+}
+
+.v-theme--dark .v-field-label--floating {
+  color: #e5e7eb !important; /* Xám sáng nổi bật trên nền tối */
+  opacity: 1 !important;
+  font-weight: 600 !important;
+}
+
+.v-theme--dark .v-field--focused .v-field-label,
+.v-theme--dark .v-field--focused .v-field-label--floating {
+  color: #38bdf8 !important;
+  opacity: 1 !important;
+}
+
+.v-theme--dark .v-field__prepend-inner > .v-icon,
+.v-theme--dark .v-field__prepend-inner i {
+  color: #9ca3af !important;
+  opacity: 0.9 !important;
+}
+
+.v-theme--dark .v-field--focused .v-field__prepend-inner > .v-icon,
+.v-theme--dark .v-field--focused .v-field__prepend-inner i {
+  color: #38bdf8 !important;
+  opacity: 1 !important;
+}
+
+.v-theme--dark .v-field__input {
+  color: #f3f4f6 !important;
+}
+
+.v-theme--dark .v-messages__message {
+  color: #9ca3af !important;
+}
+
+

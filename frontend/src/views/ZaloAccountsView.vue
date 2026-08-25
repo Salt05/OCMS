@@ -6,6 +6,45 @@
       <v-btn color="primary" prepend-icon="lucide-plus" @click="showAddDialog = true">Thêm Zalo</v-btn>
     </div>
 
+    <!-- Health check & Reconnect monitor card -->
+    <v-card class="mb-4 pa-4 rounded-lg border" elevation="0">
+      <div class="d-flex flex-wrap align-center justify-space-between" style="gap: 12px;">
+        <div class="d-flex align-center">
+          <v-avatar size="40" :color="hasDisconnected ? 'warning' : 'success'" class="mr-3" variant="tonal">
+            <v-icon size="22">{{ hasDisconnected ? 'lucide-alert-triangle' : 'lucide-shield-check' }}</v-icon>
+          </v-avatar>
+          <div>
+            <div class="text-subtitle-2 font-weight-bold d-flex align-center">
+              <span>{{ hasDisconnected ? 'Có tài khoản ngắt kết nối' : 'Tất cả tài khoản Zalo đang kết nối ổn định' }}</span>
+              <v-chip size="x-small" :color="hasDisconnected ? 'warning' : 'success'" class="ml-2 font-weight-bold" variant="flat">
+                {{ connectedCount }}/{{ accounts.length }} Hoạt động
+              </v-chip>
+            </div>
+            <div class="text-caption text-medium-emphasis d-flex align-center mt-1">
+              <v-icon size="14" class="mr-1">lucide-clock</v-icon>
+              <span>{{ hasDisconnected ? 'Tự động phục hồi kết nối sau: ' : 'Tự động kiểm tra định kỳ sau: ' }}</span>
+              <span class="text-high-emphasis font-weight-bold ml-1 font-mono" style="font-size: 13px;">{{ formattedCountdown }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex align-center">
+          <v-btn
+            color="primary"
+            variant="flat"
+            size="small"
+            prepend-icon="lucide-refresh-cw"
+            :loading="isReconnectingAll"
+            :disabled="cooldownSeconds > 0"
+            @click="handleManualReconnectAll"
+          >
+            <span v-if="cooldownSeconds > 0">Thử lại sau ({{ cooldownSeconds }}s)</span>
+            <span v-else>Kết nối lại ngay</span>
+          </v-btn>
+        </div>
+      </div>
+    </v-card>
+
     <v-card>
       <v-data-table :headers="headers" :items="accounts" :loading="loading" no-data-text="Chưa có tài khoản Zalo nào">
         <template #item.status="{ item }">
@@ -93,11 +132,15 @@
       :account-id="accessTarget?.id ?? ''"
       :account-name="accessTarget?.displayName ?? accessTarget?.id ?? ''"
     />
+
+    <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3500" location="top">
+      {{ snackbar.text }}
+    </v-snackbar>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useZaloAccounts, type ZaloAccount } from '@/composables/use-zalo-accounts';
 import { useAuthStore } from '@/stores/auth';
 import ZaloAccessDialog from '@/components/settings/ZaloAccessDialog.vue';
@@ -121,6 +164,12 @@ const newAccountName = ref('');
 const deleteTarget = ref<ZaloAccount | null>(null);
 const accessTarget = ref<ZaloAccount | null>(null);
 
+const countdownSeconds = ref(300); // 5 minutes
+const cooldownSeconds = ref(0);
+const isReconnectingAll = ref(false);
+const snackbar = ref({ show: false, text: '', color: 'info' });
+let timerInterval: any = null;
+
 const headers = [
   { title: 'Tên', key: 'displayName', sortable: true },
   { title: 'Zalo UID', key: 'zaloUid' },
@@ -129,13 +178,60 @@ const headers = [
   { title: 'Hành động', key: 'actions', sortable: false, align: 'end' as const },
 ];
 
+const connectedCount = computed(() => {
+  return accounts.value.filter((a) => (a.liveStatus || a.status) === 'connected').length;
+});
+
+const hasDisconnected = computed(() => {
+  return accounts.value.some((a) => (a.liveStatus || a.status) === 'disconnected' || (a.liveStatus || a.status) === 'error');
+});
+
+const formattedCountdown = computed(() => {
+  const m = Math.floor(countdownSeconds.value / 60);
+  const s = countdownSeconds.value % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+});
+
+async function handleManualReconnectAll() {
+  if (cooldownSeconds.value > 0 || isReconnectingAll.value) return;
+  isReconnectingAll.value = true;
+  cooldownSeconds.value = 20; // 20s cooldown
+
+  try {
+    const res = await api.post('/zalo-accounts/reconnect-all');
+    snackbar.value = {
+      show: true,
+      text: res.data.message || 'Đã kích hoạt kiểm tra kết nối',
+      color: 'success',
+    };
+  } catch (err: any) {
+    snackbar.value = {
+      show: true,
+      text: 'Kiểm tra thất bại: ' + (err.response?.data?.error || err.message),
+      color: 'error',
+    };
+  } finally {
+    await fetchAccounts();
+    countdownSeconds.value = 300; // Reset 5-minute countdown
+    isReconnectingAll.value = false;
+  }
+}
+
 async function syncContacts(accountId: string) {
   syncing.value = accountId;
   try {
     const res = await api.post(`/zalo-accounts/${accountId}/sync-contacts`);
-    alert(`Đồng bộ thành công: ${res.data.created} mới, ${res.data.updated} cập nhật`);
+    snackbar.value = {
+      show: true,
+      text: `Đồng bộ thành công: ${res.data.created} mới, ${res.data.updated} cập nhật`,
+      color: 'success',
+    };
   } catch (err: any) {
-    alert('Đồng bộ thất bại: ' + (err.response?.data?.error || err.message));
+    snackbar.value = {
+      show: true,
+      text: 'Đồng bộ thất bại: ' + (err.response?.data?.error || err.message),
+      color: 'error',
+    };
   } finally {
     syncing.value = null;
   }
@@ -171,5 +267,22 @@ async function handleDeleteAccount() {
 onMounted(() => {
   fetchAccounts();
   setupSocket();
+
+  timerInterval = setInterval(() => {
+    if (countdownSeconds.value > 0) {
+      countdownSeconds.value--;
+    } else {
+      countdownSeconds.value = 300;
+      fetchAccounts();
+    }
+
+    if (cooldownSeconds.value > 0) {
+      cooldownSeconds.value--;
+    }
+  }, 1000);
+});
+
+onUnmounted(() => {
+  if (timerInterval) clearInterval(timerInterval);
 });
 </script>

@@ -57,6 +57,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/ai-assistant',
+    name: 'AIAssistant',
+    component: () => import('@/views/ChatbotView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/SettingsView.vue'),

@@ -9,6 +9,8 @@
       <v-tab value="users">Nhân viên</v-tab>
       <v-tab value="teams">Đội nhóm</v-tab>
       <v-tab value="org">Tổ chức</v-tab>
+      <v-tab value="tags">Thẻ & Nhóm tag</v-tab>
+      <v-tab value="quick-messages">Tin nhắn mẫu</v-tab>
     </v-tabs>
 
     <v-window v-model="tab">
@@ -74,6 +76,30 @@
             <v-card-text>
               <v-text-field v-model="form.fullName" label="Họ tên" class="mb-2" />
               <v-text-field v-model="form.email" label="Email" type="email" class="mb-2" />
+              <v-autocomplete
+                v-model="form.odooId"
+                :items="odooEmployees"
+                :loading="loadingOdooEmployees"
+                :item-title="item => item && typeof item === 'object' ? item.name : item"
+                item-value="idStr"
+                label="Liên kết với Nhân viên Odoo (Tùy chọn)"
+                class="mb-2"
+                hint="Tìm kiếm và chọn nhân viên Odoo"
+                persistent-hint
+                clearable
+                @update:search="searchOdooEmployees"
+              >
+                <template #item="{ props, item }">
+                  <v-list-item v-bind="props">
+                    <template v-slot:title>
+                      {{ (item.raw || item)?.name || 'Chưa có tên' }}
+                    </template>
+                    <template v-slot:subtitle>
+                      {{ (item.raw || item)?.work_email || (item.raw || item)?.job_title || 'Không có thông tin' }}
+                    </template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
               <v-select v-if="authStore.isOwner" v-model="form.role" :items="roleOptions" item-title="label" item-value="value" label="Vai trò" />
               <v-alert v-if="dialogError" type="error" density="compact" class="mt-2">{{ dialogError }}</v-alert>
             </v-card-text>
@@ -124,16 +150,29 @@
       <v-window-item value="org">
         <OrgSettings />
       </v-window-item>
+
+      <!-- Tab 4: Tags & Tag Groups settings -->
+      <v-window-item value="tags">
+        <TagsSettingsTab />
+      </v-window-item>
+
+      <!-- Tab 5: Quick Messages templates -->
+      <v-window-item value="quick-messages">
+        <QuickMessagesTab />
+      </v-window-item>
     </v-window>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { api } from '@/api';
 import { useUsers, type OrgUser } from '@/composables/use-users';
 import { useAuthStore } from '@/stores/auth';
 import TeamManagement from '@/components/settings/TeamManagement.vue';
 import OrgSettings from '@/components/settings/OrgSettings.vue';
+import TagsSettingsTab from '@/components/settings/TagsSettingsTab.vue';
+import QuickMessagesTab from '@/components/settings/QuickMessagesTab.vue';
 
 const { users, loading, error, fetchUsers, createUser, updateUser, resetPassword, deleteUser } = useUsers();
 const authStore = useAuthStore();
@@ -147,8 +186,11 @@ const saving = ref(false);
 const dialogError = ref('');
 const newPassword = ref('');
 const selectedUser = ref<OrgUser | null>(null);
+const odooEmployees = ref<any[]>([]);
+const loadingOdooEmployees = ref(false);
+let searchOdooTimeout: any = null;
 
-const form = ref({ fullName: '', email: '', password: '', role: 'member' });
+const form = ref({ fullName: '', email: '', password: '', role: 'member', odooId: '' });
 
 const roleOptions = [
   { label: 'Nhân viên', value: 'member' },
@@ -158,6 +200,7 @@ const roleOptions = [
 const headers = [
   { title: 'Họ tên', key: 'fullName', sortable: true },
   { title: 'Email', key: 'email' },
+  { title: 'Odoo ID', key: 'odooId' },
   { title: 'Vai trò', key: 'role', sortable: true },
   { title: 'Trạng thái', key: 'isActive', sortable: true },
   { title: 'Hành động', key: 'actions', sortable: false, align: 'end' as const },
@@ -176,16 +219,58 @@ function roleLabel(role: string) {
 }
 
 function openCreate() {
-  form.value = { fullName: '', email: '', password: '', role: 'member' };
+  form.value = { fullName: '', email: '', password: '', role: 'member', odooId: '' };
   dialogError.value = '';
   showCreate.value = true;
 }
 
 function openEdit(user: OrgUser) {
   selectedUser.value = user;
-  form.value = { fullName: user.fullName, email: user.email, password: '', role: user.role };
+  form.value = { fullName: user.fullName, email: user.email, password: '', role: user.role, odooId: user.odooId || '' };
   dialogError.value = '';
+  odooEmployees.value = [];
+  if (form.value.odooId) {
+    fetchOdooEmployee(form.value.odooId);
+  }
+  searchOdooEmployees('');
   showEdit.value = true;
+}
+
+async function searchOdooEmployees(query: string) {
+  if (query === null || query === undefined) return;
+  clearTimeout(searchOdooTimeout);
+  searchOdooTimeout = setTimeout(async () => {
+    loadingOdooEmployees.value = true;
+    try {
+      const res = await api.get(`/odoo/employees?query=${encodeURIComponent(query)}`);
+      if (res.data && res.data.employees) {
+        odooEmployees.value = res.data.employees.map((e: any) => ({
+          ...e,
+          idStr: String(e.id),
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      loadingOdooEmployees.value = false;
+    }
+  }, 500);
+}
+
+async function fetchOdooEmployee(id: string) {
+  if (!id) return;
+  try {
+    const res = await api.get(`/odoo/employees/${id}`);
+    if (res.data && res.data.employee) {
+      const emp = res.data.employee;
+      const idStr = String(emp.id);
+      if (!odooEmployees.value.find(e => e.idStr === idStr)) {
+        odooEmployees.value.push({ ...emp, idStr });
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 function openPassword(user: OrgUser) {
@@ -212,7 +297,7 @@ async function handleUpdate() {
   if (!selectedUser.value) return;
   saving.value = true;
   dialogError.value = '';
-  const res = await updateUser(selectedUser.value.id, { fullName: form.value.fullName, email: form.value.email, role: form.value.role });
+  const res = await updateUser(selectedUser.value.id, { fullName: form.value.fullName, email: form.value.email, role: form.value.role, odooId: form.value.odooId });
   saving.value = false;
   if (res.ok) { showEdit.value = false; } else { dialogError.value = res.error || ''; }
 }

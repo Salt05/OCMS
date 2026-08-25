@@ -107,6 +107,41 @@ export async function notificationRoutes(app: FastifyInstance) {
       }
     }
 
+    // 5. Database persistent notifications
+    try {
+      const dbNotifications = await prisma.notification.findMany({
+        where: { userId: user.id, isRead: false },
+        orderBy: { createdAt: 'desc' },
+      });
+      const dbItems = dbNotifications.map(n => ({
+        id: 'db-' + n.id,
+        type: 'info',
+        priority: 'high',
+        title: n.title,
+        detail: n.detail,
+        createdAt: n.createdAt.toISOString(),
+        conversationId: n.conversationId,
+      }));
+      notifications.unshift(...dbItems);
+    } catch (err) {
+      // ignore
+    }
+
     return { notifications };
+  });
+
+  // PUT /api/v1/notifications/:id/read — mark database notification as read
+  app.put('/api/v1/notifications/:id/read', async (request, reply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    try {
+      await prisma.notification.updateMany({
+        where: { id, userId: user.id },
+        data: { isRead: true },
+      });
+      return { success: true };
+    } catch (err) {
+      return reply.status(500).send({ error: 'Failed to mark notification as read' });
+    }
   });
 }

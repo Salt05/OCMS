@@ -1,2 +1,14 @@
-Set-Location "C:\Users\ADMIN\OneDrive\Project\Work\ZaloCRM\backend"
+Set-Location "C:\Users\ADMIN\OneDrive\Project\Work\New folder\OCMS\backend"
 npx prisma studio --url "postgresql://crmuser:zalocrm_secure_password@localhost:5433/zalocrm"
+
+
+----Log-----------
+docker compose logs -f
+
+docker compose logs app | Select-String "ZALO|zalo|reconnect|health-check"
+
+Dừng dự án:
+docker compose down
+
+Khởi động lại:
+docker compose restart

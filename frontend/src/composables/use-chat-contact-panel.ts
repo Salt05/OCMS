@@ -22,26 +22,39 @@ export function useChatContactPanel(
   const contactAppointments = ref<Appointment[]>([]);
 
   const form = reactive({
+    isCompany: false,
     fullName: '',
+    zaloName: '',
+    customerId: '',
+    contactType: 'other' as 'customer' | 'employee' | 'other',
     phone: '',
     email: '',
+    address: '',
+    zone: '',
+    salesperson: '',
     source: null as string | null,
     status: null as string | null,
-    nextAppointmentDate: '',
+    assignedUserId: null as string | null,
     firstContactDate: '',
+    nextAppointmentDate: '',
     tags: [] as string[],
     notes: '',
   });
 
   function populateForm(c: Contact) {
+    form.isCompany = false;
     form.fullName = c.fullName ?? '';
+    form.zaloName = c.zaloName || c.fullName || '';
+    form.customerId = c.customerId ?? '';
+    form.contactType = c.contactType ?? 'other';
     form.phone = c.phone ?? '';
     form.email = c.email ?? '';
+    form.address = c.address ?? '';
+    form.zone = c.zone ?? '';
+    form.salesperson = c.salesperson ?? '';
     form.source = c.source ?? null;
     form.status = c.status ?? null;
-    form.nextAppointmentDate = c.nextAppointment
-      ? new Date(c.nextAppointment).toISOString().split('T')[0]
-      : '';
+    form.assignedUserId = c.assignedUserId ?? (c.assignedUser?.id ?? null);
     form.firstContactDate = c.firstContactDate
       ? new Date(c.firstContactDate).toISOString().split('T')[0]
       : '';
@@ -69,10 +82,18 @@ export function useChatContactPanel(
     }
   }
 
+  let lastContactId: string | null = null;
+
   watch(getContact, (c) => {
-    if (!c) return;
-    populateForm(c);
-    fetchContactExtras(c.id);
+    if (!c) {
+      lastContactId = null;
+      return;
+    }
+    if (c.id !== lastContactId) {
+      lastContactId = c.id;
+      populateForm(c);
+      fetchContactExtras(c.id);
+    }
   }, { immediate: true, deep: true });
 
   async function saveContact() {
@@ -84,13 +105,17 @@ export function useChatContactPanel(
 
     const result = await updateContact(contactId, {
       fullName: form.fullName || null,
+      zaloName: form.zaloName || null,
+      customerId: form.customerId || null,
+      contactType: form.contactType,
       phone: form.phone || null,
       email: form.email || null,
+      address: form.address || null,
+      zone: form.zone || null,
+      salesperson: form.salesperson || null,
       source: form.source || null,
       status: form.status || null,
-      nextAppointment: form.nextAppointmentDate
-        ? new Date(form.nextAppointmentDate + 'T00:00:00').toISOString()
-        : null,
+      assignedUserId: form.assignedUserId || null,
       firstContactDate: form.firstContactDate
         ? new Date(form.firstContactDate + 'T00:00:00').toISOString()
         : null,
@@ -101,7 +126,10 @@ export function useChatContactPanel(
     saving.value = false;
     if (result) {
       const fresh = await fetchContact(contactId);
-      if (fresh) populateForm(fresh);
+      if (fresh) {
+        lastContactId = fresh.id;
+        populateForm(fresh);
+      }
       saveSuccess.value = true;
       onSaved();
       setTimeout(() => { saveSuccess.value = false; }, 2500);

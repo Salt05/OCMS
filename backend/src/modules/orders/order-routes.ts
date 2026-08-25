@@ -6,6 +6,8 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { randomUUID } from 'node:crypto';
+import { extractOrderFromConversation, extractOrderFromText, modifyOrderDraft } from './ai-order-service.js';
+import { logger } from '../../shared/utils/logger.js';
 
 export async function orderRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -18,6 +20,67 @@ export async function orderRoutes(app: FastifyInstance) {
     });
     return `ORD-${today}-${String(count + 1).padStart(3, '0')}`;
   }
+
+  // ── AI-powered order extraction from chat messages ─────────────────────────
+  app.post('/api/v1/orders/ai-extract', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const body = request.body as any;
+
+    try {
+      let draft;
+
+      if (body.mode === 'text' || (!body.conversationId && body.text)) {
+        // Extract directly from staff's text input (without reading chat history)
+        draft = await extractOrderFromText(user.orgId, body.text, {
+          name: body.customerName,
+          phone: body.customerPhone,
+          address: body.customerAddress,
+          customerId: body.customerId,
+        });
+      } else if (body.conversationId) {
+        // Extract from customer's conversation messages in today's chat history
+        draft = await extractOrderFromConversation(user.orgId, body.conversationId);
+      } else if (body.text) {
+        draft = await extractOrderFromText(user.orgId, body.text, {
+          name: body.customerName,
+          phone: body.customerPhone,
+          address: body.customerAddress,
+          customerId: body.customerId,
+        });
+      } else {
+        return reply.status(400).send({
+          error: 'Vui lòng cung cấp conversationId hoặc text để AI phân tích.',
+        });
+      }
+
+      return { success: true, draft };
+    } catch (err: any) {
+      logger.error('[ai-order-route] extraction error:', err);
+      return reply.status(500).send({
+        error: err.message || 'Lỗi khi AI phân tích đơn hàng',
+      });
+    }
+  });
+
+  // ── AI-powered conversational draft order modification ─────────────────────
+  app.post('/api/v1/orders/ai-modify-draft', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const body = request.body as any;
+
+    if (!body.currentDraft || !body.instruction) {
+      return reply.status(400).send({ error: 'Thiếu currentDraft hoặc instruction' });
+    }
+
+    try {
+      const result = await modifyOrderDraft(user.orgId, body.currentDraft, body.instruction);
+      return { success: true, ...result };
+    } catch (err: any) {
+      logger.error('[ai-order-route] modify draft error:', err);
+      return reply.status(500).send({
+        error: err.message || 'Lỗi khi AI chỉnh sửa đơn hàng',
+      });
+    }
+  });
 
   // List orders (paginated, filterable by status/contactId/createdByUserId)
   app.get('/api/v1/orders', async (request: FastifyRequest) => {

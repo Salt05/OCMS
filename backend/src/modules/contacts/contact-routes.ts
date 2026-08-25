@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
+import { ensureTagsExist, cleanupUnusedTags } from '../tags/tag-routes.js';
 
 type QueryParams = Record<string, string>;
 
@@ -24,18 +25,38 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         source = '',
         status = '',
         assignedUserId = '',
+        tags = '',
+        contactType = '',
       } = request.query as QueryParams;
 
       const where: any = { orgId: user.orgId };
       if (source) where.source = source;
       if (status) where.status = status;
       if (assignedUserId) where.assignedUserId = assignedUserId;
+      if (contactType) where.contactType = contactType;
+      
+      if (tags) {
+        const tagList = tags.split(',');
+        where.tags = { array_contains: tagList };
+      }
+
       if (search) {
         where.OR = [
           { fullName: { contains: search, mode: 'insensitive' } },
           { phone: { contains: search } },
           { email: { contains: search, mode: 'insensitive' } },
+          { customerId: { contains: search, mode: 'insensitive' } },
         ];
+      }
+      
+      // Members cannot see 'other' contacts
+      if (user.role === 'member') {
+        if (!where.contactType) {
+          where.contactType = { not: 'other' };
+        } else if (where.contactType === 'other') {
+          // Member trying to filter by 'other' which they can't see
+          where.contactType = 'invalid_role_access'; 
+        }
       }
 
       const pageNum = parseInt(page);
@@ -74,7 +95,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       });
 
       // Fetch contacts per status for kanban cards (limit 20 per column)
-      const statuses = pipeline.map((g) => g.status ?? 'unknown');
+      const statuses = ['new', 'contacted', 'interested', 'converted', 'lost'];
       const contactsByStatus: Record<string, any[]> = {};
 
       await Promise.all(
@@ -85,11 +106,11 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
             select: {
               id: true,
               fullName: true,
+              customerId: true,
               phone: true,
               email: true,
               avatarUrl: true,
               status: true,
-              nextAppointment: true,
               assignedUser: { select: { id: true, fullName: true } },
             },
             orderBy: { updatedAt: 'desc' },
@@ -141,10 +162,15 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const user = request.user!;
       const body = request.body as Record<string, any>;
 
+      if (Array.isArray(body.tags) && body.tags.length > 0) {
+        await ensureTagsExist(user.orgId, body.tags);
+      }
+
       const contact = await prisma.contact.create({
         data: {
           orgId: user.orgId,
           fullName: body.fullName,
+          zaloName: body.zaloName,
           phone: body.phone,
           email: body.email,
           zaloUid: body.zaloUid,
@@ -152,7 +178,11 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           source: body.source,
           sourceDate: body.sourceDate ? new Date(body.sourceDate) : undefined,
           status: body.status ?? 'new',
-          nextAppointment: body.nextAppointment ? new Date(body.nextAppointment) : undefined,
+          customerId: body.customerId,
+          contactType: body.contactType !== undefined ? String(body.contactType) : 'other',
+          address: body.address,
+          zone: body.zone,
+          salesperson: body.salesperson,
           assignedUserId: body.assignedUserId,
           notes: body.notes,
           tags: body.tags ?? [],
@@ -177,20 +207,33 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const existing = await prisma.contact.findFirst({ where: { id, orgId: user.orgId }, select: { id: true } });
       if (!existing) return reply.status(404).send({ error: 'Contact not found' });
 
+      if (Array.isArray(body.tags) && body.tags.length > 0) {
+        await ensureTagsExist(user.orgId, body.tags);
+      }
+
       const updateData: any = {
         fullName: body.fullName,
+        customerId: body.customerId,
         phone: body.phone,
         email: body.email,
         avatarUrl: body.avatarUrl,
         source: body.source,
         sourceDate: body.sourceDate ? new Date(body.sourceDate) : undefined,
         status: body.status,
-        nextAppointment: body.nextAppointment ? new Date(body.nextAppointment) : undefined,
+        address: body.address,
+        zone: body.zone,
+        salesperson: body.salesperson,
         assignedUserId: body.assignedUserId,
         notes: body.notes,
         tags: body.tags,
         metadata: body.metadata,
       };
+      if (body.zaloName !== undefined) {
+        updateData.zaloName = body.zaloName;
+      }
+      if (body.contactType !== undefined) {
+        updateData.contactType = String(body.contactType);
+      }
       if (body.firstContactDate !== undefined) {
         updateData.firstContactDate = body.firstContactDate ? new Date(body.firstContactDate) : null;
       }
@@ -204,6 +247,9 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           _count: { select: { conversations: true } },
         },
       });
+
+      // Clean up any tags with usage count = 0
+      await cleanupUnusedTags(user.orgId);
 
       return updated;
     } catch (err) {
@@ -224,7 +270,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const existing = await prisma.contact.findFirst({ where: { id, orgId: user.orgId }, select: { id: true } });
       if (!existing) return reply.status(404).send({ error: 'Contact not found' });
 
+      await ensureTagsExist(user.orgId, tags);
+
       const updated = await prisma.contact.update({ where: { id }, data: { tags } });
+
+      // Clean up any tags with usage count = 0
+      await cleanupUnusedTags(user.orgId);
+
       return updated;
     } catch (err) {
       logger.error('[contacts] Update tags error:', err);
@@ -242,6 +294,10 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       if (!existing) return reply.status(404).send({ error: 'Contact not found' });
 
       await prisma.contact.delete({ where: { id } });
+
+      // Clean up any tags with usage count = 0
+      await cleanupUnusedTags(user.orgId);
+
       return { success: true };
     } catch (err) {
       logger.error('[contacts] Delete error:', err);

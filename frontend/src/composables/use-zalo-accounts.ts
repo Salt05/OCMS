@@ -136,6 +136,14 @@ export function useZaloAccounts() {
       }
     });
 
+    socket.on('zalo:reconnecting', (data: { accountId: string; attempt?: number; delaySeconds?: number; message?: string }) => {
+      const acc = accounts.value.find((a) => a.id === data.accountId);
+      if (acc) {
+        acc.status = 'connecting';
+        acc.liveStatus = 'connecting';
+      }
+    });
+
     socket.on('zalo:connected', (_data: { accountId: string }) => {
       showQRDialog.value = false;
       fetchAccounts();

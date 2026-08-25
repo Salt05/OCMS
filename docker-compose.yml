@@ -24,6 +24,29 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  chatbot:
+    build:
+      context: ./ChatBot
+      dockerfile: Dockerfile
+    container_name: zalo-crm-chatbot-prod
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_USER=${DB_USER:-crmuser}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-zalocrm}
+    env_file:
+      - ./ChatBot/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./ChatBot:/app
+      - chatbot_data:/app/vanna_data
+
   db:
     image: postgres:16-alpine
     container_name: zalo-crm-db
@@ -68,3 +91,4 @@ services:
 volumes:
   pg_data:
   file_storage:
+  chatbot_data:

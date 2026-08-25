@@ -40,10 +40,7 @@
     </v-row>
 
     <v-row>
-      <v-col cols="12" md="6">
-        <SourceChart :data="sources" />
-      </v-col>
-      <v-col cols="12" md="6">
+      <v-col cols="12">
         <AppointmentChart :data="appointments" />
       </v-col>
     </v-row>
@@ -55,12 +52,11 @@ import { onMounted } from 'vue';
 import KpiCards from '@/components/dashboard/KpiCards.vue';
 import MessageVolumeChart from '@/components/dashboard/MessageVolumeChart.vue';
 import PipelineChart from '@/components/dashboard/PipelineChart.vue';
-import SourceChart from '@/components/dashboard/SourceChart.vue';
 import AppointmentChart from '@/components/dashboard/AppointmentChart.vue';
 import { useDashboard } from '@/composables/use-dashboard';
 
 const {
-  kpi, messageVolume, pipeline, sources, appointments,
+  kpi, messageVolume, pipeline, appointments,
   orderStats, loading, fetchAll,
 } = useDashboard();
 

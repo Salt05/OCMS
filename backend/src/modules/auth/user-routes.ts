@@ -25,6 +25,7 @@ export async function userRoutes(app: FastifyInstance) {
         role: true,
         isActive: true,
         teamId: true,
+        odooId: true,
         createdAt: true,
         team: { select: { id: true, name: true } },
       },
@@ -71,6 +72,7 @@ export async function userRoutes(app: FastifyInstance) {
         fullName: true,
         role: true,
         isActive: true,
+        odooId: true,
         createdAt: true,
       },
     });
@@ -88,7 +90,7 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(403).send({ error: 'Không có quyền' });
     }
 
-    const { fullName, email: rawEmail, role, teamId, isActive } = request.body as any;
+    const { fullName, email: rawEmail, role, teamId, isActive, odooId } = request.body as any;
 
     if (id === currentUser.id && role && role !== currentUser.role) {
       return reply.status(400).send({ error: 'Không thể thay đổi role của chính mình' });
@@ -100,6 +102,7 @@ export async function userRoutes(app: FastifyInstance) {
     if (role !== undefined && currentUser.role === 'owner') updateData.role = role;
     if (teamId !== undefined) updateData.teamId = teamId || null;
     if (isActive !== undefined && currentUser.role === 'owner') updateData.isActive = isActive;
+    if (odooId !== undefined) updateData.odooId = odooId || null;
 
     const user = await prisma.user.update({
       where: { id, orgId: currentUser.orgId },
@@ -111,6 +114,7 @@ export async function userRoutes(app: FastifyInstance) {
         role: true,
         isActive: true,
         teamId: true,
+        odooId: true,
       },
     });
 

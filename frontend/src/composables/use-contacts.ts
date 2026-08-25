@@ -10,24 +10,35 @@ import { api } from '@/api/index';
 export interface Contact {
   id: string;
   fullName: string | null;
+  zaloName?: string | null;
   phone: string | null;
   email?: string | null;
+  zaloUid?: string | null;
   avatarUrl?: string | null;
   source: string | null;
   status: string | null;
-  nextAppointment: string | null;
+  customerId?: string | null;
+  contactType?: 'customer' | 'employee' | 'other';
+  address?: string | null;
+  zone?: string | null;
+  salesperson?: string | null;
   notes: string | null;
   tags: string[];
   assignedUserId?: string | null;
-  assignedUser?: { fullName: string } | null;
+  assignedUser?: { id?: string; fullName: string; email?: string } | null;
   createdAt?: string;
+  updatedAt?: string;
   firstContactDate?: string | null;
+  appointments?: Array<{ id: string; appointmentDate: string; appointmentTime?: string | null; notes?: string | null; status?: string }>;
+  _count?: { conversations?: number; appointments?: number };
 }
 
 export interface ContactFilters {
   search: string;
   source: string;
   status: string;
+  tags: string[];
+  contactType: string;
 }
 
 export const SOURCE_OPTIONS = [
@@ -45,6 +56,12 @@ export const STATUS_OPTIONS = [
   { text: 'Mất', value: 'lost' },
 ];
 
+export const CONTACT_TYPE_OPTIONS = [
+  { text: 'Khách hàng', value: 'customer' },
+  { text: 'Nhân viên', value: 'employee' },
+  { text: 'Khác', value: 'other' },
+];
+
 export function useContacts() {
   const contacts = ref<Contact[]>([]);
   const total = ref(0);
@@ -56,6 +73,8 @@ export function useContacts() {
     search: '',
     source: '',
     status: '',
+    tags: [],
+    contactType: '',
   });
 
   const pagination = reactive({ page: 1, limit: 20 });
@@ -70,6 +89,8 @@ export function useContacts() {
           search: filters.search || undefined,
           source: filters.source || undefined,
           status: filters.status || undefined,
+          tags: filters.tags?.length ? filters.tags.join(',') : undefined,
+          contactType: filters.contactType || undefined,
         },
       });
       contacts.value = res.data.contacts ?? res.data;
@@ -153,6 +174,8 @@ export function useContacts() {
     filters.search = '';
     filters.source = '';
     filters.status = '';
+    filters.tags = [];
+    filters.contactType = '';
     pagination.page = 1;
     fetchContacts();
   }
