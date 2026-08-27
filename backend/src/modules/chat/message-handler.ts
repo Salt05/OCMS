@@ -7,6 +7,8 @@ import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
 import { emitWebhook } from '../api/webhook-service.js';
 import { pendingReplies } from './chat-routes.js';
+import { chatbotService, isRecentAiMessage } from '../chatbot/chatbot-service.js';
+import { chatbotStateMachine } from '../chatbot/chatbot-state-machine.js';
 
 export interface IncomingMessage {
   accountId: string;
@@ -194,6 +196,8 @@ export async function handleIncomingMessage(
       pendingReplies.delete(conversation.id);
     }
 
+    const isAi = msg.isSelf ? isRecentAiMessage(conversation.id, msg.content || '') : false;
+
     const message = await prisma.message.create({
       data: {
         id: randomUUID(),
@@ -206,6 +210,7 @@ export async function handleIncomingMessage(
         contentType: msg.contentType || 'text',
         attachments,
         replyToId,
+        isAi,
         sentAt,
       },
       include: {
@@ -240,6 +245,23 @@ export async function handleIncomingMessage(
       contentType: msg.contentType,
       sentAt: message.sentAt,
     });
+
+    // AI Auto Chat Hook
+    if (msg.isSelf) {
+      // If staff manually sent a message from CRM or Zalo app, auto-pause AI for 60 minutes
+      if (!isAi) {
+        chatbotStateMachine.pauseAi(conversation.id, 'Nhân viên trực tiếp gửi tin nhắn', 60).catch(() => {});
+      }
+    } else if (msg.threadType === 'user' && msg.content) {
+      // Inbound message from customer -> trigger AI Auto Chat pipeline asynchronously
+      chatbotService.processIncomingMessage(
+        conversation.id,
+        msg.content,
+        account.orgId,
+        msg.accountId,
+        contactId || undefined
+      ).catch((e) => logger.error('[message-handler] AI auto reply pipeline error:', e));
+    }
 
     return {
       message,

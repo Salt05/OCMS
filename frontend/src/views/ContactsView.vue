@@ -74,6 +74,32 @@
       <template #item.assignedUser="{ item }">
         <span class="text-body-2">{{ item.assignedUser?.fullName ?? '—' }}</span>
       </template>
+
+      <!-- AI Chatbot Status Column -->
+      <template #item.aiStatus="{ item }">
+        <!-- If contact is employee or other: Hidden / Not applicable -->
+        <span v-if="item.contactType && item.contactType !== 'customer'" class="text-caption text-disabled">
+          —
+        </span>
+        <!-- If contact is customer: Clickable Toggle Button -->
+        <div v-else class="d-flex align-center">
+          <v-btn
+            size="x-small"
+            variant="tonal"
+            rounded="md"
+            class="text-none font-weight-medium px-2"
+            :color="item.conversations?.[0]?.aiActive ? 'success' : 'grey-darken-1'"
+            @click.stop="toggleContactAi(item)"
+            :title="item.conversations?.[0]?.aiActive ? 'Click để tắt AI cho khách này' : 'Click để bật AI cho khách này'"
+            style="height: 24px; font-size: 11px !important;"
+          >
+            <v-icon start size="12" class="mr-1">
+              {{ item.conversations?.[0]?.aiActive ? 'lucide-bot' : 'lucide-bot-off' }}
+            </v-icon>
+            {{ item.conversations?.[0]?.aiActive ? 'AI Bật' : 'AI Tắt' }}
+          </v-btn>
+        </div>
+      </template>
     </v-data-table-server>
 
     <!-- Contact detail/edit dialog -->
@@ -87,13 +113,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref } from 'vue';
 import ContactFilters from '@/components/contacts/ContactFilters.vue';
 import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
 import { useContacts, STATUS_OPTIONS } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 
-const { contacts, total, loading, filters, pagination, fetchContacts, deleteContacts } = useContacts();
+const { contacts, total, loading, filters, pagination, fetchContacts, deleteContacts, toggleContactAi } = useContacts();
 
 const showDialog = ref(false);
 const selected = ref<string[]>([]);
@@ -107,6 +133,7 @@ const headers = [
   { title: 'Email', key: 'email', sortable: false },
   { title: 'Trạng thái', key: 'status', sortable: false },
   { title: 'Sale', key: 'assignedUser', sortable: false },
+  { title: 'AI Chatbot', key: 'aiStatus', sortable: false, width: '110px' },
 ];
 
 function statusLabel(value: string) {
@@ -155,6 +182,4 @@ async function confirmBulkDelete() {
     }
   }
 }
-
-onMounted(() => fetchContacts());
 </script>

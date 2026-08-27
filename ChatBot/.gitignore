@@ -26,3 +26,6 @@ frontends/**/static/
 frontends/**/.storybook-static/
 frontends/**/package-lock.json
 frontends/**/.mypy_cache/
+
+# Vanna generated query results & cache
+vanna_data/

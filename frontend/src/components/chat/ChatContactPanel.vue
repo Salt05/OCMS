@@ -234,6 +234,7 @@
                 density="compact"
                 variant="outlined"
                 clearable
+                :readonly="!isAdmin"
                 prepend-inner-icon="lucide-user-check"
                 hide-details="auto"
                 class="mb-2"
@@ -452,12 +453,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import { api } from '@/api/index';
 import type { Contact } from '@/composables/use-contacts';
 import { STATUS_OPTIONS, SOURCE_OPTIONS } from '@/composables/use-contacts';
 import { useChatContactPanel } from '@/composables/use-chat-contact-panel';
 import { useUsers } from '@/composables/use-users';
+import { useAuthStore } from '@/stores/auth';
 import ChatAppointments from './ChatAppointments.vue';
 import ChatOrders from './ChatOrders.vue';
 import TagSelector from '@/components/common/TagSelector.vue';
@@ -476,6 +478,8 @@ const emit = defineEmits<{
 
 const activeTab = ref('info');
 const { users, fetchUsers } = useUsers();
+const authStore = useAuthStore();
+const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role || ''));
 
 const {
   form, saving, saveSuccess, saveError,

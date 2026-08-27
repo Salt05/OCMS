@@ -310,6 +310,7 @@ export function useTags() {
       backgroundColor: `${color}18`,
       color: color,
       border: `1px solid ${color}45`,
+      borderRadius: '6px',
     };
   }
 

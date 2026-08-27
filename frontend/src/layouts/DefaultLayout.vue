@@ -284,7 +284,12 @@ function logout() {
   background: transparent;
   border: none;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  transform: none !important;
+}
+
+.zalo-rail-btn .v-icon {
+  transition: color 0.2s ease;
 }
 
 .zalo-rail-btn:hover {
@@ -295,6 +300,31 @@ function logout() {
 .zalo-rail-btn.is-active {
   background-color: rgba(255, 255, 255, 0.25);
   color: #ffffff;
+}
+
+.zalo-rail-btn.is-active .v-icon {
+  animation: easeOutBounceIcon 0.5s ease-out forwards;
+}
+
+@keyframes easeOutBounceIcon {
+  0% {
+    transform: scale(0.7);
+  }
+  36% {
+    transform: scale(1.22);
+  }
+  54% {
+    transform: scale(0.92);
+  }
+  72% {
+    transform: scale(1.12);
+  }
+  85% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1.08);
+  }
 }
 
 .is-dark-theme .zalo-rail-btn {

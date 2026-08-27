@@ -111,3 +111,23 @@ router.beforeEach(async (to, _from, next) => {
 
   next();
 });
+
+// Auto-reload on dynamic import failure (e.g. when chunks change after Docker rebuild)
+router.onError((error, to) => {
+  const errMsg = String(error?.message || '');
+  const isChunkLoadFailed =
+    errMsg.includes('Failed to fetch dynamically imported module') ||
+    errMsg.includes('Importing a module script failed') ||
+    errMsg.includes('error loading dynamically imported module') ||
+    errMsg.includes('Loading chunk') ||
+    errMsg.includes('Failed to load module script');
+
+  if (isChunkLoadFailed) {
+    const targetPath = to?.fullPath || window.location.pathname;
+    const reloadKey = `chunk_reload_${targetPath}`;
+    if (!sessionStorage.getItem(reloadKey)) {
+      sessionStorage.setItem(reloadKey, '1');
+      window.location.href = targetPath;
+    }
+  }
+});

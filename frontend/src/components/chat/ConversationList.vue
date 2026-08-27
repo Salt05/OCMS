@@ -398,7 +398,7 @@
         @click="$emit('select', conv.id)"
       >
         <!-- Avatar -->
-        <div class="zalo-conv-avatar-wrap mr-2.5 position-relative flex-shrink-0">
+        <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
           <v-avatar size="44" class="zalo-conv-avatar">
             <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl" />
             <v-icon v-else-if="conv.threadType === 'group'" icon="lucide-users" color="white" size="22" />
@@ -766,5 +766,27 @@ function formatTime(dateStr: string | null): string {
 .tag-mini-chip { font-size: 10px; padding: 2px 4px; border-radius: 4px; }
 .tag-filter-item:hover { background: rgba(0,0,0,0.05); }
 .tag-filter-item.is-selected { background: rgba(0, 104, 255, 0.1); }
-.tag-color-indicator { width: 10px; height: 10px; border-radius: 50%; }
+.zalo-conv-avatar-wrap { margin-right: 14px !important; }
+.conv-tags-row { gap: 4px; }
+.conv-tag-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.2;
+  max-width: 110px;
+  transition: all 0.2s ease;
+}
+.conv-tag-more {
+  font-size: 10px;
+  font-weight: 600;
+  color: #64748b;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 6px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+}
 </style>

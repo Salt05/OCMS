@@ -59,6 +59,8 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
         avatarUrl: true,
         phone: true,
         status: true,
+        aiAutoReply: true,
+        aiWorkingHoursOnly: true,
         lastConnectedAt: true,
         createdAt: true,
         owner: { select: { id: true, fullName: true, email: true } },
@@ -71,6 +73,34 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
       ...a,
       liveStatus: zaloPool.getStatus(a.id),
     }));
+  });
+
+  // PATCH /api/v1/zalo-accounts/:id/ai-settings — update account-level AI settings
+  app.patch<{
+    Params: { id: string };
+    Body: { aiAutoReply?: boolean; aiWorkingHoursOnly?: boolean };
+  }>('/api/v1/zalo-accounts/:id/ai-settings', async (request, reply) => {
+    const user = request.user!;
+    const { id } = request.params;
+    const { aiAutoReply, aiWorkingHoursOnly } = request.body || {};
+
+    const account = await prisma.zaloAccount.findFirst({
+      where: { id, orgId: user.orgId },
+    });
+
+    if (!account) {
+      return reply.status(404).send({ error: 'Zalo account not found' });
+    }
+
+    const updated = await prisma.zaloAccount.update({
+      where: { id },
+      data: {
+        ...(typeof aiAutoReply === 'boolean' ? { aiAutoReply } : {}),
+        ...(typeof aiWorkingHoursOnly === 'boolean' ? { aiWorkingHoursOnly } : {}),
+      },
+    });
+
+    return reply.send({ success: true, account: updated });
   });
 
   // POST /api/v1/zalo-accounts — create a new account record

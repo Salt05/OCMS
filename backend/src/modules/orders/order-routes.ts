@@ -29,18 +29,11 @@ export async function orderRoutes(app: FastifyInstance) {
     try {
       let draft;
 
-      if (body.mode === 'text' || (!body.conversationId && body.text)) {
-        // Extract directly from staff's text input (without reading chat history)
-        draft = await extractOrderFromText(user.orgId, body.text, {
-          name: body.customerName,
-          phone: body.customerPhone,
-          address: body.customerAddress,
-          customerId: body.customerId,
-        });
-      } else if (body.conversationId) {
-        // Extract from customer's conversation messages in today's chat history
-        draft = await extractOrderFromConversation(user.orgId, body.conversationId);
+      if (body.conversationId) {
+        // Extract from customer's conversation messages in chat history (with optional staff instruction)
+        draft = await extractOrderFromConversation(user.orgId, body.conversationId, body.text);
       } else if (body.text) {
+        // Extract directly from staff's text input (without reading chat history)
         draft = await extractOrderFromText(user.orgId, body.text, {
           name: body.customerName,
           phone: body.customerPhone,

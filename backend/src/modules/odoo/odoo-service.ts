@@ -39,6 +39,7 @@ class OdooService {
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(3000),
           body: JSON.stringify({
             jsonrpc: '2.0',
             method: 'call',
@@ -91,6 +92,7 @@ class OdooService {
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(3000),
       body: JSON.stringify({
         jsonrpc: '2.0',
         method: 'call',
@@ -431,6 +433,90 @@ class OdooService {
     }
   }
 
+  async checkProductInventory(odooProductId: number): Promise<{
+    odooId: number;
+    isInStock: boolean;
+    qtyAvailable: number;
+    virtualAvailable: number;
+    statusText: 'Còn hàng' | 'Hết hàng' | 'Sắp hết';
+  } | null> {
+    try {
+      const products = await this.executeKw<any[]>('product.product', 'read', [
+        [odooProductId],
+      ], {
+        fields: ['id', 'default_code', 'name', 'qty_available', 'virtual_available'],
+      });
+
+      if (!products || products.length === 0) {
+        return null;
+      }
+
+      const p = products[0];
+      const qtyAvailable = typeof p.qty_available === 'number' ? p.qty_available : 0;
+      const virtualAvailable = typeof p.virtual_available === 'number' ? p.virtual_available : qtyAvailable;
+
+      let statusText: 'Còn hàng' | 'Hết hàng' | 'Sắp hết' = 'Còn hàng';
+      if (qtyAvailable <= 0) {
+        statusText = 'Hết hàng';
+      } else if (qtyAvailable <= 5) {
+        statusText = 'Sắp hết';
+      }
+
+      return {
+        odooId: p.id,
+        isInStock: qtyAvailable > 0,
+        qtyAvailable,
+        virtualAvailable,
+        statusText,
+      };
+    } catch (err: any) {
+      logger.error(`[odoo] checkProductInventory error for product ${odooProductId}:`, err.message);
+      return null;
+    }
+  }
+
+  async checkInventoryBySku(sku: string): Promise<{
+    sku: string;
+    odooId: number;
+    isInStock: boolean;
+    qtyAvailable: number;
+    statusText: 'Còn hàng' | 'Hết hàng' | 'Sắp hết';
+  } | null> {
+    try {
+      const cleanSku = sku.trim();
+      const products = await this.executeKw<any[]>('product.product', 'search_read', [
+        [['default_code', '=ilike', cleanSku]],
+      ], {
+        fields: ['id', 'default_code', 'name', 'qty_available', 'virtual_available'],
+        limit: 1,
+      });
+
+      if (!products || products.length === 0) {
+        return null;
+      }
+
+      const p = products[0];
+      const qtyAvailable = typeof p.qty_available === 'number' ? p.qty_available : 0;
+      let statusText: 'Còn hàng' | 'Hết hàng' | 'Sắp hết' = 'Còn hàng';
+      if (qtyAvailable <= 0) {
+        statusText = 'Hết hàng';
+      } else if (qtyAvailable <= 5) {
+        statusText = 'Sắp hết';
+      }
+
+      return {
+        sku: p.default_code || cleanSku,
+        odooId: p.id,
+        isInStock: qtyAvailable > 0,
+        qtyAvailable,
+        statusText,
+      };
+    } catch (err: any) {
+      logger.error(`[odoo] checkInventoryBySku error for SKU ${sku}:`, err.message);
+      return null;
+    }
+  }
+
   async checkHealth(): Promise<{ ok: boolean; uid?: number | null; error?: string }> {
     try {
       this.uid = null;
@@ -443,4 +529,5 @@ class OdooService {
 }
 
 export const odooService = new OdooService();
+
 

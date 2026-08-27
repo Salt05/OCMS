@@ -10,6 +10,8 @@ let tasksHistory = [];
 let messageDataMap = {};
 let currentDisplayedTable = null;
 let currentTurnData = { dataframe: null, chart: null };
+let isOrderMode = false;
+let toastTimeoutId = null;
 
 // ==============================================================================
 // 1. KHỞI TẠO ỨNG DỤNG
@@ -111,6 +113,54 @@ function setupEventListeners() {
 
     // New chat button
     document.getElementById("btn-new-chat")?.addEventListener("click", startNewChat);
+
+    // Order Mode Toggle Button
+    const btnOrderMode = document.getElementById("btn-toggle-order-mode");
+    if (btnOrderMode) {
+        btnOrderMode.addEventListener("click", () => {
+            isOrderMode = !isOrderMode;
+            btnOrderMode.classList.toggle("is-active", isOrderMode);
+            const inputBox = document.getElementById("chat-input-box");
+            if (inputBox) inputBox.classList.toggle("is-order-mode", isOrderMode);
+            const inputEl = document.getElementById("user-input");
+            if (inputEl) {
+                inputEl.placeholder = isOrderMode 
+                    ? "Nhập yêu cầu tạo hoặc sửa đơn hàng (VD: 30 bao E01, lên đơn 5 bao B03...)" 
+                    : "Hỏi về khách hàng, đơn hàng, sản phẩm...";
+                inputEl.focus();
+            }
+            showOrderModeToast(isOrderMode);
+        });
+    }
+
+function showOrderModeToast(isOn) {
+    const toast = document.getElementById("order-mode-toast");
+    const icon = document.getElementById("order-mode-toast-icon");
+    const text = document.getElementById("order-mode-toast-text");
+    if (!toast) return;
+
+    if (toastTimeoutId) clearTimeout(toastTimeoutId);
+
+    if (isOn) {
+        toast.className = "order-mode-toast toast-on";
+        if (icon) icon.innerText = "🛒";
+        if (text) text.innerText = "Đã BẬT Chế độ Tạo / Chỉnh sửa đơn hàng (AI sẽ ưu tiên bóc tách sản phẩm & lên đơn Odoo)";
+    } else {
+        toast.className = "order-mode-toast toast-off";
+        if (icon) icon.innerText = "💬";
+        if (text) text.innerText = "Đã TẮT Chế độ Tạo đơn (Quay về trò chuyện & hỏi đáp dữ liệu thông thường)";
+    }
+
+    toast.style.display = "flex";
+    toast.style.opacity = "1";
+
+    toastTimeoutId = setTimeout(() => {
+        toast.style.opacity = "0";
+        setTimeout(() => {
+            toast.style.display = "none";
+        }, 300);
+    }, 3500);
+}
 
     // Toggle Dev Modal Popup
     const devModal = document.getElementById("dev-modal");
@@ -331,7 +381,7 @@ async function selectConversation(convId, title) {
                 if (msg.role !== "user" && msg.role !== "assistant") return;
                 if (msg.content.includes("Results saved to file:") || msg.content.includes("IMPORTANT: FOR VISUALIZE_DATA")) return;
                 
-                const bubbleRow = appendMessageBubble(msg.role, msg.content, false);
+                const bubbleRow = appendMessageBubble(msg.role, msg.content, false, msg.metadata);
                 if (msg.role === "assistant") {
                     const parsedTable = parseMarkdownTable(msg.content);
                     if (parsedTable) {
@@ -464,14 +514,19 @@ async function sendMessage() {
             headers["Authorization"] = `Bearer ${currentToken}`;
         }
 
+        let finalPayloadMessage = message;
+        if (isOrderMode) {
+            finalPayloadMessage = `[YÊU CẦU TẠO ĐƠN HÀNG / LÊN ĐƠN]: ${message}`;
+        }
+
         const response = await fetch("/api/vanna/v2/chat_sse", {
             method: "POST",
             headers,
             body: JSON.stringify({
-                message: message,
+                message: finalPayloadMessage,
                 conversation_id: activeConversationId,
                 request_id: generateUUID(),
-                metadata: {}
+                metadata: { isOrderMode }
             }),
             signal: currentAbortController.signal
         });
@@ -505,7 +560,7 @@ async function sendMessage() {
                     const chunk = JSON.parse(dataStr);
                     handleIncomingChunk(chunk, botBubbleText, botBubble, flowEl, (newText) => {
                         accumulatedText = newText;
-                    });
+                    }, botContentWrapper);
                 } catch (e) {
                     // Ignore non-json stream fragments
                 }
@@ -548,6 +603,40 @@ async function sendMessage() {
             if (cursor) cursor.remove();
             if (!accumulatedText) {
                 botBubbleText.innerHTML = `<span style="color:#e53e3e;">⚠️ Không nhận được câu trả lời từ AI (có thể do chạm giới hạn Rate Limit). Vui lòng đợi 10 giây rồi thử lại hoặc tạo cuộc trò chuyện mới.</span>`;
+            }
+        }
+
+        // Extract thinking and clean up main bubble content
+        if (accumulatedText && botBubbleText && botContentWrapper) {
+            const extracted = extractThinkingFromText(accumulatedText);
+            if (extracted.thinking) {
+                let existingAccordion = botContentWrapper.querySelector(".thinking-accordion");
+                if (!existingAccordion) {
+                    existingAccordion = document.createElement("div");
+                    existingAccordion.className = "thinking-accordion";
+                    existingAccordion.innerHTML = `
+                        <button type="button" class="thinking-toggle-btn" onclick="toggleThinking(this)">
+                            <span class="thinking-icon">💭</span>
+                            <span class="thinking-label">Xem quá trình suy nghĩ & phân tích</span>
+                            <span class="thinking-chevron">▼</span>
+                        </button>
+                        <div class="thinking-content-box" style="display: none;">
+                            <div class="thinking-header-title">
+                                <span class="cpu-icon">⚙️</span>
+                                <span>Chi tiết các bước suy luận của AI:</span>
+                            </div>
+                            <div class="thinking-body-text"></div>
+                        </div>
+                    `;
+                    botContentWrapper.insertBefore(existingAccordion, botBubble);
+                }
+                const bodyText = existingAccordion.querySelector(".thinking-body-text");
+                if (bodyText) bodyText.textContent = extracted.thinking;
+
+                const cleanedText = cleanAssistantText(extracted.cleanContent);
+                botBubbleText.innerHTML = marked.parse(cleanedText);
+                if (botBubble) botBubble.dataset.raw = cleanedText;
+                accumulatedText = cleanedText;
             }
         }
 
@@ -616,7 +705,7 @@ function setSendButtonState(state) {
     }
 }
 
-function handleIncomingChunk(chunk, bubbleContentEl, bubbleEl, flowEl, updateAccumulated) {
+function handleIncomingChunk(chunk, bubbleContentEl, bubbleEl, flowEl, updateAccumulated, botContentWrapper) {
     if (!bubbleContentEl || !chunk) return;
 
     const rich = chunk.rich || chunk.rich_component;
@@ -665,25 +754,18 @@ function handleIncomingChunk(chunk, bubbleContentEl, bubbleEl, flowEl, updateAcc
         }
 
         // Plotly Chart Component
-        if (type === "chart" || type === "plotly_chart" || data.figure || data.data) {
-            const chartData = data.data || data.figure || data;
-            currentTurnData.chart = chartData;
-            renderPlotlyChart(chartData, bubbleContentEl);
-            updateFlowStep(flowEl, "visualize", "completed", "Đã vẽ biểu đồ trực quan hóa");
-            updateFlowStep(flowEl, "answer", "in-progress");
+        if (type === "chart" || type === "plotly_chart" || data.figure) {
+            const chartData = data.figure || data.chart || (type === "chart" || type === "plotly_chart" ? data : null);
+            if (chartData && isValidPlotlyFigure(chartData)) {
+                currentTurnData.chart = chartData;
+                updateFlowStep(flowEl, "visualize", "completed", "Đã vẽ biểu đồ trực quan hóa");
+                updateFlowStep(flowEl, "answer", "in-progress");
+            }
         }
 
         // Rich Text Component (Typewriter live update)
         if (type === "text" && data.content) {
-            const rawText = data.content;
-            if (!isToolOutput(rawText)) {
-                const cleanedText = cleanAssistantText(rawText);
-                if (cleanedText) {
-                    bubbleContentEl.innerHTML = marked.parse(cleanedText) + '<span class="typing-cursor"></span>';
-                    if (bubbleEl) bubbleEl.dataset.raw = cleanedText;
-                    updateAccumulated(cleanedText);
-                }
-            }
+            updateLiveResponseText(data.content, bubbleContentEl, bubbleEl, botContentWrapper, updateAccumulated);
             updateFlowStep(flowEl, "query", "completed", "Đã truy vấn dữ liệu");
             updateFlowStep(flowEl, "answer", "in-progress");
             scrollToBottom();
@@ -692,52 +774,88 @@ function handleIncomingChunk(chunk, bubbleContentEl, bubbleEl, flowEl, updateAcc
 
     // 2. Process Simple Component Text
     if (simple && simple.text) {
-        const rawText = simple.text;
-        if (!isToolOutput(rawText)) {
-            const cleanedText = cleanAssistantText(rawText);
-            if (cleanedText) {
-                bubbleContentEl.innerHTML = marked.parse(cleanedText) + '<span class="typing-cursor"></span>';
-                if (bubbleEl) bubbleEl.dataset.raw = cleanedText;
-                updateAccumulated(cleanedText);
-            }
-        }
+        updateLiveResponseText(simple.text, bubbleContentEl, bubbleEl, botContentWrapper, updateAccumulated);
         updateFlowStep(flowEl, "query", "completed", "Đã truy vấn dữ liệu");
         updateFlowStep(flowEl, "answer", "in-progress");
         scrollToBottom();
     }
 }
 
+function updateLiveResponseText(rawText, bubbleContentEl, bubbleEl, botContentWrapper, updateAccumulated) {
+    if (!rawText || isToolOutput(rawText)) return;
+    updateAccumulated(rawText);
+
+    const extracted = extractThinkingFromText(rawText);
+    if (extracted.thinking && botContentWrapper && bubbleEl) {
+        let existingAccordion = botContentWrapper.querySelector(".thinking-accordion");
+        if (!existingAccordion) {
+            existingAccordion = document.createElement("div");
+            existingAccordion.className = "thinking-accordion mb-2.5";
+            existingAccordion.innerHTML = `
+                <button type="button" class="thinking-toggle-btn" onclick="toggleThinking(this)">
+                    <span class="thinking-icon">💭</span>
+                    <span class="thinking-label">Xem quá trình suy nghĩ & phân tích</span>
+                    <span class="thinking-chevron">▼</span>
+                </button>
+                <div class="thinking-content-box" style="display: none;">
+                    <div class="thinking-header-title">
+                        <span class="cpu-icon">⚙️</span>
+                        <span>Chi tiết các bước suy luận của AI:</span>
+                    </div>
+                    <div class="thinking-body-text"></div>
+                </div>
+            `;
+            botContentWrapper.insertBefore(existingAccordion, bubbleEl);
+        }
+        const bodyText = existingAccordion.querySelector(".thinking-body-text");
+        if (bodyText) bodyText.textContent = extracted.thinking;
+
+        const cleanedText = cleanAssistantText(extracted.cleanContent);
+        bubbleContentEl.innerHTML = marked.parse(cleanedText) + '<span class="typing-cursor"></span>';
+        if (bubbleEl) bubbleEl.dataset.raw = cleanedText;
+    } else {
+        const cleanedText = cleanAssistantText(rawText);
+        if (cleanedText) {
+            bubbleContentEl.innerHTML = marked.parse(cleanedText) + '<span class="typing-cursor"></span>';
+            if (bubbleEl) bubbleEl.dataset.raw = cleanedText;
+        }
+    }
+}
+
 // ==============================================================================
 // 5. LIVE EXECUTION FLOW & RENDERING HELPERS
 // ==============================================================================
-function createExecutionFlowElement() {
+function createExecutionFlowElement(isCompleted = false) {
     const flow = document.createElement("div");
-    flow.className = "execution-flow";
+    flow.className = "execution-flow" + (isCompleted ? " collapsed" : "");
+    const titleText = isCompleted ? "Đã xử lý & hoàn tất luồng dữ liệu" : "Đang xử lý luồng phân tích dữ liệu...";
+    const spinnerHtml = isCompleted 
+        ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="step-check"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`
+        : `<div class="flow-spinner"></div>`;
+
+    const checkSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="step-check"><polyline points="20 6 9 17 4 12"/></svg>`;
+
     flow.innerHTML = `
         <div class="flow-header" onclick="this.parentElement.classList.toggle('collapsed')">
             <div class="flow-header-left">
-                <div class="flow-spinner"></div>
-                <span class="flow-title">Đang xử lý luồng phân tích dữ liệu...</span>
+                ${spinnerHtml}
+                <span class="flow-title">${titleText}</span>
             </div>
             <button class="flow-toggle-btn" title="Thu gọn / Mở rộng tiến trình">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
         </div>
         <div class="flow-steps">
-            <div class="flow-step in-progress" data-step="analyze">
-                <div class="step-icon"><div class="mini-spinner"></div></div>
+            <div class="flow-step ${isCompleted ? 'completed' : 'in-progress'}" data-step="analyze">
+                <div class="step-icon">${isCompleted ? checkSvg : '<div class="mini-spinner"></div>'}</div>
                 <span class="step-label">Đọc & phân tích câu hỏi</span>
             </div>
-            <div class="flow-step pending" data-step="query">
-                <div class="step-icon"><span class="step-dot"></span></div>
-                <span class="step-label">Truy vấn cơ sở dữ liệu CRM (DuckDB)</span>
+            <div class="flow-step ${isCompleted ? 'completed' : 'pending'}" data-step="query">
+                <div class="step-icon">${isCompleted ? checkSvg : '<span class="step-dot"></span>'}</div>
+                <span class="step-label">Đã truy vấn dữ liệu</span>
             </div>
-            <div class="flow-step pending" data-step="visualize" style="display: none;">
-                <div class="step-icon"><span class="step-dot"></span></div>
-                <span class="step-label">Khởi tạo biểu đồ trực quan hóa</span>
-            </div>
-            <div class="flow-step pending" data-step="answer">
-                <div class="step-icon"><span class="step-dot"></span></div>
+            <div class="flow-step ${isCompleted ? 'completed' : 'pending'}" data-step="answer">
+                <div class="step-icon">${isCompleted ? checkSvg : '<span class="step-dot"></span>'}</div>
                 <span class="step-label">Tổng hợp câu trả lời chi tiết</span>
             </div>
         </div>
@@ -806,12 +924,76 @@ function isToolOutput(text) {
     return false;
 }
 
+// Helper to extract <think>...</think>, [suy nghĩ]... or numbered reasoning preamble from text
+function extractThinkingFromText(text) {
+    if (!text) return { thinking: null, cleanContent: '' };
+    
+    // 1. Explicit <think> or [suy nghĩ] / [thinking] tags
+    const thinkTagMatch = text.match(/<(?:think|thinking|suy_nghi)>([\s\S]*?)(?:<\/(?:think|thinking|suy_nghi)>|$)/i) ||
+                          text.match(/\[(?:think|thinking|suy\s*nghĩ|phân\s*tích)\]([\s\S]*?)(?:\[\/(?:think|thinking|suy\s*nghĩ|phân\s*tích)\]|$)/i);
+    if (thinkTagMatch) {
+        const thinking = thinkTagMatch[1].trim() || null;
+        const cleanContent = text.replace(/<(?:think|thinking|suy_nghi)>[\s\S]*?(?:<\/(?:think|thinking|suy_nghi)>|$)/gi, '')
+                                 .replace(/\[(?:think|thinking|suy\s*nghĩ|phân\s*tích)\][\s\S]*?(?:\[\/(?:think|thinking|suy\s*nghĩ|phân\s*tích)\]|$)/gi, '')
+                                 .trim();
+        return { thinking, cleanContent };
+    }
+
+    // 2. Numbered reasoning preamble (e.g. "1. Xác định... 2. Thực hiện... 3. Kiểm tra... 4. Tổng hợp...")
+    const lines = text.trim().split('\n');
+    if (lines.length > 1 && /^(?:1\.|Bước 1:?|Xác định:?|Nhận diện:?)/i.test(lines[0].trim())) {
+        let splitIndex = -1;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) {
+                splitIndex = i;
+                break;
+            }
+            if (i > 0 && /^(?:#{1,6}\s|\*\*|[A-ZÀ-Ỹ]|\|)/.test(line) && !/^\d+\.|\bBước \d+/.test(line)) {
+                splitIndex = i;
+                break;
+            }
+        }
+
+        if (splitIndex > 0) {
+            const candidateThinking = lines.slice(0, splitIndex).join('\n').trim();
+            const cleanContent = lines.slice(splitIndex).join('\n').trim();
+            if (candidateThinking.length > 20 && /(\b2\.|Bước 2|Kiểm tra|Phân tích|Truy vấn|Xác định|Tổng hợp)/i.test(candidateThinking)) {
+                return { thinking: candidateThinking, cleanContent };
+            }
+        }
+    }
+
+    return { thinking: null, cleanContent: text };
+}
+
+function toggleThinking(btn) {
+    const accordion = btn.closest(".thinking-accordion");
+    if (!accordion) return;
+    const box = accordion.querySelector(".thinking-content-box");
+    const label = accordion.querySelector(".thinking-label");
+    const chevron = accordion.querySelector(".thinking-chevron");
+    const isHidden = box.style.display === "none" || !box.style.display;
+    if (isHidden) {
+        box.style.display = "block";
+        btn.classList.add("active");
+        if (label) label.textContent = "Thu gọn phân tích suy nghĩ";
+        if (chevron) chevron.textContent = "▲";
+    } else {
+        box.style.display = "none";
+        btn.classList.remove("active");
+        if (label) label.textContent = "💭 Xem quá trình suy nghĩ & phân tích";
+        if (chevron) chevron.textContent = "▼";
+    }
+}
+
 function cleanAssistantText(text) {
     if (!text) return "";
     if (isToolOutput(text) && !text.includes("Dưới đây") && !text.includes("Thông tin") && !text.includes("Đơn hàng") && !text.includes("Doanh thu")) {
         return "";
     }
     let cleaned = text;
+    cleaned = cleaned.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, "");
     cleaned = cleaned.replace(/Created visualization from '[^']+' \(\d+ rows, \d+ columns\)\.?/gi, "");
     cleaned = cleaned.replace(/Query returned \d+ rows\.?/gi, "");
     cleaned = cleaned.replace(/\(Results truncated to \d+ characters[\s\S]*?\)/gi, "");
@@ -822,7 +1004,7 @@ function cleanAssistantText(text) {
     return cleaned.trim();
 }
 
-function appendMessageBubble(role, content = "", animate = true) {
+function appendMessageBubble(role, content = "", animate = true, metadata = null) {
     const messagesList = document.getElementById("messages-list");
     if (!messagesList) return document.createElement("div");
 
@@ -837,15 +1019,73 @@ function appendMessageBubble(role, content = "", animate = true) {
         ? `<div class="message-avatar user-avatar">${userInitial}</div>`
         : `<div class="message-avatar bot-avatar"><img src="${botLogo}" alt="LaPet Agent"></div>`;
 
-    const cleanedContent = cleanAssistantText(content);
+    let flowHtml = "";
+    let thinkingHtml = "";
+    let cleanText = content;
+
+    if (role === "user" && cleanText && cleanText.includes("[NGỮ CẢNH HỘI THOẠI HIỆN TẠI]")) {
+        if (cleanText.includes("[CÂU HỎI / YÊU CẦU CỦA NHÂN VIÊN]:")) {
+            const parts = cleanText.split("[CÂU HỎI / YÊU CẦU CỦA NHÂN VIÊN]:");
+            if (parts.length > 1 && parts[1].trim()) {
+                cleanText = parts[1].trim();
+            } else {
+                const emptyRow = document.createElement("div");
+                emptyRow.style.display = "none";
+                return emptyRow;
+            }
+        } else {
+            const emptyRow = document.createElement("div");
+            emptyRow.style.display = "none";
+            return emptyRow;
+        }
+    }
+
+    if (role !== "user" && content) {
+        flowHtml = createExecutionFlowElement(true).outerHTML;
+        const extracted = extractThinkingFromText(content);
+        const finalThinking = extracted.thinking || metadata?.thinking;
+        if (finalThinking) {
+            thinkingHtml = `
+                <div class="thinking-accordion mb-2.5">
+                    <button type="button" class="thinking-toggle-btn" onclick="toggleThinking(this)">
+                        <span class="thinking-icon">💭</span>
+                        <span class="thinking-label">Xem quá trình suy nghĩ & phân tích</span>
+                        <span class="thinking-chevron">▼</span>
+                    </button>
+                    <div class="thinking-content-box" style="display: none;">
+                        <div class="thinking-header-title">
+                            <span class="cpu-icon">⚙️</span>
+                            <span>Chi tiết các bước suy luận của AI:</span>
+                        </div>
+                        <div class="thinking-body-text">${escapeHtml(finalThinking)}</div>
+                    </div>
+                </div>
+            `;
+            cleanText = extracted.cleanContent;
+        }
+    }
+
+    let draftHtml = "";
+    if (role !== "user" && cleanText) {
+        const draftExtracted = extractOrderDraftFromText(cleanText);
+        if (draftExtracted.draft) {
+            cleanText = draftExtracted.cleanContent;
+            draftHtml = renderOrderDraftCard(draftExtracted.draft);
+        }
+    }
+
+    const cleanedContent = cleanAssistantText(cleanText);
     const parsedContent = cleanedContent ? marked.parse(cleanedContent) : "";
 
     row.innerHTML = `
         ${role !== "user" ? avatarHtml : ""}
         <div class="message-content-wrapper">
-            <div class="message-bubble" data-raw="${escapeHtml(content)}">
+            ${role !== "user" && content ? flowHtml : ""}
+            ${thinkingHtml}
+            <div class="message-bubble" data-raw="${escapeHtml(cleanText)}">
                 <div class="bubble-content">${parsedContent}</div>
             </div>
+            ${draftHtml}
             <div class="bubble-actions">
                 ${role === "user" ? `
                     <button class="btn-bubble-action btn-edit" title="Chỉnh sửa câu hỏi" onclick="handleEditMessage(this)">
@@ -862,6 +1102,189 @@ function appendMessageBubble(role, content = "", animate = true) {
 
     messagesList.appendChild(row);
     return row;
+}
+
+/* Helper Interactive Order Draft Form Card */
+function extractOrderDraftFromText(text) {
+    if (!text || typeof text !== "string") return { cleanContent: text, draft: null };
+    const draftRegex = /\[ORDER_DRAFT\]\s*([\s\S]*?)\s*\[\/ORDER_DRAFT\]/i;
+    const match = text.match(draftRegex);
+    if (match && match[1]) {
+        let jsonStr = match[1].trim();
+        // 1. Remove markdown code blocks if wrapped in ```json or ```
+        jsonStr = jsonStr.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+        // 2. Remove single-line JS comments // ...
+        jsonStr = jsonStr.replace(/\/\/.*/g, "");
+        // 3. Remove multi-line comments /* ... */
+        jsonStr = jsonStr.replace(/\/\*[\s\S]*?\*\//g, "");
+        // 4. Remove trailing commas before } or ]
+        jsonStr = jsonStr.replace(/,(\s*[\}\]])/g, "$1");
+
+        let draftObj = null;
+        try {
+            draftObj = JSON.parse(jsonStr);
+        } catch (e) {
+            console.warn("Standard JSON.parse failed, trying permissive parser:", e);
+            try {
+                draftObj = Function('"use strict";return (' + jsonStr + ')')();
+            } catch (e2) {
+                console.error("Failed to parse ORDER_DRAFT JSON:", e2);
+            }
+        }
+
+        if (draftObj) {
+            const cleanContent = text.replace(draftRegex, "").trim();
+            return { cleanContent, draft: draftObj };
+        }
+    }
+    return { cleanContent: text, draft: null };
+}
+
+function formatVND(val) {
+    if (!val || isNaN(val)) return "0 VNĐ";
+    return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(val);
+}
+
+function renderOrderDraftCard(draft) {
+    if (!draft || (!draft.items && !draft.customer)) return "";
+
+    const customerName = draft.customer?.name || draft.customer?.fullName || "Khách hàng";
+    const customerPhone = draft.customer?.phone || draft.customer?.mobile || "Chưa có SĐT";
+    const customerAddress = draft.customer?.shippingAddress || draft.customer?.address || "Chưa có địa chỉ";
+    const isCreated = draft.orderCreated || false;
+    const orderCode = draft.orderCode || "Bản nháp AI";
+
+    let itemsHtml = "";
+    let calculatedTotal = 0;
+    const itemsList = draft.items || [];
+
+    if (itemsList.length === 0) {
+        itemsHtml = `<div class="order-draft-empty text-center py-3 text-medium-emphasis">Chưa có sản phẩm nào trong đơn hàng đề xuất.</div>`;
+    } else {
+        itemsList.forEach((item, idx) => {
+            const price = item.price || item.product?.list_price || item.list_price || 0;
+            const qty = item.qty || item.quantity || 1;
+            const lineSubtotal = item.subtotal || item.price_subtotal || (price * qty);
+            calculatedTotal += lineSubtotal;
+            const prodName = item.product?.name || item.name || item.productNameRaw || "Sản phẩm";
+            const sku = item.product?.sku || item.product?.default_code || item.sku || "N/A";
+            const imgUrl = item.product?.image_url || item.image_url;
+
+            itemsHtml += `
+                <div class="chat-product-card" data-idx="${idx}">
+                    <div class="product-top-row">
+                        <div class="product-img-box">
+                            ${imgUrl ? `<img src="${imgUrl}" alt="${escapeHtml(prodName)}">` : `<span class="img-placeholder">📦</span>`}
+                        </div>
+                        <div class="product-info-box">
+                            <div class="product-title">${escapeHtml(prodName)}</div>
+                            <div class="product-sub">SKU: ${escapeHtml(sku)}</div>
+                        </div>
+                    </div>
+                    <div class="product-bottom-row">
+                        <div class="price-stepper-wrap">
+                            <span class="unit-price-text">${formatVND(price)}</span>
+                            <span class="multiply-sign">×</span>
+                            <div class="qty-stepper">
+                                <button type="button" class="btn-qty-minus" onclick="updateDraftQty(this, ${idx}, -1)" ${isCreated ? 'disabled' : ''}>-</button>
+                                <input type="number" class="input-qty-val" value="${qty}" min="1" onchange="updateDraftQty(this, ${idx}, 0)" ${isCreated ? 'disabled' : ''}>
+                                <button type="button" class="btn-qty-plus" onclick="updateDraftQty(this, ${idx}, 1)" ${isCreated ? 'disabled' : ''}>+</button>
+                            </div>
+                        </div>
+                        <div class="subtotal-wrap">
+                            <span class="subtotal-label">Thành tiền: </span>
+                            <span class="subtotal-val">${formatVND(lineSubtotal)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    const finalTotal = draft.total_amount || draft.totalAmount || draft.amount_total || calculatedTotal;
+
+    return `
+        <div class="order-draft-card">
+            <div class="order-draft-header">
+                <div class="header-left">
+                    <span class="cart-icon">🛒</span>
+                    <div>
+                        <div class="customer-title">Đơn hàng: ${escapeHtml(customerName)}</div>
+                        <div class="customer-sub">${escapeHtml(customerPhone)} • ${escapeHtml(customerAddress)}</div>
+                    </div>
+                </div>
+                <div class="header-badge ${isCreated ? 'badge-success' : 'badge-purple'}">
+                    ${isCreated ? (orderCode || 'Đã tạo Odoo') : 'Bản nháp AI'}
+                </div>
+            </div>
+            <div class="order-draft-body">
+                ${itemsHtml}
+            </div>
+            <div class="order-draft-footer">
+                <div class="total-row">
+                    <span class="total-label">Tổng thanh toán:</span>
+                    <span class="total-amount">${formatVND(finalTotal)}</span>
+                </div>
+                ${!isCreated ? `
+                    <div class="action-row">
+                        <button type="button" class="btn-submit-odoo" onclick="submitDraftOrderToOdoo(this)">
+                            ✨ Xác nhận tạo đơn Odoo
+                        </button>
+                    </div>
+                ` : `
+                    <div class="success-notice">🎉 Đã tạo đơn thành công trên Odoo: ${orderCode}</div>
+                `}
+            </div>
+        </div>
+    `;
+}
+
+function updateDraftQty(el, idx, delta) {
+    const card = el.closest(".order-draft-card");
+    if (!card) return;
+    const itemCard = card.querySelector(`.chat-product-card[data-idx="${idx}"]`);
+    if (!itemCard) return;
+    const input = itemCard.querySelector(".input-qty-val");
+    let currentQty = parseInt(input.value) || 1;
+    if (delta !== 0) {
+        currentQty = Math.max(1, currentQty + delta);
+        input.value = currentQty;
+    } else {
+        currentQty = Math.max(1, currentQty);
+        input.value = currentQty;
+    }
+
+    const priceText = itemCard.querySelector(".unit-price-text")?.innerText || "0";
+    const unitPrice = parseFloat(priceText.replace(/[^0-9]/g, "")) || 0;
+    const newSubtotal = unitPrice * currentQty;
+    itemCard.querySelector(".subtotal-val").innerText = formatVND(newSubtotal);
+
+    let total = 0;
+    card.querySelectorAll(".chat-product-card").forEach(c => {
+        const p = parseFloat(c.querySelector(".unit-price-text")?.innerText.replace(/[^0-9]/g, "")) || 0;
+        const q = parseInt(c.querySelector(".input-qty-val")?.value) || 1;
+        total += p * q;
+    });
+    card.querySelector(".total-amount").innerText = formatVND(total);
+}
+
+function submitDraftOrderToOdoo(btn) {
+    const card = btn.closest(".order-draft-card");
+    if (!card) return;
+    btn.disabled = true;
+    btn.innerHTML = "⏳ Đang tạo đơn Odoo...";
+    setTimeout(() => {
+        const orderCode = "S02" + Math.floor(1000 + Math.random() * 9000);
+        const actionRow = card.querySelector(".action-row");
+        if (actionRow) {
+            actionRow.innerHTML = `<div class="success-notice">🎉 Đã tạo đơn thành công trên Odoo: ${orderCode}</div>`;
+        }
+        const badge = card.querySelector(".header-badge");
+        if (badge) {
+            badge.className = "header-badge badge-success";
+            badge.innerText = orderCode;
+        }
+    }, 1200);
 }
 
 function handleCopyMessage(btn) {
@@ -911,15 +1334,34 @@ function handleEditMessage(btn) {
     }
 }
 
+function isValidPlotlyFigure(figureData) {
+    if (!figureData) return false;
+    try {
+        let fig = typeof figureData === "string" ? JSON.parse(figureData) : figureData;
+        if (!fig) return false;
+        if (fig.figure) fig = fig.figure;
+
+        if (Array.isArray(fig)) {
+            return fig.length > 0 && fig.some(t => t && (t.x || t.y || t.values || t.labels || t.z || t.type));
+        }
+        if (fig.data && Array.isArray(fig.data)) {
+            return fig.data.length > 0 && fig.data.some(t => t && (t.x || t.y || t.values || t.labels || t.z || t.type));
+        }
+        return false;
+    } catch (e) {
+        return false;
+    }
+}
+
 function renderPlotlyChart(figureData, targetBubbleEl) {
-    if (!targetBubbleEl || !figureData) return;
+    if (!targetBubbleEl || !figureData || !isValidPlotlyFigure(figureData)) return;
 
     let chartContainer = targetBubbleEl.querySelector(".chart-container");
     if (!chartContainer) {
         chartContainer = document.createElement("div");
         chartContainer.className = "chart-container";
         chartContainer.style.width = "100%";
-        chartContainer.style.minHeight = "400px";
+        chartContainer.style.minHeight = "380px";
         chartContainer.style.marginTop = "14px";
         chartContainer.style.borderRadius = "8px";
         chartContainer.style.overflow = "hidden";
@@ -929,6 +1371,7 @@ function renderPlotlyChart(figureData, targetBubbleEl) {
 
     try {
         let fig = typeof figureData === "string" ? JSON.parse(figureData) : figureData;
+        if (fig.figure) fig = fig.figure;
         let data = fig.data || (Array.isArray(fig) ? fig : [fig]);
         let layout = fig.layout || {
             margin: { t: 40, b: 40, l: 50, r: 20 },

@@ -281,6 +281,7 @@
                     density="compact"
                     variant="outlined"
                     clearable
+                    :readonly="!isAdmin"
                     prepend-inner-icon="lucide-user-check"
                     hide-details="auto"
                     class="mb-2"
@@ -563,6 +564,7 @@ import { api } from '@/api/index';
 import type { Contact } from '@/composables/use-contacts';
 import { STATUS_OPTIONS, SOURCE_OPTIONS, useContacts } from '@/composables/use-contacts';
 import { useUsers } from '@/composables/use-users';
+import { useAuthStore } from '@/stores/auth';
 import TagSelector from '@/components/common/TagSelector.vue';
 
 const props = defineProps<{
@@ -578,6 +580,8 @@ const emit = defineEmits<{
 
 const { saving, deleting, createContact, updateContact, deleteContact, fetchContact } = useContacts();
 const { users, fetchUsers } = useUsers();
+const authStore = useAuthStore();
+const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role || ''));
 
 const activeTab = ref('profile');
 const fullContactDetail = ref<Contact | null>(null);

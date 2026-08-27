@@ -52,6 +52,26 @@
             {{ statusText(item.liveStatus || item.status) }}
           </v-chip>
         </template>
+        <template #item.aiSettings="{ item }">
+          <div class="d-flex align-center gap-2">
+            <v-switch
+              v-model="item.aiAutoReply"
+              color="success"
+              density="compact"
+              hide-details
+              inset
+              :disabled="!authStore.isAdmin"
+              @update:model-value="(val) => handleToggleAiAutoReply(item, !!val)"
+              class="ma-0 pa-0"
+            >
+              <template #label>
+                <span class="text-caption font-weight-medium">
+                  {{ item.aiAutoReply ? 'Bật AI' : 'Tắt AI' }}
+                </span>
+              </template>
+            </v-switch>
+          </div>
+        </template>
         <template #item.actions="{ item }">
           <v-btn v-if="authStore.isAdmin" icon size="small" color="primary" title="Phân quyền truy cập" @click="openAccess(item)">
             <v-icon>lucide-shield-check</v-icon>
@@ -151,6 +171,7 @@ const {
   showQRDialog, qrImage, qrScanned, scannedName, qrError,
   statusColor, statusText,
   fetchAccounts, addAccount, loginAccount, reconnectAccount, deleteAccount,
+  updateAccountAiSettings,
   cancelQR, setupSocket,
 } = useZaloAccounts();
 
@@ -175,8 +196,27 @@ const headers = [
   { title: 'Zalo UID', key: 'zaloUid' },
   { title: 'SĐT', key: 'phone' },
   { title: 'Trạng thái', key: 'status', sortable: true },
+  { title: 'AI Auto Chat', key: 'aiSettings', sortable: false, width: '130px' },
   { title: 'Hành động', key: 'actions', sortable: false, align: 'end' as const },
 ];
+
+async function handleToggleAiAutoReply(item: ZaloAccount, enabled: boolean) {
+  const success = await updateAccountAiSettings(item.id, { aiAutoReply: enabled });
+  if (success) {
+    snackbar.value = {
+      show: true,
+      text: `${enabled ? 'Đã bật' : 'Đã tắt'} AI Auto Chat cho tài khoản "${item.displayName || item.id}"`,
+      color: 'success',
+    };
+  } else {
+    item.aiAutoReply = !enabled;
+    snackbar.value = {
+      show: true,
+      text: 'Không thể cập nhật cấu hình AI',
+      color: 'error',
+    };
+  }
+}
 
 const connectedCount = computed(() => {
   return accounts.value.filter((a) => (a.liveStatus || a.status) === 'connected').length;

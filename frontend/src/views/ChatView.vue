@@ -28,6 +28,9 @@
       @load-more="loadMoreMessages"
       @toggle-contact-panel="toggleContactPanel"
       @open-order-panel="openOrderPanel"
+      @pause-ai="pauseAi"
+      @resume-ai="resumeAi"
+      @toggle-ai="toggleAi"
       :show-contact-panel="showContactPanel && !showOrderPanel"
       :show-order-panel="showOrderPanel"
       style="flex: 1; min-width: 300px;"
@@ -193,6 +196,7 @@ const {
   fetchConversations, selectConversation, sendMessage, sendAttachment,
   sendReaction,
   loadMoreMessages,
+  pauseAi, resumeAi, toggleAi,
   initSocket, destroySocket,
 } = useChat();
 

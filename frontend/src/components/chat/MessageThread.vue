@@ -38,6 +38,57 @@
 
         <!-- Right: Action Icons (Add User, Video, Search, Info Sidebar Toggle) -->
         <div class="d-flex align-center gap-2 flex-shrink-0">
+          <!-- AI Auto Chat Control Badge (Only visible for 'customer' contacts) -->
+          <v-menu
+            v-if="conversation.threadType === 'user' && conversation.contact?.contactType === 'customer'"
+            location="bottom end"
+            :close-on-content-click="true"
+          >
+            <template v-slot:activator="{ props: aiMenuProps }">
+              <v-btn
+                v-bind="aiMenuProps"
+                size="small"
+                variant="tonal"
+                rounded="md"
+                class="text-none font-weight-medium px-2"
+                :color="conversation.aiPaused ? 'warning' : (conversation.aiActive ? 'success' : 'grey')"
+                style="height: 28px; text-transform: none !important;"
+              >
+                <v-icon start size="14" class="mr-1">
+                  {{ conversation.aiPaused ? 'lucide-pause-circle' : (conversation.aiActive ? 'lucide-bot' : 'lucide-bot-off') }}
+                </v-icon>
+                {{ conversation.aiPaused ? 'AI Tạm dừng' : (conversation.aiActive ? 'AI Đang trực' : 'AI Tắt') }}
+                <v-icon end size="12" class="ml-1 opacity-70">lucide-chevron-down</v-icon>
+              </v-btn>
+            </template>
+            <v-list density="compact" class="py-1 elevation-4 rounded-lg" min-width="210">
+              <v-list-item
+                v-if="conversation.aiPaused"
+                prepend-icon="lucide-play"
+                title="Bật lại AI Auto Chat"
+                @click="$emit('resume-ai', conversation.id)"
+              />
+              <v-list-item
+                v-else-if="conversation.aiActive"
+                prepend-icon="lucide-pause"
+                title="Tạm dừng AI (60 phút)"
+                @click="$emit('pause-ai', conversation.id)"
+              />
+              <v-list-item
+                v-if="conversation.aiActive"
+                prepend-icon="lucide-power-off"
+                title="Tắt AI cuộc trò chuyện"
+                @click="$emit('toggle-ai', conversation.id, false)"
+              />
+              <v-list-item
+                v-else
+                prepend-icon="lucide-power"
+                title="Bật AI cho Khách hàng này"
+                @click="$emit('toggle-ai', conversation.id, true)"
+              />
+            </v-list>
+          </v-menu>
+
           <button type="button" class="zalo-header-btn" title="Thêm thành viên vào cuộc trò chuyện">
             <v-icon size="19">lucide-user-plus</v-icon>
           </button>
@@ -206,13 +257,14 @@
               <!-- Default text -->
               <div v-else class="message-text-content" v-html="parseDisplayContentHtml(msg.content)"></div>
               <!-- Timestamp -->
-              <div class="text-caption msg-time" :class="[
-                isTransparentBubble(msg) ? 'text-grey text-right' : (
+              <div class="text-caption msg-time d-flex align-center" :class="[
+                isTransparentBubble(msg) ? 'text-grey justify-end' : (
                   msg.isNote ? 'msg-time-note' : (
-                    msg.senderType === 'self' ? 'msg-time-self' : 'msg-time-contact'
+                    msg.senderType === 'self' ? 'msg-time-self justify-end' : 'msg-time-contact justify-start'
                   )
                 )
               ]">
+                <span v-if="msg.isAi" class="mr-1 font-weight-bold" style="font-size: 10px; color: #10b981; background: rgba(16, 185, 129, 0.15); padding: 1px 4px; border-radius: 4px;">AI</span>
                 {{ formatMessageTime(msg.sentAt) }}
               </div>
 
@@ -739,6 +791,9 @@ const emit = defineEmits<{
   'toggle-contact-panel': [];
   'open-order-panel': [];
   'load-more': [];
+  'pause-ai': [convId: string];
+  'resume-ai': [convId: string];
+  'toggle-ai': [convId: string, aiActive: boolean];
   react: [messageId: string, icon: string];
 }>();
 

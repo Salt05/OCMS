@@ -262,6 +262,7 @@ class DirectusService {
       const res = await fetch(`${config.directus.url}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(3000),
         body: JSON.stringify({
           email: config.directus.email,
           password: config.directus.password,
@@ -318,7 +319,7 @@ class DirectusService {
 
         const collection = config.directus.productCollection || 'products';
         const url = `${config.directus.url}/items/${collection}?limit=-1&fields=*,images.*,product_groups.*,product_groups.product_groups_id.*`;
-        const res = await fetch(url, { headers });
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(3000) });
 
         if (res.ok) {
           const data = (await res.json()) as any;

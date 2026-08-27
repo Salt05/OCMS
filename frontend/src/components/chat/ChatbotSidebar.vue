@@ -324,15 +324,25 @@
       </template>
     </div>
 
-    <!-- Input Area (1 line compact) -->
+    <!-- Input Area (1 line compact with Order Mode Toggle) -->
     <div class="input-section px-3 pb-3 pt-2">
-      <div class="input-box-wrapper d-flex align-center px-2 py-1">
-        
+      <div class="input-box-wrapper d-flex align-center px-2 py-1" :class="{ 'is-order-mode': isOrderMode }">
+        <!-- Order Mode Toggle Button (Icon Cart) -->
+        <button
+          type="button"
+          class="order-mode-toggle-btn flex-shrink-0 d-flex align-center justify-center mr-1"
+          :class="{ 'is-active': isOrderMode }"
+          :title="isOrderMode ? 'Chế độ Tạo/Sửa đơn hàng: ĐANG BẬT (Bấm để chuyển về Chat thường)' : 'Bấm để BẬT chế độ Tạo/Sửa đơn hàng'"
+          @click="isOrderMode = !isOrderMode"
+        >
+          <v-icon size="15">{{ isOrderMode ? 'lucide-shopping-cart' : 'lucide-shopping-bag' }}</v-icon>
+        </button>
+
         <!-- Text Input Field (1 line, no outline) -->
         <input
           v-model="inputText"
           type="text"
-          placeholder="Hỏi về khách hàng, sản phẩm, đơn hàng..."
+          :placeholder="isOrderMode ? 'Nhập yêu cầu tạo hoặc sửa đơn hàng (VD: 30 bao E01, giảm 5 C24...)' : 'Hỏi về khách hàng, sản phẩm, chi tiêu, tin nhắn...'"
           class="sidebar-chat-input flex-grow-1 text-body-2"
           @keydown.enter="sendMessage"
         />
@@ -675,6 +685,7 @@ const {
 const CHATBOT_API_BASE = 'http://localhost:8000';
 
 const inputText = ref('');
+const isOrderMode = ref(false);
 const isLoading = ref(false);
 const messagesContainerRef = ref<HTMLDivElement | null>(null);
 
@@ -742,6 +753,49 @@ function isToolOutput(text: string): boolean {
   return false;
 }
 
+// Helper to extract <think>...</think>, [suy nghĩ]... or numbered reasoning preamble from text
+function extractThinkingFromText(text: string): { thinking: string | null; cleanContent: string } {
+  if (!text) return { thinking: null, cleanContent: '' };
+  
+  // 1. Explicit <think> or [suy nghĩ] / [thinking] tags
+  const thinkTagMatch = text.match(/<(?:think|thinking|suy_nghi)>([\s\S]*?)(?:<\/(?:think|thinking|suy_nghi)>|$)/i) ||
+                        text.match(/\[(?:think|thinking|suy\s*nghĩ|phân\s*tích)\]([\s\S]*?)(?:\[\/(?:think|thinking|suy\s*nghĩ|phân\s*tích)\]|$)/i);
+  if (thinkTagMatch) {
+    const thinking = thinkTagMatch[1].trim() || null;
+    const cleanContent = text.replace(/<(?:think|thinking|suy_nghi)>[\s\S]*?(?:<\/(?:think|thinking|suy_nghi)>|$)/gi, '')
+                             .replace(/\[(?:think|thinking|suy\s*nghĩ|phân\s*tích)\][\s\S]*?(?:\[\/(?:think|thinking|suy\s*nghĩ|phân\s*tích)\]|$)/gi, '')
+                             .trim();
+    return { thinking, cleanContent };
+  }
+
+  // 2. Numbered reasoning preamble (e.g. "1. Xác định... 2. Thực hiện... 3. Kiểm tra... 4. Tổng hợp...")
+  const lines = text.trim().split('\n');
+  if (lines.length > 1 && /^(?:1\.|Bước 1:?|Xác định:?|Nhận diện:?)/i.test(lines[0].trim())) {
+    let splitIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) {
+        splitIndex = i;
+        break;
+      }
+      if (i > 0 && /^(?:#{1,6}\s|\*\*|[A-ZÀ-Ỹ]|\|)/.test(line) && !/^\d+\.|\bBước \d+/.test(line)) {
+        splitIndex = i;
+        break;
+      }
+    }
+
+    if (splitIndex > 0) {
+      const candidateThinking = lines.slice(0, splitIndex).join('\n').trim();
+      const cleanContent = lines.slice(splitIndex).join('\n').trim();
+      if (candidateThinking.length > 20 && /(\b2\.|Bước 2|Kiểm tra|Phân tích|Truy vấn|Xác định|Tổng hợp)/i.test(candidateThinking)) {
+        return { thinking: candidateThinking, cleanContent };
+      }
+    }
+  }
+
+  return { thinking: null, cleanContent: text };
+}
+
 // Clean internal tool outputs / raw CSV dump from LLM response
 function cleanAssistantText(text: string): string {
   if (!text) return '';
@@ -753,6 +807,7 @@ function cleanAssistantText(text: string): string {
     return '';
   }
   let cleaned = text;
+  cleaned = cleaned.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '');
   cleaned = cleaned.replace(/Created visualization from '[^']+' \(\d+ rows, \d+ columns\)\.?/gi, '');
   cleaned = cleaned.replace(/\(Results truncated to \d+ characters[\s\S]*?\)/gi, '');
   cleaned = cleaned.replace(/\*{0,2}Results saved to file:\s*[^\n\r*]+\*{0,2}/gi, '');
@@ -881,6 +936,27 @@ function openDataModal(msg: any, initialTab: 'table' | 'chart' = 'table') {
   }
 }
 
+// Lazy load Plotly only on demand when chart is opened
+let plotlyLoadingPromise: Promise<any> | null = null;
+function loadPlotly(): Promise<any> {
+  if (typeof (window as any).Plotly !== 'undefined') {
+    return Promise.resolve((window as any).Plotly);
+  }
+  if (plotlyLoadingPromise) return plotlyLoadingPromise;
+  plotlyLoadingPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.plot.ly/plotly-2.35.2.min.js';
+    script.async = true;
+    script.onload = () => resolve((window as any).Plotly);
+    script.onerror = (err) => {
+      plotlyLoadingPromise = null;
+      reject(err);
+    };
+    document.head.appendChild(script);
+  });
+  return plotlyLoadingPromise;
+}
+
 // Switch to Chart Tab and render Plotly
 function switchToChartTab() {
   activeDataTab.value = 'chart';
@@ -889,13 +965,23 @@ function switchToChartTab() {
   });
 }
 
-function renderChart() {
+async function renderChart() {
   if (!plotlyChartRef.value) return;
 
-  if (typeof Plotly === 'undefined') {
+  if (typeof (window as any).Plotly === 'undefined') {
     plotlyChartRef.value.innerHTML = '<div class="pa-4 text-center text-medium-emphasis">Đang tải thư viện biểu đồ Plotly...</div>';
-    return;
+    try {
+      await loadPlotly();
+    } catch {
+      if (plotlyChartRef.value) {
+        plotlyChartRef.value.innerHTML = '<div class="pa-4 text-center text-error">Không thể tải thư viện biểu đồ Plotly. Vui lòng kiểm tra kết nối mạng.</div>';
+      }
+      return;
+    }
   }
+
+  const Plotly = (window as any).Plotly;
+  if (!Plotly || !plotlyChartRef.value) return;
 
   // 1. If explicit Plotly chart figure exists from AI
   if (modalChartData.value) {
@@ -999,15 +1085,29 @@ async function loadSession(sessionId: string) {
     if (res.ok) {
       const data = await res.json();
       if (data.conversation && data.conversation.messages) {
-        messages.value = data.conversation.messages.map((m: any) => ({
-          role: m.role,
-          content: m.role === 'user' ? cleanDisplayUserMessage(m.content || '') : (m.content || ''),
-          dataframe: m.dataframe || parseMarkdownTable(m.content || ''),
-          chart: m.chart || null,
-          thinking: m.metadata?.thinking || m.metadata?.orderDraft?.thinking || null,
-          showThinking: false,
-          orderDraft: m.metadata?.orderDraft || null,
-        }));
+        messages.value = data.conversation.messages.map((m: any) => {
+          const rawContent = m.content || '';
+          let thinking = m.metadata?.thinking || m.metadata?.orderDraft?.thinking || null;
+          let content = rawContent;
+          if (m.role === 'user') {
+            content = cleanDisplayUserMessage(rawContent);
+          } else {
+            const extracted = extractThinkingFromText(rawContent);
+            if (extracted.thinking) {
+              thinking = extracted.thinking;
+            }
+            content = cleanAssistantText(extracted.cleanContent);
+          }
+          return {
+            role: m.role,
+            content,
+            dataframe: m.dataframe || parseMarkdownTable(content),
+            chart: m.chart || null,
+            thinking,
+            showThinking: false,
+            orderDraft: m.metadata?.orderDraft || null,
+          };
+        });
       } else {
         messages.value = [];
       }
@@ -1038,92 +1138,6 @@ async function deleteSession(sessionId: string) {
   } catch (e) {
     console.error('Failed to delete session:', e);
   }
-}
-
-function hasExplicitProductDetails(text: string): boolean {
-  const t = text.toLowerCase().trim();
-
-  // If the prompt explicitly asks to read the chat history / customer messages, ALWAYS use conversation mode
-  if (
-    t.includes('lịch sử chat') ||
-    t.includes('lich su chat') ||
-    t.includes('tin nhắn') ||
-    t.includes('tin nhan') ||
-    t.includes('đoạn chat') ||
-    t.includes('doan chat') ||
-    t.includes('khách này') ||
-    t.includes('khach nay') ||
-    t.includes('khách muốn') ||
-    t.includes('khach muon') ||
-    t.includes('khách đặt') ||
-    t.includes('khach dat') ||
-    t.includes('khách mua') ||
-    t.includes('khach mua') ||
-    t.includes('đặt sản phẩm gì') ||
-    t.includes('dat san pham gi') ||
-    t.includes('muốn đặt') ||
-    t.includes('muon dat') ||
-    t.includes('muốn mua') ||
-    t.includes('muon mua')
-  ) {
-    return false;
-  }
-
-  // Check if staff explicitly specifies products / quantities / SKUs in their direct message
-  // e.g. "sản phẩm E01 số lượng 100", "5 bao B03", "10 gói pate", "2 cái", "E01 x100", etc.
-  const hasSku = /\b[a-zA-Z]\d{1,4}\b/i.test(t); // E01, B03, C24, DB01...
-  const hasNumberWithUnit = /\d+\s*(bao|gói|hộp|bịch|lon|cái|chai|kg|g|pcs|thùng|cặp|đôi)\b/i.test(t);
-  const hasQuantityNumber = /\b(số lượng|sl)\s*[:=]?\s*\d+/i.test(t);
-  const hasDirectQtyMultiplication = /\b[a-zA-Z0-9_\-]+\s*[x*]\s*\d+\b/i.test(t);
-
-  return hasSku || hasNumberWithUnit || hasQuantityNumber || hasDirectQtyMultiplication;
-}
-
-function isOrderIntent(text: string): boolean {
-  const t = text.toLowerCase().trim();
-  return (
-    // Tạo đơn / Lên đơn / Lập đơn / Order
-    t.includes('tạo đơn') ||
-    t.includes('tao don') ||
-    t.includes('lên đơn') ||
-    t.includes('len don') ||
-    t.includes('lập đơn') ||
-    t.includes('lap don') ||
-    t.includes('order') ||
-    t.includes('đặt hàng') ||
-    t.includes('dat hang') ||
-    t.includes('bóc tách') ||
-    t.includes('boc tach') ||
-    t.includes('mua hàng') ||
-    t.includes('mua hang') ||
-    // Đọc tin nhắn / Lịch sử chat / Khách đặt gì / Khách muốn mua gì
-    t.includes('đọc lịch sử chat') ||
-    t.includes('doc lich su chat') ||
-    t.includes('đọc tin nhắn') ||
-    t.includes('doc tin nhan') ||
-    t.includes('đọc đoạn chat') ||
-    t.includes('doc doan chat') ||
-    t.includes('lịch sử chat') ||
-    t.includes('lich su chat') ||
-    t.includes('khách muốn đặt') ||
-    t.includes('khach muon dat') ||
-    t.includes('khách muốn mua') ||
-    t.includes('khach muon mua') ||
-    t.includes('khách đặt gì') ||
-    t.includes('khach dat gi') ||
-    t.includes('khách mua gì') ||
-    t.includes('khach mua gi') ||
-    t.includes('đặt sản phẩm gì') ||
-    t.includes('dat san pham gi') ||
-    t.includes('muốn đặt') ||
-    t.includes('muon dat') ||
-    t.includes('muốn mua') ||
-    t.includes('muon mua') ||
-    t.includes('xem tin nhắn') ||
-    t.includes('xem tin nhan') ||
-    t.includes('kiểm tra tin nhắn') ||
-    t.includes('kiem tra tin nhan')
-  );
 }
 
 // ── Interactive Draft Order Helpers ──────────────────────────────────────────
@@ -1235,54 +1249,6 @@ async function submitDraftOrder(msg: ChatMessage) {
   }
 }
 
-function isDraftConfirmIntent(text: string): boolean {
-  const t = text.toLowerCase().trim();
-  if (
-    t === 'ok' ||
-    t === 'oke' ||
-    t === 'okie' ||
-    t === 'chốt' ||
-    t === 'chot' ||
-    t === 'chốt đi' ||
-    t === 'chot di' ||
-    t === 'chốt luôn' ||
-    t === 'chot luon' ||
-    t === 'chốt đơn' ||
-    t === 'chot don' ||
-    t === 'xác nhận' ||
-    t === 'xac nhan' ||
-    t === 'đồng ý' ||
-    t === 'dong y' ||
-    t === 'tạo luôn' ||
-    t === 'tao luon' ||
-    t === 'lên luôn' ||
-    t === 'len luon' ||
-    t === 'được rồi' ||
-    t === 'duoc roi' ||
-    t === 'duoc r' ||
-    t === 'ok em' ||
-    t === 'ok bạn'
-  ) {
-    return true;
-  }
-
-  return /\b(chốt đơn|chot don|chốt luôn|chot luon|chốt giúp|xác nhận|xac nhan|tạo đơn|tao don|lên đơn|len don|lập đơn|lap don|gửi đơn|gui don|lưu đơn|luu don|đẩy đơn|day don|đồng ý|dong y|tiến hành tạo|tien hanh tao|đẩy sang odoo|day sang odoo|tạo sang odoo|tạo đơn đi|lên đơn đi|chốt đi)\b/i.test(t);
-}
-
-function isDraftModificationIntent(text: string, currentDraft: any): boolean {
-  if (!currentDraft || !Array.isArray(currentDraft.items) || currentDraft.items.length === 0) {
-    return false;
-  }
-  const t = text.toLowerCase();
-  const hasActionWord = /\b(giảm|giam|bớt|bot|hạ|ha|tăng|tang|thêm|them|xóa|xoa|bỏ|bo|hủy|huy|đổi|doi|sửa|sua|chỉnh|chinh|còn|con|lên|len|xuống|xuong|thay|không lấy|khong lay|địa chỉ|dia chi|ghi chú|ghi chu|lấy|lay|phần|phan|gói|goi|bao|lon|hộp|hop|cái|cai)\b/i.test(t);
-  const hasItemMatch = (currentDraft.items || []).some((it: any) => {
-    const sku = (it.sku || '').toLowerCase();
-    const name = (it.productNameRaw || it.matchedProductName || it.product?.name || '').toLowerCase();
-    return (sku && t.includes(sku)) || (name && name.split(/\s+/).some((w: string) => w.length > 2 && t.includes(w)));
-  });
-  return hasActionWord || hasItemMatch;
-}
-
 // ── Send message to chatbot / Handle Order Intent ────────────────────────────
 async function sendMessage() {
   const text = inputText.value.trim();
@@ -1298,40 +1264,20 @@ async function sendMessage() {
     activeSessionId.value = generateUUID();
   }
 
-  // 1. Check if there is an active draft in current chat context
-  const lastDraftMsg = [...messages.value].slice(0, -1).reverse().find(m => m.orderDraft && !m.orderDraft.orderCreated);
+  // ─────────────────────────────────────────────────────────────────────────────
+  // A. CHẾ ĐỘ TẠO / SỬA ĐƠN HÀNG (ĐƯỢC BẬT QUA NÚT ICON GIỎ HÀNG)
+  const isExplicitOrderCommand = /\b(tạo đơn|tao don|lên đơn|len don|lập đơn|lap don|bóc tách đơn|boc tach don|tạo order|lên order)\b/i.test(text);
 
-  if (lastDraftMsg && lastDraftMsg.orderDraft) {
-    // 1.1. When user requests confirmation via chat, instruct them to click the confirmation button on the form
-    if (isDraftConfirmIntent(text)) {
-      const noticeContent = '👉 Để đảm bảo tính chính xác và an toàn dữ liệu, bạn vui lòng kiểm tra lại các sản phẩm và bấm trực tiếp vào nút **"Xác nhận tạo đơn"** (màu xanh) trên phiếu đơn hàng phía trên nhé! 🛒';
-      messages.value.push({
-        role: 'assistant',
-        content: noticeContent,
-        orderDraft: null,
-      });
+  // ─────────────────────────────────────────────────────────────────────────────
+  // A. CHẾ ĐỘ TẠO / SỬA ĐƠN HÀNG (KHI BẬT NÚT HOẶC CÂU LỆNH YÊU CẦU TẠO ĐƠN RÕ RÀNG)
+  // ─────────────────────────────────────────────────────────────────────────────
+  if (isOrderMode.value || isExplicitOrderCommand) {
+    // 1. Kiểm tra nếu tin nhắn trợ lý trước đó là 1 phiếu đơn hàng nháp -> SỬA ĐƠN HÀNG
+    const lastAssistantMsg = [...messages.value].slice(0, -1).filter(m => m.role === 'assistant').pop();
+    const hasActiveDraft = !!(lastAssistantMsg?.orderDraft && !lastAssistantMsg.orderDraft.orderCreated);
+    const activeDraft = hasActiveDraft ? lastAssistantMsg!.orderDraft : null;
 
-      if (activeSessionId.value) {
-        fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: 'user', content: text }),
-        }).catch(e => console.warn('Cannot persist user confirm msg:', e));
-
-        fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: 'assistant', content: noticeContent }),
-        }).catch(e => console.warn('Cannot persist assistant confirm notice:', e));
-      }
-
-      isLoading.value = false;
-      scrollToBottom();
-      return;
-    }
-
-    // 1.2. Check if user wants to conversational-modify the draft
-    if (isDraftModificationIntent(text, lastDraftMsg.orderDraft)) {
+    if (hasActiveDraft && activeDraft && activeDraft.items && activeDraft.items.length > 0) {
       messages.value.push({
         role: 'assistant',
         content: '🔍 Đang điều chỉnh đơn hàng theo yêu cầu của bạn...',
@@ -1339,109 +1285,107 @@ async function sendMessage() {
       });
       const assistantMsgIndex = messages.value.length - 1;
       scrollToBottom();
-    scrollToBottom();
 
-    try {
-      await fetchProducts();
+      try {
+        await fetchProducts();
 
-      const res = await api.post('/orders/ai-modify-draft', {
-        currentDraft: lastDraftMsg.orderDraft,
-        instruction: text,
-      });
-
-      const updatedDraft = res.data?.draft;
-      const explanation = res.data?.explanation || 'Tôi đã cập nhật đơn hàng theo yêu cầu của bạn:';
-
-      if (updatedDraft && Array.isArray(updatedDraft.items)) {
-        const enrichedItems = updatedDraft.items.map((it: any) => {
-          let matched: OdooProduct | null = null;
-          if (it.matchedProductOdooId) {
-            matched = products.value.find(p => Number(p.odoo_id || p.id) === it.matchedProductOdooId) || null;
-          }
-          if (!matched && it.sku) {
-            matched = products.value.find(p => (p.default_code || p.sku || '').toLowerCase() === it.sku.toLowerCase()) || null;
-          }
-          return {
-            product: matched ? { ...matched, id: Number(matched.odoo_id || matched.id) } : null,
-            productNameRaw: it.productNameRaw || matched?.name || 'Sản phẩm',
-            sku: matched?.default_code || matched?.sku || it.sku || null,
-            qty: it.quantity ?? 0,
-            price: it.priceUnit || matched?.wholesale_price || matched?.list_price || 0,
-            discount: it.discount || 0,
-            aiConfidence: it.confidence,
-          };
+        const res = await api.post('/orders/ai-modify-draft', {
+          currentDraft: activeDraft,
+          instruction: text,
         });
 
-        const validItems = enrichedItems.filter((it: any) => it.product?.id != null && it.price > 0);
+        const updatedDraft = res.data?.draft;
+        const explanation = res.data?.explanation || 'Tôi đã cập nhật đơn hàng theo yêu cầu của bạn:';
 
-        messages.value[assistantMsgIndex].content = explanation;
-        messages.value[assistantMsgIndex].thinking = updatedDraft.thinking || null;
-        messages.value[assistantMsgIndex].showThinking = false;
-        messages.value[assistantMsgIndex].orderDraft = {
-          thinking: updatedDraft.thinking || null,
-          customer: {
-            name: updatedDraft.customer?.name || lastDraftMsg.orderDraft.customer?.name || null,
-            phone: updatedDraft.customer?.phone || lastDraftMsg.orderDraft.customer?.phone || null,
-            shippingAddress: updatedDraft.customer?.shippingAddress || lastDraftMsg.orderDraft.customer?.shippingAddress || null,
-          },
-          items: validItems,
-          notes: updatedDraft.notes || lastDraftMsg.orderDraft.notes || null,
-          missingInfo: updatedDraft.missingInfo || [],
-          orderCreated: false,
-        };
+        if (updatedDraft && Array.isArray(updatedDraft.items)) {
+          const enrichedItems = updatedDraft.items.map((it: any) => {
+            let matched: OdooProduct | null = null;
+            if (it.matchedProductOdooId) {
+              matched = products.value.find(p => Number(p.odoo_id || p.id) === it.matchedProductOdooId) || null;
+            }
+            if (!matched && it.sku) {
+              matched = products.value.find(p => (p.default_code || p.sku || '').toLowerCase() === it.sku.toLowerCase()) || null;
+            }
+            return {
+              product: matched ? { ...matched, id: Number(matched.odoo_id || matched.id) } : null,
+              productNameRaw: it.productNameRaw || matched?.name || 'Sản phẩm',
+              sku: matched?.default_code || matched?.sku || it.sku || null,
+              qty: it.quantity ?? 0,
+              price: it.priceUnit || matched?.wholesale_price || matched?.list_price || 0,
+              discount: it.discount || 0,
+              aiConfidence: it.confidence,
+            };
+          });
 
-        // Also update lastDraftMsg so it stays in sync
-        lastDraftMsg.orderDraft = messages.value[assistantMsgIndex].orderDraft;
-      } else {
-        messages.value[assistantMsgIndex].content = explanation;
-        messages.value[assistantMsgIndex].thinking = updatedDraft?.thinking || null;
-      }
+          const validItems = enrichedItems.filter((it: any) => it.product?.id != null && it.price > 0);
 
-      // Persist to ChatBot database
-      if (activeSessionId.value) {
-        fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: 'user', content: text }),
-        }).catch(e => console.warn('Cannot persist user edit message:', e));
-
-        fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            role: 'assistant',
-            content: messages.value[assistantMsgIndex].content,
-            metadata: {
-              thinking: messages.value[assistantMsgIndex].thinking,
-              orderDraft: messages.value[assistantMsgIndex].orderDraft,
+          messages.value[assistantMsgIndex].content = explanation;
+          messages.value[assistantMsgIndex].thinking = updatedDraft.thinking || null;
+          messages.value[assistantMsgIndex].showThinking = false;
+          messages.value[assistantMsgIndex].orderDraft = {
+            thinking: updatedDraft.thinking || null,
+            customer: {
+              name: updatedDraft.customer?.name || activeDraft.customer?.name || null,
+              phone: updatedDraft.customer?.phone || activeDraft.customer?.phone || null,
+              shippingAddress: updatedDraft.customer?.shippingAddress || activeDraft.customer?.shippingAddress || null,
             },
-          }),
-        }).catch(e => console.warn('Cannot persist assistant edit message:', e));
+            items: validItems,
+            notes: updatedDraft.notes || activeDraft.notes || null,
+            missingInfo: updatedDraft.missingInfo || [],
+            orderCreated: false,
+          };
 
-        fetchSessions();
+          if (lastAssistantMsg) {
+            lastAssistantMsg.orderDraft = messages.value[assistantMsgIndex].orderDraft;
+          }
+        } else {
+          messages.value[assistantMsgIndex].content = explanation;
+          messages.value[assistantMsgIndex].thinking = updatedDraft?.thinking || null;
+        }
+
+        // Persist to ChatBot database
+        if (activeSessionId.value) {
+          fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'user', content: text }),
+          }).catch(e => console.warn('Cannot persist user edit message:', e));
+
+          fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              role: 'assistant',
+              content: messages.value[assistantMsgIndex].content,
+              metadata: {
+                thinking: messages.value[assistantMsgIndex].thinking,
+                orderDraft: messages.value[assistantMsgIndex].orderDraft,
+              },
+            }),
+          }).catch(e => console.warn('Cannot persist assistant edit message:', e));
+
+          fetchSessions();
+        }
+      } catch (err: any) {
+        console.error('[AI Order modification error]', err);
+        messages.value[assistantMsgIndex].content = `⚠️ Lỗi khi chỉnh sửa đơn hàng: ${err.response?.data?.error || err.message}`;
+      } finally {
+        messages.value[assistantMsgIndex].duration = ((Date.now() - requestStartTime) / 1000).toFixed(1);
+        isLoading.value = false;
+        scrollToBottom();
       }
-    } catch (err: any) {
-      console.error('[AI Order modification error]', err);
-      messages.value[assistantMsgIndex].content = `⚠️ Lỗi khi chỉnh sửa đơn hàng: ${err.response?.data?.error || err.message}`;
-    } finally {
-      messages.value[assistantMsgIndex].duration = ((Date.now() - requestStartTime) / 1000).toFixed(1);
-      isLoading.value = false;
-      scrollToBottom();
+      return;
     }
-    return;
-  }
-}
 
-  // 2. Check if user specifically asks to create a new order
-  if (isOrderIntent(text)) {
-    const isDirectInput = hasExplicitProductDetails(text);
-    const mode = isDirectInput ? 'text' : 'conversation';
+    // 2. Không có phiếu nháp đang mở -> TẠO PHIẾU ĐƠN HÀNG MỚI
+    const hasConversation = !!props.conversation?.id;
+    const mode = hasConversation ? 'conversation' : 'text';
 
     messages.value.push({
       role: 'assistant',
-      content: isDirectInput 
+      content: mode === 'text' 
         ? '🔍 Đang trích xuất đơn hàng từ thông tin bạn vừa nhập...' 
-        : '🔍 Đang phân tích tin nhắn Zalo hôm nay để bóc tách đơn hàng...',
+        : '🔍 Đang phân tích tin nhắn Zalo để bóc tách đơn hàng...',
       orderDraft: null,
     });
     const assistantMsgIndex = messages.value.length - 1;
@@ -1452,8 +1396,8 @@ async function sendMessage() {
 
       const res = await api.post('/orders/ai-extract', {
         mode: mode,
-        conversationId: isDirectInput ? undefined : props.conversation?.id,
-        text: isDirectInput ? text : undefined,
+        conversationId: props.conversation?.id,
+        text: text,
         customerName: customerName.value,
         customerPhone: customerPhone.value,
         customerAddress: customerAddress.value,
@@ -1462,7 +1406,6 @@ async function sendMessage() {
 
       const draft = res.data?.draft;
       if (draft && Array.isArray(draft.items)) {
-        // Enrich items with cached products and strictly filter ONLY valid products
         const enrichedItems = draft.items.map((it: any) => {
           let matched: OdooProduct | null = null;
           if (it.matchedProductOdooId) {
@@ -1482,7 +1425,6 @@ async function sendMessage() {
           };
         });
 
-        // STRICT FILTER: Only show products that exist in Directus/Odoo cache and have a valid price
         const validItems = enrichedItems.filter((it: any) => it.product?.id != null && it.price > 0);
         const cName = draft.customer?.name || customerName.value || 'khách hàng';
 
@@ -1490,9 +1432,9 @@ async function sendMessage() {
         messages.value[assistantMsgIndex].showThinking = false;
 
         if (validItems.length > 0) {
-          messages.value[assistantMsgIndex].content = isDirectInput
+          messages.value[assistantMsgIndex].content = mode === 'text'
             ? `Tôi đã lập **phiếu đơn hàng** theo thông tin bạn vừa yêu cầu cho **${cName}**. Bạn có thể kiểm tra số lượng, thêm/xóa sản phẩm và bấm **Xác nhận tạo đơn**:`
-            : `Tôi đã kiểm tra hội thoại hôm nay và lập **phiếu đơn hàng đề xuất** cho **${cName}**. Bạn có thể điều chỉnh số lượng (+/-), thêm/xóa sản phẩm và bấm **Xác nhận tạo đơn**:`;
+            : `Tôi đã kiểm tra hội thoại và lập **phiếu đơn hàng đề xuất** cho **${cName}**. Bạn có thể điều chỉnh số lượng (+/-), thêm/xóa sản phẩm và bấm **Xác nhận tạo đơn**:`;
 
           messages.value[assistantMsgIndex].orderDraft = {
             thinking: draft.thinking || null,
@@ -1507,10 +1449,9 @@ async function sendMessage() {
             orderCreated: false,
           };
         } else {
-          // If no valid products found in system
-          let msgText = isDirectInput
+          let msgText = mode === 'text'
             ? `⚠️ Không tìm thấy sản phẩm nào khớp trong danh mục kho của hệ thống.`
-            : `⚠️ Không tìm thấy yêu cầu đặt hàng hợp lệ nào trong các tin nhắn hôm nay.`;
+            : `⚠️ Không tìm thấy yêu cầu đặt hàng hợp lệ nào trong các tin nhắn.`;
 
           if (draft.missingInfo && draft.missingInfo.length > 0) {
             msgText += `\n- ${draft.missingInfo.join('\n- ')}`;
@@ -1536,7 +1477,7 @@ async function sendMessage() {
         messages.value[assistantMsgIndex].content = '⚠️ Không thể bóc tách đơn hàng. Bạn có thể thử lại hoặc nhập rõ tên sản phẩm và số lượng nhé!';
       }
 
-      // Persist user and assistant messages to ChatBot database
+      // Persist to ChatBot database
       if (activeSessionId.value) {
         fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
           method: 'POST',
@@ -1573,6 +1514,10 @@ async function sendMessage() {
     return;
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // B. CHẾ ĐỘ TRÒ CHUYỆN / HỎI THÔNG TIN BÌNH THƯỜNG (MẶC ĐỊNH KHI TẮT NÚT)
+  // ─────────────────────────────────────────────────────────────────────────────
+
   messages.value.push({ role: 'assistant', content: '', dataframe: null, chart: null, orderDraft: null });
   const assistantMsgIndex = messages.value.length - 1;
   scrollToBottom();
@@ -1603,6 +1548,7 @@ async function sendMessage() {
     const reader = res.body?.getReader();
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
+    const toolExecutionSteps: string[] = [];
 
     if (reader) {
       while (true) {
@@ -1629,6 +1575,18 @@ async function sendMessage() {
               const type = rich.type || rich.component_type;
               const data = rich.data || rich;
 
+              // Tool execution card or status
+              if (type === 'status_card' || rich.status || rich.title) {
+                const title = rich.title || data?.title;
+                const desc = rich.description || data?.description;
+                const sql = rich.metadata?.sql || data?.metadata?.sql;
+                if (sql) {
+                  toolExecutionSteps.push(`⚡ Thực thi SQL:\n\`\`\`sql\n${sql}\n\`\`\``);
+                } else if (title && !title.includes('Executing search_saved')) {
+                  toolExecutionSteps.push(`⚙️ ${title}${desc ? `: ${desc}` : ''}`);
+                }
+              }
+
               // Dataframe
               if (type === 'dataframe' || data?.columns) {
                 const df = data.dataframe || data;
@@ -1645,7 +1603,11 @@ async function sendMessage() {
               if (type === 'text' && data?.content) {
                 const rawText = data.content;
                 if (!isToolOutput(rawText)) {
-                  const cleaned = cleanAssistantText(rawText);
+                  const { thinking, cleanContent } = extractThinkingFromText(rawText);
+                  if (thinking) {
+                    messages.value[assistantMsgIndex].thinking = thinking;
+                  }
+                  const cleaned = cleanAssistantText(cleanContent);
                   if (cleaned) {
                     messages.value[assistantMsgIndex].content = cleaned;
                     scrollToBottom();
@@ -1658,7 +1620,11 @@ async function sendMessage() {
             if (simple && simple.text) {
               const rawText = simple.text;
               if (!isToolOutput(rawText)) {
-                const cleaned = cleanAssistantText(rawText);
+                const { thinking, cleanContent } = extractThinkingFromText(rawText);
+                if (thinking) {
+                  messages.value[assistantMsgIndex].thinking = thinking;
+                }
+                const cleaned = cleanAssistantText(cleanContent);
                 if (cleaned) {
                   messages.value[assistantMsgIndex].content = cleaned;
                   scrollToBottom();
@@ -1668,13 +1634,30 @@ async function sendMessage() {
 
             // 3. Raw chunk content if any
             if (chunk.content) {
-              messages.value[assistantMsgIndex].content += chunk.content;
-              scrollToBottom();
+              const { thinking, cleanContent } = extractThinkingFromText(chunk.content);
+              if (thinking) {
+                messages.value[assistantMsgIndex].thinking = (messages.value[assistantMsgIndex].thinking ? messages.value[assistantMsgIndex].thinking + '\n' : '') + thinking;
+              }
+              if (cleanContent) {
+                messages.value[assistantMsgIndex].content += cleanContent;
+                scrollToBottom();
+              }
             }
           } catch {
             // Ignore non-json lines
           }
         }
+      }
+    }
+
+    // Final pass on full accumulated content to extract thinking / clean content
+    if (messages.value[assistantMsgIndex].content) {
+      const { thinking, cleanContent } = extractThinkingFromText(messages.value[assistantMsgIndex].content);
+      if (thinking && !messages.value[assistantMsgIndex].thinking) {
+        messages.value[assistantMsgIndex].thinking = thinking;
+      }
+      if (cleanContent) {
+        messages.value[assistantMsgIndex].content = cleanContent;
       }
     }
 
@@ -1692,9 +1675,34 @@ async function sendMessage() {
       }
     }
 
+    // If no thinking was generated by LLM, but we captured tool execution steps:
+    if (!messages.value[assistantMsgIndex].thinking && toolExecutionSteps.length > 0) {
+      messages.value[assistantMsgIndex].thinking = [
+        '1. Đã nhận diện yêu cầu và đối chiếu ngữ cảnh hội thoại.',
+        ...toolExecutionSteps.map((step, i) => `${i + 2}. ${step}`),
+        `${toolExecutionSteps.length + 2}. Phân tích dữ liệu kết quả và phản hồi thông tin.`
+      ].join('\n');
+    }
+
     // Parse dataframe if available in markdown
     if (!messages.value[assistantMsgIndex].dataframe) {
       messages.value[assistantMsgIndex].dataframe = parseMarkdownTable(messages.value[assistantMsgIndex].content);
+    }
+
+    // Persist assistant message with metadata into SQLite conversation history
+    if (activeSessionId.value) {
+      fetch(`${CHATBOT_API_BASE}/api/conversations/${activeSessionId.value}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: 'assistant',
+          content: messages.value[assistantMsgIndex].content,
+          metadata: {
+            thinking: messages.value[assistantMsgIndex].thinking || null,
+            dataframe: messages.value[assistantMsgIndex].dataframe || null,
+          }
+        })
+      }).catch(e => console.warn('Cannot persist assistant message metadata:', e));
     }
 
     await fetchSessions();
@@ -1890,6 +1898,45 @@ defineExpose({
 .send-btn:disabled {
   opacity: 0.35 !important;
   cursor: not-allowed;
+}
+
+/* Order Mode Toggle Button */
+.order-mode-toggle-btn {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: #64748B !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.order-mode-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.06) !important;
+  color: #0F172A !important;
+}
+.order-mode-toggle-btn.is-active {
+  background: #10B981 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 1px 3px rgba(16, 185, 129, 0.35);
+}
+
+.input-box-wrapper.is-order-mode {
+  border-color: #10B981 !important;
+  box-shadow: 0 0 0 1.5px rgba(16, 185, 129, 0.25) !important;
+}
+
+/* Dark Mode Overrides for Order Mode */
+.is-dark .order-mode-toggle-btn {
+  color: #94A3B8 !important;
+}
+.is-dark .order-mode-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #F8FAFC !important;
+}
+.is-dark .order-mode-toggle-btn.is-active {
+  background: #059669 !important;
+  color: #FFFFFF !important;
 }
 
 /* Markdown and Tables in Light Mode */

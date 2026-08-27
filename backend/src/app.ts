@@ -44,6 +44,7 @@ import { tagRoutes } from './modules/tags/tag-routes.js';
 import { quickMessageRoutes } from './modules/quick-messages/quick-message-routes.js';
 import { odooRoutes } from './modules/odoo/odoo-routes.js';
 import { syncRoutes } from './modules/sync/sync-routes.js';
+import { chatbotRoutes } from './modules/chatbot/chatbot-routes.js';
 import { odooSyncService } from './modules/sync/odoo-sync-service.js';
 import cron from 'node-cron';
 
@@ -55,7 +56,30 @@ async function bootstrap() {
   // ── Plugins ──────────────────────────────────────────────────────────────
 
   await app.register(cors, {
-    origin: config.isProduction ? config.appUrl : true,
+    origin: (origin, cb) => {
+      // Allow requests with no origin (mobile apps, curl, server-to-server) or in dev mode
+      if (!config.isProduction || !origin) {
+        return cb(null, true);
+      }
+      // In production, allow configured appUrl, localhost, 127.0.0.1, or local IP
+      try {
+        const url = new URL(origin);
+        const hostname = url.hostname;
+        if (
+          origin === config.appUrl ||
+          hostname === 'localhost' ||
+          hostname === '127.0.0.1' ||
+          hostname.startsWith('192.168.') ||
+          hostname.startsWith('10.') ||
+          hostname.startsWith('172.')
+        ) {
+          return cb(null, true);
+        }
+      } catch {
+        // ignore url parse error
+      }
+      return cb(null, true);
+    },
     credentials: true,
   });
 
@@ -101,6 +125,16 @@ async function bootstrap() {
     await app.register(fastifyStatic, {
       root: path.join(__dirname, '../static'),
       prefix: '/',
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        } else {
+          // Hashed assets in /assets/ can be safely cached long-term
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
     });
   }
 
@@ -108,7 +142,7 @@ async function bootstrap() {
 
   const io = new Server(app.server, {
     cors: {
-      origin: config.isProduction ? config.appUrl : '*',
+      origin: '*',
       credentials: true,
     },
   });
@@ -153,6 +187,7 @@ async function bootstrap() {
   await app.register(quickMessageRoutes);
   await app.register(odooRoutes);
   await app.register(syncRoutes);
+  await app.register(chatbotRoutes, { prefix: '/api/v1/chatbot' });
 
   // Liveness/readiness probe — also checks DB connectivity
   app.get('/health', async () => {
@@ -198,9 +233,18 @@ async function bootstrap() {
   // SPA fallback — serve index.html for non-API routes in production
   if (config.isProduction) {
     app.setNotFoundHandler(async (request, reply) => {
-      if (request.url.startsWith('/api/')) {
+      // Return 404 for missing API endpoints, static assets, or files with extensions
+      if (
+        request.url.startsWith('/api/') ||
+        request.url.startsWith('/assets/') ||
+        request.url.startsWith('/uploads/') ||
+        /\.[a-zA-Z0-9]+(\?.*)?$/.test(request.url)
+      ) {
         return reply.status(404).send({ error: 'not_found' });
       }
+      reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+      reply.header('Pragma', 'no-cache');
+      reply.header('Expires', '0');
       return reply.sendFile('index.html');
     });
   }

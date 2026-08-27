@@ -26,6 +26,16 @@ export const pendingReplies = new Map<string, string>(); // conversationId -> re
 
 type QueryParams = Record<string, string>;
 
+export async function checkConversationContactAccess(conversationId: string, user: { id: string; role: string; orgId: string }): Promise<boolean> {
+  if (['owner', 'admin'].includes(user.role)) return true;
+  const conv = await prisma.conversation.findFirst({
+    where: { id: conversationId, orgId: user.orgId },
+    select: { contact: { select: { assignedUserId: true } } },
+  });
+  if (!conv || !conv.contact) return false;
+  return conv.contact.assignedUserId === user.id;
+}
+
 export async function chatRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
 
@@ -96,6 +106,10 @@ export async function chatRoutes(app: FastifyInstance) {
         ...where.contact,
         contactType: { not: 'other' }
       };
+
+      if (user.role === 'member') {
+        where.contact.assignedUserId = user.id;
+      }
 
       const [conversations, total] =
         await Promise.all([
@@ -214,6 +228,11 @@ export async function chatRoutes(app: FastifyInstance) {
           });
       }
 
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
       return conversation;
     },
   );
@@ -262,6 +281,11 @@ export async function chatRoutes(app: FastifyInstance) {
           .send({
             error: 'Conversation not found',
           });
+      }
+
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
       }
 
       // On-demand thread sync: when viewing page 1 of a conversation, sync latest messages from Zalo
@@ -391,6 +415,11 @@ export async function chatRoutes(app: FastifyInstance) {
           .send({
             error: 'Conversation not found',
           });
+      }
+
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
       }
 
       if (isNote) {
@@ -703,6 +732,11 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Conversation not found' });
       }
 
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
       const instance = zaloPool.getInstance(conversation.zaloAccountId);
       if (!instance?.api) {
         return reply.status(400).send({ error: 'Zalo account not connected' });
@@ -862,6 +896,11 @@ export async function chatRoutes(app: FastifyInstance) {
         id: string;
       };
 
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
       await prisma.conversation.updateMany({
         where: {
           id,
@@ -965,6 +1004,11 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Conversation not found' });
       }
 
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
       const message = await prisma.message.findFirst({
         where: {
           OR: [
@@ -1039,6 +1083,11 @@ export async function chatRoutes(app: FastifyInstance) {
 
       if (!conversation) {
         return reply.status(404).send({ error: 'Conversation not found' });
+      }
+
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
       }
 
       if (conversation.threadType !== 'group' || !conversation.externalThreadId) {

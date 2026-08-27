@@ -5,9 +5,10 @@
   "main": "dist/app.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/app.ts",
+    "dev": "tsx watch --env-file=.env src/app.ts",
     "build": "tsc",
     "start": "node dist/app.js",
+    "chat:cli": "tsx --env-file=.env src/scripts/cli-chat.ts",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",

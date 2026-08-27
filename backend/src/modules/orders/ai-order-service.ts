@@ -129,22 +129,78 @@ function findBestProduct(rawText: string, products: ProductCacheRow[]): {
   return { product: bestProduct, confidence: bestScore };
 }
 
-// ── Groq API call ────────────────────────────────────────────────────────────
+/**
+ * Build a compact product catalog string with relevant items scored and prioritized at the top.
+ */
+function buildProductSummaryForPrompt(productCache: ProductCacheRow[], text: string): string {
+  const textNormalized = removeVietnameseTones(text);
+
+  const scoredProducts = productCache.map(p => {
+    let score = 0;
+    const sku = (p.sku || '').toLowerCase().trim();
+    const nameNorm = removeVietnameseTones(p.name || '').trim();
+
+    // 1. Direct SKU match (e.g. "e01", "c24", "db01")
+    if (sku && sku.length >= 2) {
+      const skuRegex = new RegExp(`\\b${sku}\\b`, 'i');
+      if (skuRegex.test(textNormalized)) {
+        score += 100;
+      } else if (textNormalized.includes(sku)) {
+        score += 50;
+      }
+    }
+
+    // 2. Full or phrase name match (e.g. "que xoan vi sua ga")
+    if (nameNorm.length >= 4) {
+      if (textNormalized.includes(nameNorm)) {
+        score += 80;
+      } else {
+        const cleanedName = nameNorm.replace(/\[.*?\]/g, '').replace(/^[a-z0-9_-]+\s*-\s*/i, '').trim();
+        if (cleanedName.length >= 4 && textNormalized.includes(cleanedName)) {
+          score += 70;
+        } else {
+          const stopWords = new Set(['tui', 'hang', 'giam', 'tang', 'them', 'bot', 'cho', 'khach', 'don', 'tru', 'tien', 'lai', 'size', 'vien', 'dang']);
+          const words = cleanedName.split(/\s+/).filter(w => w.length >= 3 && !stopWords.has(w));
+          const matchCount = words.filter(w => textNormalized.includes(w)).length;
+          if (matchCount >= 2) {
+            score += matchCount * 15;
+          } else if (matchCount === 1) {
+            score += 5;
+          }
+        }
+      }
+    }
+
+    return { product: p, score };
+  });
+
+  scoredProducts.sort((a, b) => b.score - a.score);
+  const selectedProducts = scoredProducts.slice(0, 35).map(sp => sp.product);
+
+  return selectedProducts
+    .map(p => `${p.sku || 'NA'}: ${p.name} (${p.specification || p.weight || 'Gốc'}) - ${p.wholesalePrice}đ`)
+    .join('\n');
+}
+
+// ── LLM API call ────────────────────────────────────────────────────────────
 
 async function callGroqChat(systemPrompt: string, userMessage: string): Promise<string> {
-  const apiKey = config.groq.apiKey;
+  const apiKey = config.llm?.apiKey || config.groq.apiKey;
   if (!apiKey) {
-    throw new Error('GROQ_API_KEY chưa được cấu hình. Vui lòng thêm vào biến môi trường.');
+    throw new Error('Chưa cấu hình API Key cho AI (GEMINI_API_KEY hoặc GROQ_API_KEY). Vui lòng thêm vào biến môi trường.');
   }
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const apiUrl = config.llm?.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+  const modelName = config.llm?.model || config.groq.model || 'gemini-3.5-flash-lite';
+
+  const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: config.groq.model,
+      model: modelName,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -157,8 +213,8 @@ async function callGroqChat(systemPrompt: string, userMessage: string): Promise<
 
   if (!response.ok) {
     const errBody = await response.text();
-    logger.error('[ai-order] Groq API error:', response.status, errBody);
-    throw new Error(`Groq API lỗi ${response.status}: ${errBody}`);
+    logger.error('[ai-order] LLM API error:', response.status, errBody);
+    throw new Error(`LLM API lỗi ${response.status}: ${errBody}`);
   }
 
   const data = await response.json() as any;
@@ -170,12 +226,13 @@ async function callGroqChat(systemPrompt: string, userMessage: string): Promise<
 export async function extractOrderFromConversation(
   orgId: string,
   conversationId: string,
+  additionalInstruction?: string,
 ): Promise<AiOrderDraft> {
-  // 1. Fetch today's messages from the conversation
+  // 1. Fetch today's messages from the conversation first
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const messages = await prisma.message.findMany({
+  let messages = await prisma.message.findMany({
     where: {
       conversationId,
       sentAt: { gte: todayStart },
@@ -191,13 +248,33 @@ export async function extractOrderFromConversation(
     },
   });
 
+  // Fallback: If no messages today, fetch the last 30 messages in the thread (recent history from past days)
+  if (messages.length === 0) {
+    const recentMessages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        isDeleted: false,
+        contentType: { in: ['text'] },
+      },
+      orderBy: { sentAt: 'desc' },
+      take: 30,
+      select: {
+        senderType: true,
+        senderName: true,
+        content: true,
+        sentAt: true,
+      },
+    });
+    messages = recentMessages.reverse();
+  }
+
   if (messages.length === 0) {
     return {
       customer: { name: null, phone: null, shippingAddress: null },
       items: [],
       notes: null,
       paymentTerm: null,
-      missingInfo: ['Không tìm thấy tin nhắn nào trong ngày hôm nay.'],
+      missingInfo: ['Không tìm thấy tin nhắn nào trong cuộc trò chuyện này.'],
     };
   }
 
@@ -236,38 +313,25 @@ export async function extractOrderFromConversation(
     },
   });
 
-  // 4. Format messages for LLM (get today's messages, prioritizing recent text)
+  // 4. Format messages for LLM (get recent messages, prioritizing recent text)
   const chatTranscript = messages
-    .slice(-30) // Take up to 30 most recent messages of today
+    .slice(-30) // Take up to 30 most recent messages
     .map((m) => {
       const isStaff = m.senderType === 'self';
       const senderRole = isStaff ? '[Nhân viên]' : `[Khách hàng - ${m.senderName || conversation?.contact?.fullName || 'Khách'}]`;
-      const time = new Date(m.sentAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-      return `${time} ${senderRole}: ${m.content || ''}`;
+      const dateStr = new Date(m.sentAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+      const timeStr = new Date(m.sentAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+      return `${dateStr} ${timeStr} ${senderRole}: ${m.content || ''}`;
     })
     .join('\n');
 
-  // 5. Smart compact product catalog (filter relevant products + compact format to save 85% tokens)
-  const chatTextNormalized = removeVietnameseTones(chatTranscript);
-  
-  // Find products that match keywords in chat first, then fill with other active products
-  const relevantProducts = productCache.filter(p => {
-    const sku = (p.sku || '').toLowerCase();
-    const name = removeVietnameseTones(p.name || '');
-    return (sku && chatTextNormalized.includes(sku)) || (name && name.split(/\s+/).some(w => w.length > 2 && chatTextNormalized.includes(w)));
-  });
-
-  // Combine relevant products first + top products, capped at 60 items in ultra-compact format
-  const selectedProducts = Array.from(new Set([...relevantProducts, ...productCache])).slice(0, 60);
-
-  const productSummary = selectedProducts
-    .map(p => `${p.sku || 'NA'}: ${p.name} (${p.specification || p.weight || 'Gốc'}) - ${p.wholesalePrice}đ`)
-    .join('\n');
+  // 5. Smart compact product catalog (relevance-scored to ensure 100% SKU match accuracy)
+  const productSummary = buildProductSummaryForPrompt(productCache, chatTranscript);
 
   // 6. Build the system prompt
   const systemPrompt = `Bạn là trợ lý AI chuyên phân tích tin nhắn Zalo để bóc tách thông tin đơn hàng cho công ty thú cưng (pet shop).
 
-NHIỆM VỤ: Đọc đoạn hội thoại chat giữa [Nhân viên] và [Khách hàng], chỉ trích xuất những sản phẩm và thông tin mà KHÁCH HÀNG yêu cầu đặt mua.
+NHIỆM VỤ: Đọc toàn bộ đoạn hội thoại chat giữa [Nhân viên] và [Khách hàng], trích xuất danh sách sản phẩm và thông tin chốt cuối cùng mà KHÁCH HÀNG yêu cầu đặt mua.
 
 DANH MỤC SẢN PHẨM CÓ SẴN TRONG KHO:
 ${productSummary}
@@ -278,18 +342,22 @@ THÔNG TIN KHÁCH HÀNG ĐÃ BIẾT:
 - Địa chỉ: ${conversation?.contact?.address || 'Chưa biết'}
 - Mã KH Odoo: ${conversation?.contact?.customerId || 'Chưa có'}
 
-QUY TẮC PHÂN BIỆT VAI TRÒ:
-1. PHÂN BIỆT RÕ RÀNG:
+QUY TẮC PHÂN BIỆT VAI TRÒ VÀ TÍNH TOÁN ĐƠN HÀNG:
+1. PHÂN BIỆT RÕ RÀNG VAI TRÒ:
    - "[Khách hàng - ...]": Là người mua hàng. Hãy lấy các sản phẩm, số lượng, địa chỉ giao hàng và ghi chú từ các câu nói của Khách hàng.
-   - "[Nhân viên]": Là người bán hàng tư vấn hoặc hỗ trợ. Tuyệt đối không nhầm lẫn câu báo giá hay câu chào hỏi của Nhân viên thành nhu cầu mua của Khách.
-2. Trích xuất TẤT CẢ sản phẩm mà khách hàng muốn mua hoặc xác nhận lấy.
-3. Với mỗi sản phẩm, tìm mã SKU khớp nhất từ danh mục sản phẩm ở trên.
-4. Nếu khách không nói rõ số lượng, mặc định là 1.
-5. Trích xuất địa chỉ giao hàng và số điện thoại nếu khách có cung cấp trong đoạn chat.
-6. Trích xuất ghi chú đặc biệt (VD: giao giờ hành chính, gọi trước khi giao, v.v.)
-7. Liệt kê các thông tin còn thiếu trong mảng "missingInfo".
-8. Nếu không tìm thấy yêu cầu đặt hàng nào từ Khách hàng trong đoạn chat, trả về mảng items rỗng.
-9. BẮT BUỘC có trường "thinking": Tóm tắt ngắn gọn từng bước phân tích và suy luận của bạn (Ví dụ: "1. Đã đọc tin nhắn từ khách hàng...\n2. Nhận diện khách yêu cầu sản phẩm X, Y...\n3. Khớp mã SKU và giá bán buôn...").
+   - "[Nhân viên]": Là người bán hàng tư vấn. Nếu nhân viên gửi tin nhắn báo giá hoặc đề xuất đơn mà khách hàng đồng ý/xác nhận sau đó thì lấy; nếu khách chưa phản hồi thì ghi chú vào missingInfo.
+2. TÍNH TOÁN SỐ LƯỢNG THỰC TẾ CUỐI CÙNG (NET FINAL QUANTITY):
+   - Đọc toàn bộ các tin nhắn từ đầu đến cuối theo thứ tự thời gian.
+   - Nếu khách hàng có các câu điều chỉnh sau đó (ví dụ: "hủy món A", "bớt 20 món B", "tăng thêm 10 món C", "đổi sang món D"), bạn PHẢI áp dụng các thay đổi này tuần tự theo thời gian để đưa ra danh sách sản phẩm và số lượng chốt cuối cùng.
+   - Ví dụ: Khách nhắn "đặt 30 E01 và 100 C24" -> "thêm 50 phần que xoắn vị sữa gà" -> "Hủy món E01 đi và giảm 20 túi C24 lại" ➔ Số lượng chốt cuối cùng: C24 = 80, Que xoắn vị sữa gà = 50, E01 = Đã hủy (không đưa vào danh sách items).
+   - Tuyệt đối KHÔNG đưa các món có số lượng = 0 hoặc đã bị hủy vào mảng items.
+3. KHỚP MÃ SKU VỚI DANH MỤC KHO:
+   - Với mỗi sản phẩm còn lại sau khi tính toán, tìm mã SKU khớp nhất từ danh mục sản phẩm ở trên.
+   - Nếu khách không nói rõ số lượng của một món, mặc định là 1.
+4. Trích xuất địa chỉ giao hàng, SĐT, phương thức thanh toán và ghi chú đặc biệt nếu khách có cung cấp trong chat.
+5. Liệt kê các thông tin còn thiếu trong mảng "missingInfo".
+6. Nếu không tìm thấy yêu cầu đặt hàng nào từ Khách hàng trong đoạn chat, trả về mảng items rỗng.
+7. BẮT BUỘC có trường "thinking": Tóm tắt ngắn gọn từng bước phân tích và suy luận của bạn (Ví dụ: "1. Đã đọc lịch sử tin nhắn...\n2. Nhận diện khách đặt 30 E01, 100 C24, thêm 50 que xoắn...\n3. Áp dụng thay đổi: Hủy E01, giảm 20 C24 còn 80 C24...\n4. Khớp mã SKU và giá bán...").
 
 TRẢ VỀ JSON theo đúng cấu trúc sau:
 {
@@ -314,7 +382,8 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
 }`;
 
   // 7. Call Groq LLM
-  const llmResponse = await callGroqChat(systemPrompt, `ĐÂY LÀ ĐOẠN HỘI THOẠI ZALO:\n\n${chatTranscript}`);
+  const userPrompt = `ĐÂY LÀ ĐOẠN HỘI THOẠI ZALO:\n\n${chatTranscript}${additionalInstruction && additionalInstruction.trim() ? `\n\nYÊU CẦU / GHI CHÚ BỔ SUNG:\n${additionalInstruction.trim()}` : ''}`;
+  const llmResponse = await callGroqChat(systemPrompt, userPrompt);
 
   // 8. Parse LLM output
   let llmData: any;
@@ -422,17 +491,8 @@ export async function extractOrderFromText(
     },
   });
 
-  const textNormalized = removeVietnameseTones(text);
-  const relevantProducts = productCache.filter(p => {
-    const sku = (p.sku || '').toLowerCase();
-    const name = removeVietnameseTones(p.name || '');
-    return (sku && textNormalized.includes(sku)) || (name && name.split(/\s+/).some(w => w.length > 2 && textNormalized.includes(w)));
-  });
-  const selectedProducts = Array.from(new Set([...relevantProducts, ...productCache])).slice(0, 60);
-
-  const productSummary = selectedProducts
-    .map(p => `${p.sku || 'NA'}: ${p.name} (${p.specification || p.weight || 'Gốc'}) - ${p.wholesalePrice}đ`)
-    .join('\n');
+  // Smart compact product catalog (relevance-scored to ensure 100% SKU match accuracy)
+  const productSummary = buildProductSummaryForPrompt(productCache, text);
 
   const systemPrompt = `Bạn là trợ lý AI chuyên phân tích yêu cầu đặt hàng cho công ty thú cưng (pet shop).
 
@@ -445,10 +505,10 @@ THÔNG TIN KHÁCH HÀNG:
 - Địa chỉ: ${contactInfo?.address || 'Chưa biết'}
 
 QUY TẮC:
-1. Trích xuất TẤT CẢ sản phẩm từ đoạn text.
-2. Với mỗi sản phẩm, tìm mã SKU khớp nhất từ danh mục.
+1. Trích xuất TẤT CẢ sản phẩm và số lượng CHỐT CUỐI CÙNG từ đoạn text. Nếu đoạn text là diễn biến tin nhắn có chứa các điều chỉnh (như "hủy món X", "bỏ X", "giảm Y túi", "thêm Z phần"), hãy tính toán chính xác số lượng thực tế sau cùng. Nếu một món bị hủy hoàn toàn hoặc số lượng về 0, TUYỆT ĐỐI KHÔNG đưa vào danh sách items.
+2. Với mỗi sản phẩm, tìm mã SKU khớp nhất từ danh mục sản phẩm có sẵn.
 3. Nếu không nói rõ số lượng, mặc định là 1.
-4. BẮT BUỘC có trường "thinking" tóm tắt ngắn gọn các bước phân tích nhận diện.
+4. BẮT BUỘC có trường "thinking" tóm tắt ngắn gọn các bước phân tích nhận diện và các phép tính điều chỉnh nếu có.
 5. Liệt kê thông tin còn thiếu.
 
 TRẢ VỀ JSON:

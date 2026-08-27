@@ -25,6 +25,11 @@ export interface Conversation {
   lastMessageAt: string | null;
   unreadCount: number;
   isReplied: boolean;
+  aiActive?: boolean;
+  aiPaused?: boolean;
+  pausedUntil?: string | null;
+  handoffReason?: string | null;
+  currentState?: string;
   messages?: ConversationMessage[];
 }
 
@@ -48,6 +53,7 @@ export interface Message {
   senderUid?: string | null;
   sentAt: string;
   isDeleted: boolean;
+  isAi?: boolean;
   zaloMsgId: string | null;
   isNote?: boolean;
   replyToId?: string | null;
@@ -330,6 +336,49 @@ export function useChat() {
     }
   }
 
+  async function pauseAi(convId: string, reason = 'Nhân viên tạm dừng AI', durationMinutes = 60) {
+    try {
+      await api.post(`/chatbot/conversations/${convId}/pause`, { reason, durationMinutes });
+      const conv = conversations.value.find(c => c.id === convId);
+      if (conv) {
+        conv.aiPaused = true;
+        conv.handoffReason = reason;
+        conv.currentState = 'AI_PAUSED';
+      }
+    } catch (err) {
+      console.error('Failed to pause AI:', err);
+    }
+  }
+
+  async function resumeAi(convId: string) {
+    try {
+      await api.post(`/chatbot/conversations/${convId}/resume`);
+      const conv = conversations.value.find(c => c.id === convId);
+      if (conv) {
+        conv.aiPaused = false;
+        conv.handoffReason = null;
+        conv.currentState = 'GREETING';
+      }
+    } catch (err) {
+      console.error('Failed to resume AI:', err);
+    }
+  }
+
+  async function toggleAi(convId: string, aiActive: boolean) {
+    try {
+      await api.post(`/chatbot/conversations/${convId}/toggle`, { aiActive });
+      const conv = conversations.value.find(c => c.id === convId);
+      if (conv) {
+        conv.aiActive = aiActive;
+        if (!aiActive) {
+          conv.aiPaused = false;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle AI:', err);
+    }
+  }
+
   function destroySocket() {
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', handleOnline);
@@ -357,7 +406,11 @@ export function useChat() {
     sendMessage,
     sendAttachment,
     sendReaction,
+    pauseAi,
+    resumeAi,
+    toggleAi,
     initSocket,
     destroySocket,
   };
 }
+

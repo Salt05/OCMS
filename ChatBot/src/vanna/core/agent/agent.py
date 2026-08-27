@@ -31,7 +31,14 @@ from vanna.core.registry import ToolRegistry
 from vanna.core.system_prompt import DefaultSystemPromptBuilder
 from vanna.core.lifecycle import LifecycleHook
 from vanna.core.middleware import LlmMiddleware
-from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
+from vanna.core.workflow import (
+    WorkflowHandler,
+    DefaultWorkflowHandler,
+    WorkflowStatus,
+    ConversationWorkflowState,
+    WorkflowEngine,
+    OrderWorkflowGuard,
+)
 from vanna.core.recovery import ErrorRecoveryStrategy, RecoveryActionType
 from vanna.core.enricher import ToolContextEnricher
 from vanna.core.enhancer import LlmContextEnhancer, DefaultLlmContextEnhancer
@@ -518,6 +525,14 @@ class Agent:
 
         # Not triggered, add user message to conversation now
         conversation.add_message(Message(role="user", content=message))
+
+        # Load conversation workflow state from metadata
+        raw_state = conversation.metadata.get("workflow_state", {})
+        workflow_state = ConversationWorkflowState.from_dict(raw_state)
+        logger.info(
+            f"[Agent:StartMessage] conv_id={conversation_id} req_id={request_id} "
+            f"user_id={user.id} intent_before={workflow_state.intent} status_before={workflow_state.workflow_status}"
+        )
 
         # Add initial task
         context_task = Task(
@@ -1011,6 +1026,55 @@ class Agent:
                     )
                     conversation.add_message(tool_response_message)
 
+                # Evaluate Workflow Guard after tool execution
+                should_stop, guard_response = OrderWorkflowGuard.check_guard(
+                    workflow_state, message, tool_results
+                )
+                conversation.metadata["workflow_state"] = workflow_state.to_dict()
+
+                logger.info(
+                    f"[Agent:PostToolGuard] conv_id={conversation_id} iter={tool_iterations} "
+                    f"intent={workflow_state.intent} status={workflow_state.workflow_status} "
+                    f"missing={workflow_state.missing_fields} should_stop={should_stop}"
+                )
+
+                if should_stop and guard_response:
+                    # Deterministic workflow completion or precise missing field prompt
+                    conversation.add_message(
+                        Message(role="assistant", content=guard_response)
+                    )
+
+                    status_msg = (
+                        "Đã xử lý & hoàn tất luồng dữ liệu"
+                        if workflow_state.workflow_status == WorkflowStatus.COMPLETED
+                        else "Cần thêm thông tin"
+                    )
+
+                    yield UiComponent(  # type: ignore
+                        rich_component=StatusBarUpdateComponent(
+                            status="idle",
+                            message=status_msg,
+                            detail="Sẵn sàng cho yêu cầu tiếp theo",
+                        )
+                    )
+
+                    yield UiComponent(  # type: ignore
+                        rich_component=ChatInputUpdateComponent(
+                            placeholder="Nhập yêu cầu hoặc câu hỏi tiếp theo...", disabled=False
+                        )
+                    )
+
+                    yield UiComponent(
+                        rich_component=RichTextComponent(
+                            content=guard_response, markdown=True
+                        ),
+                        simple_component=SimpleTextComponent(text=guard_response),
+                    )
+
+                    if self.config.auto_save_conversations:
+                        await self.conversation_store.update_conversation(conversation)
+                    return
+
                 # Rebuild request with tool responses
                 request = await self._build_llm_request(
                     conversation, tool_schemas, user, system_prompt
@@ -1034,6 +1098,10 @@ class Agent:
 
                 # Yield final text response
                 if response.content:
+                    # Update workflow state with final assistant response
+                    WorkflowEngine.update_state_from_turn(workflow_state, response.content)
+                    conversation.metadata["workflow_state"] = workflow_state.to_dict()
+
                     # Add assistant response to conversation
                     conversation.add_message(
                         Message(role="assistant", content=response.content)

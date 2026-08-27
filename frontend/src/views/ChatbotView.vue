@@ -1,5 +1,12 @@
 <template>
   <div class="chatbot-view-container h-100 w-100 position-relative overflow-hidden">
+    <v-progress-linear
+      v-if="iframeLoading"
+      indeterminate
+      color="primary"
+      class="position-absolute top-0 left-0"
+      style="z-index: 10;"
+    />
     <iframe
       ref="chatbotIframe"
       :src="chatbotUrl"
@@ -12,12 +19,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { useTheme } from 'vuetify';
 
 const theme = useTheme();
 const chatbotIframe = ref<HTMLIFrameElement | null>(null);
-const chatbotUrl = ref(`http://localhost:8000?t=${Date.now()}`);
+const iframeLoading = ref(true);
+
+const chatbotUrl = computed(() => {
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    return `${protocol}//${hostname}:8000`;
+  }
+  return 'http://localhost:8000';
+});
 
 function sendThemeToIframe() {
   if (chatbotIframe.value?.contentWindow) {
@@ -41,7 +57,8 @@ function injectHideStyles() {
           .sidebar-footer,
           #user-profile-bar,
           .btn-theme-toggle,
-          .dataset-badge {
+          .dataset-badge,
+          .btn-dev-panel {
             display: none !important;
             visibility: hidden !important;
             opacity: 0 !important;
@@ -52,12 +69,13 @@ function injectHideStyles() {
         doc.head.appendChild(style);
       }
     }
-  } catch (e) {
+  } catch {
     // Cross-origin fallback handled safely
   }
 }
 
 function onIframeLoad() {
+  iframeLoading.value = false;
   sendThemeToIframe();
   injectHideStyles();
 }
@@ -67,10 +85,9 @@ watch(() => theme.global.name.value, () => {
 });
 
 onMounted(() => {
-  chatbotUrl.value = `http://localhost:8000?t=${Date.now()}`;
   setTimeout(() => {
-    onIframeLoad();
-  }, 400);
+    iframeLoading.value = false;
+  }, 3000);
 });
 </script>
 

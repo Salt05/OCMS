@@ -8,10 +8,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Roboto+Slab:wght@500;700;800&family=Space+Grotesk:wght@500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <!-- Plotly CDN for interactive charts -->
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-    <!-- Marked CDN for Markdown parsing -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="/static/style.css?v=7.0">
 </head>
 <body>
@@ -25,9 +21,6 @@
                         <span class="brand-name">LaPet Agent</span>
                     </div>
                 </div>
-                <button class="btn-icon" id="btn-toggle-sidebar-collapse" title="Thu gọn thanh bên">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
-                </button>
             </div>
 
             <div class="sidebar-action">
@@ -83,28 +76,7 @@
                     <h1 class="welcome-title">Xin chào! LaPet Agent có thể giúp gì cho bạn hôm nay?</h1>
                     <p class="welcome-subtitle">Hệ thống đã nạp dữ liệu CRM (khách hàng, 18k đơn hàng, doanh thu, sản phẩm). Bạn có thể hỏi bằng tiếng Việt tự nhiên để truy vấn số liệu và vẽ biểu đồ.</p>
 
-                    <div class="prompt-grid">
-                        <div class="prompt-card" onclick="sendSuggestedPrompt('Thống kê số lượng khách hàng theo từng Zone?')">
-                            <div class="prompt-icon">📊</div>
-                            <div class="prompt-text">Thống kê số lượng khách hàng theo từng Zone</div>
-                            <div class="prompt-hint">GROUP BY Zone & COUNT(*)</div>
-                        </div>
-                        <div class="prompt-card" onclick="sendSuggestedPrompt('Top 5 công ty có số lượng khách hàng nhiều nhất là gì?')">
-                            <div class="prompt-icon">🏆</div>
-                            <div class="prompt-text">Top 5 công ty có nhiều khách hàng nhất</div>
-                            <div class="prompt-hint">Sắp xếp giảm dần LIMIT 5</div>
-                        </div>
-                        <div class="prompt-card" onclick="sendSuggestedPrompt('Bảng dữ liệu có tổng cộng bao nhiêu dòng và gồm những cột nào?')">
-                            <div class="prompt-icon">📋</div>
-                            <div class="prompt-text">Bảng dữ liệu có bao nhiêu dòng và cột?</div>
-                            <div class="prompt-hint">Kiểm tra thông tin Schema</div>
-                        </div>
-                        <div class="prompt-card" onclick="sendSuggestedPrompt('Vẽ biểu đồ tròn (pie chart) thể hiện tỷ lệ khách hàng theo Zone')">
-                            <div class="prompt-icon">📈</div>
-                            <div class="prompt-text">Vẽ biểu đồ tròn tỷ lệ khách hàng theo Zone</div>
-                            <div class="prompt-hint">Tự động sinh biểu đồ Plotly</div>
-                        </div>
-                    </div>
+
                 </div>
 
                 <!-- Messages List -->
@@ -119,11 +91,18 @@
 
             <!-- Bottom Floating Chat Input Area -->
             <div class="chat-input-wrapper">
-                <div class="chat-input-box">
+                <div class="order-mode-toast" id="order-mode-toast" style="display: none;">
+                    <span class="toast-icon" id="order-mode-toast-icon">🛒</span>
+                    <span class="toast-text" id="order-mode-toast-text">Đã BẬT Chế độ Tạo / Chỉnh sửa đơn hàng</span>
+                </div>
+                <div class="chat-input-box" id="chat-input-box">
+                    <button type="button" class="btn-toggle-order-mode" id="btn-toggle-order-mode" title="Bật/Tắt Chế độ Tạo/Sửa đơn hàng">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+                    </button>
                     <textarea 
                         id="user-input" 
                         rows="1" 
-                        placeholder="Hỏi bất kỳ điều gì về bảng dữ liệu customers... (Shift + Enter để xuống dòng)"
+                        placeholder="Hỏi về khách hàng, đơn hàng, sản phẩm... (Shift + Enter để xuống dòng)"
                     ></textarea>
                     <button class="btn-send" id="btn-send" title="Gửi tin nhắn">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
@@ -290,6 +269,9 @@
         </div>
     </div>
 
+    <!-- External Libs -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <script src="/static/app.js?v=7.0"></script>
 </body>
 </html>

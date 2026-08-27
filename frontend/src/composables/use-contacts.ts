@@ -30,6 +30,7 @@ export interface Contact {
   updatedAt?: string;
   firstContactDate?: string | null;
   appointments?: Array<{ id: string; appointmentDate: string; appointmentTime?: string | null; notes?: string | null; status?: string }>;
+  conversations?: Array<{ id: string; aiActive: boolean; aiPaused: boolean; pausedUntil?: string | null; currentState?: string }>;
   _count?: { conversations?: number; appointments?: number };
 }
 
@@ -39,6 +40,7 @@ export interface ContactFilters {
   status: string;
   tags: string[];
   contactType: string;
+  assignedUserId: string;
 }
 
 export const SOURCE_OPTIONS = [
@@ -75,11 +77,16 @@ export function useContacts() {
     status: '',
     tags: [],
     contactType: '',
+    assignedUserId: '',
   });
 
   const pagination = reactive({ page: 1, limit: 20 });
 
-  async function fetchContacts() {
+  async function fetchContacts(options?: { page?: number; itemsPerPage?: number }) {
+    if (options && typeof options === 'object') {
+      if (typeof options.page === 'number' && options.page > 0) pagination.page = options.page;
+      if (typeof options.itemsPerPage === 'number' && options.itemsPerPage > 0) pagination.limit = options.itemsPerPage;
+    }
     loading.value = true;
     try {
       const res = await api.get('/contacts', {
@@ -91,10 +98,11 @@ export function useContacts() {
           status: filters.status || undefined,
           tags: filters.tags?.length ? filters.tags.join(',') : undefined,
           contactType: filters.contactType || undefined,
+          assignedUserId: filters.assignedUserId || undefined,
         },
       });
-      contacts.value = res.data.contacts ?? res.data;
-      total.value = res.data.total ?? contacts.value.length;
+      contacts.value = res.data.contacts ?? (Array.isArray(res.data) ? res.data : []);
+      total.value = res.data.total ?? (Array.isArray(res.data.contacts) ? res.data.contacts.length : (Array.isArray(res.data) ? res.data.length : 0));
     } catch (err) {
       console.error('Failed to fetch contacts:', err);
     } finally {
@@ -176,8 +184,32 @@ export function useContacts() {
     filters.status = '';
     filters.tags = [];
     filters.contactType = '';
+    filters.assignedUserId = '';
     pagination.page = 1;
     fetchContacts();
+  }
+
+  async function toggleContactAi(contact: Contact) {
+    if (!contact || contact.contactType !== 'customer') return;
+    const currentActive = contact.conversations?.[0]?.aiActive ?? false;
+    const newActive = !currentActive;
+    try {
+      await api.post(`/contacts/${contact.id}/toggle-ai`, { aiActive: newActive });
+      if (contact.conversations && contact.conversations.length > 0) {
+        contact.conversations[0].aiActive = newActive;
+        if (!newActive) {
+          contact.conversations[0].aiPaused = false;
+        }
+      } else {
+        contact.conversations = [{
+          id: '',
+          aiActive: newActive,
+          aiPaused: false,
+        }];
+      }
+    } catch (err) {
+      console.error('Failed to toggle AI for contact:', err);
+    }
   }
 
   return {
@@ -185,6 +217,7 @@ export function useContacts() {
     filters, pagination,
     fetchContacts, fetchContact,
     createContact, updateContact, deleteContact, deleteContacts,
+    toggleContactAi,
     resetFilters,
   };
 }

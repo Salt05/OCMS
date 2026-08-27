@@ -15,6 +15,8 @@ export interface ZaloAccount {
   liveStatus?: string;
   phone: string | null;
   sessionData: any;
+  aiAutoReply?: boolean;
+  aiWorkingHoursOnly?: boolean;
   ownerUserId: string;
   createdAt: string;
 }
@@ -166,6 +168,24 @@ export function useZaloAccounts() {
     socket.on('zalo:reconnect-failed', (_data: { accountId: string }) => { fetchAccounts(); });
   }
 
+  async function updateAccountAiSettings(
+    accountId: string,
+    data: { aiAutoReply?: boolean; aiWorkingHoursOnly?: boolean }
+  ) {
+    try {
+      await api.patch(`/zalo-accounts/${accountId}/ai-settings`, data);
+      const acc = accounts.value.find((a) => a.id === accountId);
+      if (acc) {
+        if (typeof data.aiAutoReply === 'boolean') acc.aiAutoReply = data.aiAutoReply;
+        if (typeof data.aiWorkingHoursOnly === 'boolean') acc.aiWorkingHoursOnly = data.aiWorkingHoursOnly;
+      }
+      return true;
+    } catch (err) {
+      console.error('Failed to update account AI settings:', err);
+      return false;
+    }
+  }
+
   onUnmounted(() => { socket?.disconnect(); });
 
   return {
@@ -173,6 +193,7 @@ export function useZaloAccounts() {
     showQRDialog, qrImage, qrScanned, scannedName, qrError,
     statusColor, statusText,
     fetchAccounts, addAccount, loginAccount, reconnectAccount, deleteAccount,
+    updateAccountAiSettings,
     cancelQR, setupSocket,
   };
 }

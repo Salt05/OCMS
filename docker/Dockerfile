@@ -10,7 +10,7 @@ RUN npm run build
 FROM node:20-alpine AS backend-builder
 WORKDIR /app/backend
 COPY backend/package.json backend/package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY backend/ ./
 RUN npx prisma generate
 RUN npm run build
@@ -34,4 +34,4 @@ RUN mkdir -p /var/lib/zalo-crm/files
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]
 # Push schema to DB then start server
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/app.js"]
+CMD ["sh", "-c", "./node_modules/.bin/prisma db push --accept-data-loss && node dist/app.js"]
