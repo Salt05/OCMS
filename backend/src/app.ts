@@ -268,19 +268,40 @@ async function bootstrap() {
     startZaloHealthCheck();
 
     // ── Odoo Data Sync ───────────────────────────────────────────────────────
-    // Run incremental sync every 5 minutes
-    cron.schedule('*/5 * * * *', () => {
-      odooSyncService.runIncrementalSync().catch(err => {
-        logger.warn('[cron] Incremental sync error:', err.message);
-      });
-    });
-    logger.info('[sync] Cron job registered: incremental sync every 5 minutes');
+    // Run incremental sync precisely at seconds :00 and :30 of every minute
+    function scheduleNextSync() {
+      const now = new Date();
+      const delay = 30000 - (now.getTime() % 30000); // ms until the next :00 or :30 mark
+      setTimeout(() => {
+        odooSyncService.runIncrementalSync()
+          .then((results) => {
+            const totalChanged = Object.values(results).reduce((a, b) => a + b, 0);
+            if (totalChanged > 0) {
+              logger.info(`[sync] Incremental sync: ${totalChanged} records updated. Broadcasting order:updated socket event.`);
+              zaloPool.getIO()?.emit('order:updated');
+            }
+          })
+          .catch(err => {
+            logger.warn('[cron] Incremental sync error:', err.message);
+          });
+        scheduleNextSync();
+      }, delay);
+    }
+    scheduleNextSync();
+    logger.info('[sync] Precise scheduler registered: incremental sync aligned to :00 and :30 system seconds');
 
     // Run initial sync 30 seconds after server start (non-blocking)
     setTimeout(() => {
-      odooSyncService.runIncrementalSync().catch(err => {
-        logger.warn('[sync] Initial sync error:', err.message);
-      });
+      odooSyncService.runIncrementalSync()
+        .then((results) => {
+          const totalChanged = Object.values(results).reduce((a, b) => a + b, 0);
+          if (totalChanged > 0) {
+            zaloPool.getIO()?.emit('order:updated');
+          }
+        })
+        .catch(err => {
+          logger.warn('[sync] Initial sync error:', err.message);
+        });
     }, 30_000);
   } catch (err) {
     logger.error('Failed to start server:', err);

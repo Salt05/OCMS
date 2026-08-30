@@ -719,3 +719,39 @@ a,
 .v-field--variant-solo, .v-field--variant-solo-filled {
   box-shadow: none !important;
 }
+
+/* Fix header and description panel contrast in both light and dark mode */
+.v-table th,
+.v-table th span {
+  color: #2c3e50 !important; /* High contrast dark blue-grey for light mode */
+  font-weight: 700 !important;
+}
+
+.bg-surface-variant,
+.bg-surface-variant .text-medium-emphasis,
+.bg-surface-variant .text-caption,
+.bg-surface-variant .text-subtitle-1 {
+  color: #2c3e50 !important; /* High contrast text in light mode */
+}
+
+/* Dark mode text color overrides */
+.v-theme--dark .v-table th,
+.v-theme--dark .v-table th span,
+.v-theme--dark th {
+  color: #ffffff !important; /* Pure white for dark mode table headers */
+}
+
+.v-theme--dark .bg-surface-variant,
+.v-theme--dark .bg-surface-variant .text-medium-emphasis,
+.v-theme--dark .bg-surface-variant .text-caption,
+.v-theme--dark .bg-surface-variant .text-subtitle-1 {
+  color: #ffffff !important; /* Pure white for dark mode variant panels */
+}
+
+/* Make sure general grey text inside dark mode tables turns white/light-grey for legibility */
+.v-theme--dark .v-table td,
+.v-theme--dark .v-table .text-medium-emphasis,
+.v-theme--dark .v-table .text-caption {
+  color: #efeeeb !important;
+}
+

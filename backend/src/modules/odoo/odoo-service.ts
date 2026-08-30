@@ -92,7 +92,7 @@ class OdooService {
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(30000),
       body: JSON.stringify({
         jsonrpc: '2.0',
         method: 'call',
@@ -513,6 +513,122 @@ class OdooService {
       };
     } catch (err: any) {
       logger.error(`[odoo] checkInventoryBySku error for SKU ${sku}:`, err.message);
+      return null;
+    }
+  }
+
+  async confirmOrder(odooOrderId: number): Promise<boolean> {
+    try {
+      await this.executeKw('sale.order', 'action_confirm', [[odooOrderId]]);
+      logger.info(`[odoo] Order ${odooOrderId} confirmed successfully`);
+      return true;
+    } catch (err: any) {
+      logger.warn(`[odoo] Failed to confirm order ${odooOrderId}: ${err.message}`);
+      return false;
+    }
+  }
+
+  async cancelOrder(odooOrderId: number): Promise<boolean> {
+    try {
+      await this.executeKw('sale.order', 'action_cancel', [[odooOrderId]]);
+      logger.info(`[odoo] Order ${odooOrderId} cancelled successfully`);
+      return true;
+    } catch (err: any) {
+      logger.warn(`[odoo] Failed to cancel order ${odooOrderId}: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Generates and downloads the official QWeb PDF report for a sale order from Odoo.
+   * Leverages Odoo's mail.compose.message wizard to render the report attachment with exact branding.
+   */
+  async getOrderReportPdf(odooOrderId: number): Promise<{ buffer: Buffer; filename: string } | null> {
+    try {
+      const uid = await this.authenticate();
+      if (!uid) {
+        throw new Error('Không thể xác thực với máy chủ Odoo');
+      }
+
+      // 1. Find mail template with report_template_ids for sale.order
+      let templates = await this.executeKw<any[]>('mail.template', 'search_read', [
+        [['model', '=', 'sale.order'], ['name', 'ilike', 'Order Confirmation']]
+      ], { fields: ['id', 'name', 'report_template_ids'], limit: 1 });
+
+      if (!templates || templates.length === 0 || !templates[0].report_template_ids?.length) {
+        templates = await this.executeKw<any[]>('mail.template', 'search_read', [
+          [['model', '=', 'sale.order'], ['name', 'ilike', 'Quotation']]
+        ], { fields: ['id', 'name', 'report_template_ids'], limit: 1 });
+      }
+
+      if (!templates || templates.length === 0) {
+        templates = await this.executeKw<any[]>('mail.template', 'search_read', [
+          [['model', '=', 'sale.order']]
+        ], { fields: ['id', 'name', 'report_template_ids'], limit: 10 });
+        templates = templates?.filter(t => Array.isArray(t.report_template_ids) && t.report_template_ids.length > 0) || [];
+      }
+
+      const templateId = templates?.[0]?.id;
+      if (!templateId) {
+        logger.warn(`[odoo] No valid mail template found for sale.order report generation`);
+        return null;
+      }
+
+      const wizardContext = {
+        active_model: 'sale.order',
+        active_id: odooOrderId,
+        active_ids: [odooOrderId],
+        default_model: 'sale.order',
+        default_res_ids: [odooOrderId],
+        default_template_id: templateId,
+      };
+
+      const defaultValues = await this.executeKw('mail.compose.message', 'default_get', [
+        ['subject', 'body', 'attachment_ids', 'template_id', 'model', 'res_ids']
+      ], { context: wizardContext });
+
+      const wizardId = await this.executeKw<number>('mail.compose.message', 'create', [{
+        ...(defaultValues || {}),
+        template_id: templateId,
+        composition_mode: 'comment',
+        model: 'sale.order',
+        res_ids: `[${odooOrderId}]`,
+      }], { context: wizardContext });
+
+      if (!wizardId) {
+        logger.warn(`[odoo] Failed to create mail.compose.message wizard for order ${odooOrderId}`);
+        return null;
+      }
+
+      const wizards = await this.executeKw<any[]>('mail.compose.message', 'read', [
+        [wizardId],
+        ['id', 'attachment_ids']
+      ]);
+
+      const attachmentIds = wizards?.[0]?.attachment_ids;
+      if (!attachmentIds || attachmentIds.length === 0) {
+        logger.warn(`[odoo] No report attachment generated for order ${odooOrderId}`);
+        return null;
+      }
+
+      const atts = await this.executeKw<any[]>('ir.attachment', 'read', [
+        attachmentIds,
+        ['id', 'name', 'mimetype', 'datas']
+      ]);
+
+      const pdfAtt = atts?.find((a: any) => a.mimetype === 'application/pdf' || a.name?.toLowerCase().endsWith('.pdf')) || atts?.[0];
+      if (!pdfAtt || !pdfAtt.datas) {
+        logger.warn(`[odoo] PDF attachment datas is empty for order ${odooOrderId}`);
+        return null;
+      }
+
+      const buffer = Buffer.from(pdfAtt.datas, 'base64');
+      const filename = pdfAtt.name || `Order_${odooOrderId}.pdf`;
+      logger.info(`[odoo] Retrieved PDF report for order ${odooOrderId}: ${filename} (${buffer.length} bytes)`);
+
+      return { buffer, filename };
+    } catch (err: any) {
+      logger.error(`[odoo] getOrderReportPdf error for order ${odooOrderId}:`, err.message);
       return null;
     }
   }

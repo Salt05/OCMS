@@ -25,10 +25,10 @@
       style="border-radius: 8px; border: 1px solid rgba(76,175,80,0.1); background: rgba(76,175,80,0.03);"
     >
       <div class="flex-grow-1">
-        <div class="text-body-2 font-weight-medium">{{ formatVND(o.totalAmount) }}</div>
-        <div class="text-caption" style="opacity: 0.6;">{{ o.orderCode }} · {{ formatDate(o.createdAt) }}</div>
+        <div class="text-body-2 font-weight-medium">{{ formatVND(o.amountTotal || o.totalAmount) }}</div>
+        <div class="text-caption" style="opacity: 0.6;">{{ o.orderCode }} · {{ formatDate(o.dateOrder || o.createdAt) }}</div>
       </div>
-      <v-chip size="x-small" :color="statusColor(o.status)" variant="tonal">{{ statusLabel(o.status) }}</v-chip>
+      <v-chip size="x-small" :color="stateColor(o.state || o.status)" variant="tonal">{{ stateLabel(o.state || o.status) }}</v-chip>
     </div>
 
     <div v-if="contactOrders.length === 0 && !showCreate" class="text-caption text-grey text-center py-2">
@@ -44,7 +44,7 @@ import { useOrders } from '@/composables/use-orders';
 
 const props = defineProps<{ contactId: string | null }>();
 
-const { statusColor, statusLabel } = useOrders();
+const { stateColor, stateLabel } = useOrders();
 
 const contactOrders = ref<any[]>([]);
 const showCreate = ref(false);

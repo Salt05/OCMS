@@ -142,30 +142,46 @@ export class ChatbotGuardrails {
 
   /**
    * Enforce response length based on intent type.
-   * INFO/GENERAL responses capped at ~300 chars.
-   * BUY/ORDER responses allowed up to 600 chars.
+   * INFO/GENERAL responses capped at ~500 chars.
+   * BUY/ORDER responses allowed up to 800 chars.
+   * Strictly respects sentence boundaries to prevent mid-word / broken sentence truncation.
    */
   static enforceResponseLength(text: string, isBuyingFlow: boolean): string {
-    const maxLength = isBuyingFlow ? 600 : 300;
+    const maxLength = isBuyingFlow ? 800 : 500;
 
-    if (text.length <= maxLength) return text;
+    if (!text || text.length <= maxLength) return text;
 
-    // Try to cut at the last sentence boundary within limit
+    // Search for clean sentence / paragraph boundaries within limit
     const truncated = text.substring(0, maxLength);
-    const lastSentenceEnd = Math.max(
-      truncated.lastIndexOf('ạ.'),
-      truncated.lastIndexOf('ạ!'),
-      truncated.lastIndexOf('nhé!'),
-      truncated.lastIndexOf('nhé.'),
+    const candidateBoundaries = [
+      truncated.lastIndexOf('.\n'),
+      truncated.lastIndexOf('!\n'),
+      truncated.lastIndexOf('?\n'),
+      truncated.lastIndexOf('\n- '),
+      truncated.lastIndexOf('\n'),
+      truncated.lastIndexOf(' ạ.'),
+      truncated.lastIndexOf(' ạ!'),
+      truncated.lastIndexOf(' nhé!'),
+      truncated.lastIndexOf(' nhé.'),
       truncated.lastIndexOf('. '),
       truncated.lastIndexOf('! '),
-    );
+      truncated.lastIndexOf('? '),
+    ];
 
-    if (lastSentenceEnd > maxLength * 0.5) {
-      return text.substring(0, lastSentenceEnd + 2).trim();
+    const lastSentenceEnd = Math.max(...candidateBoundaries);
+
+    // If a clean sentence boundary is found after 40% of the text, cut cleanly there
+    if (lastSentenceEnd > maxLength * 0.4) {
+      return text.substring(0, lastSentenceEnd + 1).trim();
     }
 
-    return truncated.trim();
+    // Otherwise, find last word boundary so we never cut in the middle of a word
+    const lastSpace = truncated.lastIndexOf(' ');
+    if (lastSpace > maxLength * 0.7) {
+      return text.substring(0, lastSpace).trim() + '...';
+    }
+
+    return text.trim();
   }
 
   /**

@@ -50,9 +50,13 @@
               :title="item.title"
             >
               <v-icon size="22">{{ item.icon }}</v-icon>
-              <!-- Unread Badge on Chat icon -->
+              <!-- Unread Badge on Chat icon (Red) -->
               <span v-if="item.path === '/chat' && unreadChatCount > 0" class="zalo-rail-badge">
                 {{ unreadChatCount > 99 ? '99+' : unreadChatCount }}
+              </span>
+              <!-- Pending Orders Badge on Orders icon (Amber/Red) -->
+              <span v-if="item.path === '/orders' && pendingOrdersCount > 0" class="zalo-rail-badge zalo-rail-badge-amber">
+                {{ pendingOrdersCount > 99 ? '99+' : pendingOrdersCount }}
               </span>
             </router-link>
           </nav>
@@ -149,6 +153,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useTheme } from 'vuetify';
 import { useAuthStore } from '@/stores/auth';
 import { useConnectionStore } from '@/stores/connection';
+import { useAppBadges } from '@/composables/use-app-badges';
 import NotificationBell from '@/components/NotificationBell.vue';
 import GlobalSearch from '@/components/GlobalSearch.vue';
 
@@ -158,19 +163,24 @@ const connectionStore = useConnectionStore();
 const route = useRoute();
 const router = useRouter();
 
+const {
+  unreadChatCount,
+  pendingOrdersCount,
+  fetchAllBadges,
+  setupSocketListeners,
+} = useAppBadges();
+
 const isDark = ref(localStorage.getItem('theme') === 'dark');
 
 onMounted(() => {
   theme.global.name.value = isDark.value ? 'dark' : 'light';
   connectionStore.init();
+  fetchAllBadges();
+  setupSocketListeners();
 });
 
 const isFullWidthPage = computed(() => route.path === '/chat' || route.path.startsWith('/ai-assistant'));
 const isChatPage = computed(() => isFullWidthPage.value);
-
-const unreadChatCount = computed(() => {
-  return 0;
-});
 
 const primaryMenuItems = [
   { title: 'Tin nhắn (Chat)', icon: 'lucide-message-square', path: '/chat' },
@@ -350,6 +360,10 @@ function logout() {
   border-radius: 10px;
   padding: 1px 5px;
   line-height: 1.2;
+}
+
+.zalo-rail-badge-amber {
+  background-color: #f59e0b;
 }
 
 .zalo-status-indicator {

@@ -19,6 +19,10 @@ backups/
 docker/data/
 docker/logs/
 
+# Uploads & Temp
+uploads/
+backend/uploads/
+
 # Prisma
 backend/prisma/migrations/
 backend/prisma/dev.db

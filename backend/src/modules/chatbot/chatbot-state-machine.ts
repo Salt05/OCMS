@@ -28,6 +28,7 @@ export interface DraftOrderState {
   phone?: string;
   address?: string;
   notes?: string;
+  paymentTerm?: string | null;
   subtotal?: number;
 }
 
@@ -193,17 +194,25 @@ class ChatbotStateMachine {
     const structuredPet = hydratePetProfile(rawPet);
     const structuredCustomer = hydrateCustomerProfile(rawDraft.customer || {}, conv?.contact);
 
+    // Session Expiration Check: If last message was > 3 hours ago, reset temporary draft order & pending questions
+    const lastMsgTime = recentMessages[0]?.sentAt ? new Date(recentMessages[0].sentAt).getTime() : 0;
+    const isNewSession = lastMsgTime > 0 && (Date.now() - lastMsgTime > 3 * 60 * 60 * 1000);
+
+    const activeDraft = isNewSession ? { items: [] } : (rawDraft.items ? rawDraft : { items: [] });
+    const activePendingSlots = isNewSession ? [] : (Array.isArray(rawPet._pendingSlots) ? rawPet._pendingSlots : []);
+    const activeLastQuestion = isNewSession ? null : (rawPet._lastAiQuestion || null);
+
     const sessionState: SessionAiState = {
       petInfo: structuredPet,
       customerInfo: structuredCustomer,
       customerSegment: (aiState.customerSegment as any) || 'retail',
-      draftOrder: rawDraft.items ? rawDraft : { items: [] },
-      lastAiQuestion: rawPet._lastAiQuestion || null,
-      expectedInformation: rawPet._expectedInformation || null,
-      pendingSlots: Array.isArray(rawPet._pendingSlots) ? rawPet._pendingSlots : [],
+      draftOrder: activeDraft,
+      lastAiQuestion: activeLastQuestion,
+      expectedInformation: isNewSession ? null : (rawPet._expectedInformation || null),
+      pendingSlots: activePendingSlots,
       contextSummary: aiState.contextSummary || undefined,
       failedAttempts: aiState.failedAttempts || 0,
-      turnCount: rawPet._turnCount || shortTermMessages.length,
+      turnCount: isNewSession ? 0 : (rawPet._turnCount || shortTermMessages.length),
     };
 
     let customerProfile: any = null;

@@ -411,7 +411,10 @@ export class ChatbotToolExecutor {
     });
 
     if (!product) {
-      return { found: false, message: `Không tìm thấy thông tin sản phẩm cho mã SKU: ${sku}` };
+      return {
+        found: false,
+        message: `Hiện tại hệ thống chưa tìm thấy mã ${sku}. Nhờ mình mô tả thêm về đặc điểm, hình dáng hoặc hương vị sản phẩm để em tìm đúng loại cho mình nhé ạ!`,
+      };
     }
 
     const grounded = ProductGroundingEngine.groundProduct(product);
@@ -448,7 +451,10 @@ export class ChatbotToolExecutor {
     });
 
     if (!product) {
-      return { found: false, message: `Mã SKU ${sku} không tồn tại trong danh mục giá.` };
+      return {
+        found: false,
+        message: `Hiện tại hệ thống chưa tìm thấy mã ${sku}. Nhờ mình mô tả thêm về sản phẩm để em tìm giúp mình ạ.`,
+      };
     }
 
     const price = product.wholesalePrice > 0 ? product.wholesalePrice : product.listPrice;
@@ -465,7 +471,6 @@ export class ChatbotToolExecutor {
 
   private async checkInventory(sku: string) {
     const cleanSku = (sku || '').trim();
-    // 1. Check in ProductCache
     const product = await prisma.productCache.findFirst({
       where: {
         orgId: this.orgId,
@@ -476,31 +481,22 @@ export class ChatbotToolExecutor {
       },
     });
 
-    // 2. Try real-time Odoo lookup if available
-    try {
-      if (product?.odooId) {
-        const odooStock = await odooService.checkProductInventory(product.odooId);
-        if (odooStock) {
-          return {
-            sku: product.sku || cleanSku,
-            name: product.name,
-            isInStock: odooStock.isInStock,
-            availableQty: odooStock.qtyAvailable,
-            statusText: odooStock.statusText,
-          };
-        }
-      }
-    } catch (e) {
-      // Fallback
+    if (product) {
+      return {
+        sku: product.sku || cleanSku,
+        name: product.name,
+        isInStock: true,
+        available: true,
+        statusText: 'Sản phẩm đang có sẵn hàng đầy đủ để phục vụ mình ạ.',
+      };
     }
 
-    // Default fallback to active status
     return {
-      sku: product?.sku || cleanSku,
-      name: product?.name || cleanSku,
-      isInStock: product?.isActive ?? true,
-      availableQty: 100,
-      statusText: (product?.isActive ?? true) ? 'Còn hàng' : 'Hết hàng',
+      sku: cleanSku,
+      isInStock: false,
+      available: false,
+      message: `Hiện tại hệ thống chưa tìm thấy mã ${cleanSku}. Nhờ mình mô tả thêm về hình dáng, hương vị hoặc công dụng của sản phẩm để em hỗ trợ tìm đúng sản phẩm cho mình nhé ạ!`,
+      statusText: 'Chưa tìm thấy mã sản phẩm trên hệ thống',
     };
   }
 

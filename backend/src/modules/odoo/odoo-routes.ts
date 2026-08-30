@@ -341,8 +341,17 @@ export async function odooRoutes(app: FastifyInstance) {
             where: { id: body.conversationId },
             data: {
               lastMessageAt: new Date(),
+              currentState: 'NEW',
             }
           }).catch(e => logger.warn('[odoo-routes] Failed to update conversation lastMessageAt:', e.message));
+
+          // Clear draftOrder in ConversationAiState on order creation success
+          await prisma.conversationAiState.update({
+            where: { conversationId: body.conversationId },
+            data: {
+              draftOrder: { items: [] },
+            }
+          }).catch(e => logger.warn('[odoo-routes] Failed to clear draftOrder in ConversationAiState:', e.message));
         }
 
         if (salespersonName) {

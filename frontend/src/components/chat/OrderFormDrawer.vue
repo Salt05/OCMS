@@ -407,8 +407,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { api } from '@/api';
+import { io, Socket } from 'socket.io-client';
 import type { Contact } from '@/composables/use-contacts';
 import { useOdoo, type OdooProduct } from '@/composables/use-odoo';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
@@ -534,6 +535,23 @@ function removeOrderLine(index: number) {
   orderLines.value.splice(index, 1);
 }
 
+let socket: Socket | null = null;
+
+function initSocketListener() {
+  socket = io({ transports: ['websocket', 'polling'] });
+  socket.on('chat:order_draft_updated', (data: { conversationId: string; draftOrder: any }) => {
+    if (data.conversationId === props.conversationId && data.draftOrder) {
+      fillOrderFromAI(data.draftOrder);
+    }
+  });
+}
+
+onUnmounted(() => {
+  if (socket) {
+    socket.disconnect();
+  }
+});
+
 // Load Payment Terms and Products on mount (cached)
 onMounted(async () => {
   await Promise.all([
@@ -557,6 +575,12 @@ onMounted(async () => {
       // Keep default
     }
   }
+
+  // Auto-load pre-saved draft order from database (no LLM call)
+  loadSavedDraft();
+
+  // Listen to real-time AI updates
+  initSocketListener();
 });
 
 async function refreshOdooData() {
@@ -601,6 +625,18 @@ async function handleAiExtract() {
     };
   } finally {
     aiExtracting.value = false;
+  }
+}
+
+async function loadSavedDraft() {
+  if (!props.conversationId) return;
+  try {
+    const res = await api.get(`/orders/draft/${props.conversationId}`);
+    if (res.data?.success && res.data.draft) {
+      fillOrderFromAI(res.data.draft);
+    }
+  } catch (err) {
+    console.error('Failed to load saved draft order:', err);
   }
 }
 

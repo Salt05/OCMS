@@ -138,6 +138,18 @@
             </v-card>
           </v-menu>
 
+          <v-btn
+            icon
+            variant="text"
+            size="small"
+            color="medium-emphasis"
+            :title="isExpanded ? 'Thu nhỏ panel (420px)' : 'Mở rộng gấp đôi (760px)'"
+            class="mr-1"
+            @click="toggleExpandRightWidth"
+          >
+            <v-icon size="16">{{ isExpanded ? 'lucide-minimize-2' : 'lucide-maximize-2' }}</v-icon>
+          </v-btn>
+
           <v-btn icon variant="text" size="small" color="medium-emphasis" @click="showContactPanel = false" title="Đóng panel">
             <v-icon size="18">lucide-x</v-icon>
           </v-btn>
@@ -180,7 +192,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import ConversationList from '@/components/chat/ConversationList.vue';
 import MessageThread from '@/components/chat/MessageThread.vue';
@@ -209,6 +221,63 @@ const showContactPanel = ref(false);
 const showOrderPanel = ref(false);
 const rightPanelTab = ref<'info' | 'chatbot'>('info');
 const chatbotSidebarRef = ref<any>(null);
+
+// Resizable panel widths (restored from localStorage)
+const leftWidth = ref(parseInt(localStorage.getItem('chat-left-width') || '350'));
+const rightWidth = ref(parseInt(localStorage.getItem('chat-right-width') || '420'));
+const isExpanded = computed(() => rightWidth.value >= 700);
+
+function toggleExpandRightWidth() {
+  if (rightWidth.value >= 700) {
+    rightWidth.value = 420;
+  } else {
+    rightWidth.value = 760;
+  }
+  localStorage.setItem('chat-right-width', String(rightWidth.value));
+}
+
+let resizing: 'left' | 'right' | null = null;
+let startX = 0;
+let startWidth = 0;
+let tempWidth = 0;
+
+function startResize(panel: 'left' | 'right', e: MouseEvent) {
+  resizing = panel;
+  startX = e.clientX;
+  startWidth = panel === 'left' ? leftWidth.value : rightWidth.value;
+  tempWidth = startWidth;
+  document.addEventListener('mousemove', onResize);
+  document.addEventListener('mouseup', stopResize);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+
+function onResize(e: MouseEvent) {
+  if (!resizing) return;
+  const diff = e.clientX - startX;
+  if (resizing === 'left') {
+    tempWidth = Math.max(200, Math.min(500, startWidth + diff));
+  } else {
+    tempWidth = Math.max(250, Math.min(900, startWidth - diff));
+  }
+}
+
+function stopResize() {
+  if (resizing) {
+    if (resizing === 'left') {
+      leftWidth.value = tempWidth;
+      localStorage.setItem('chat-left-width', String(tempWidth));
+    } else {
+      rightWidth.value = tempWidth;
+      localStorage.setItem('chat-right-width', String(tempWidth));
+    }
+  }
+  resizing = null;
+  document.removeEventListener('mousemove', onResize);
+  document.removeEventListener('mouseup', stopResize);
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+}
 
 function formatChatbotDate(dateStr: string) {
   if (!dateStr) return '';
@@ -244,45 +313,12 @@ watch(() => route.query.id, (newId) => {
   }
 }, { immediate: true });
 
-// Resizable panel widths (restored from localStorage)
-const leftWidth = ref(parseInt(localStorage.getItem('chat-left-width') || '350'));
-const rightWidth = ref(parseInt(localStorage.getItem('chat-right-width') || '340'));
-
-let resizing: 'left' | 'right' | null = null;
-let startX = 0;
-let startWidth = 0;
-
-function startResize(panel: 'left' | 'right', e: MouseEvent) {
-  resizing = panel;
-  startX = e.clientX;
-  startWidth = panel === 'left' ? leftWidth.value : rightWidth.value;
-  document.addEventListener('mousemove', onResize);
-  document.addEventListener('mouseup', stopResize);
-  document.body.style.cursor = 'col-resize';
-  document.body.style.userSelect = 'none';
-}
-
-function onResize(e: MouseEvent) {
-  if (!resizing) return;
-  const diff = e.clientX - startX;
-  if (resizing === 'left') {
-    leftWidth.value = Math.max(200, Math.min(500, startWidth + diff));
-  } else {
-    rightWidth.value = Math.max(250, Math.min(500, startWidth - diff));
+watch(selectedConv, (newConv) => {
+  if (newConv && newConv.currentState === 'CONFIRMATION') {
+    showOrderPanel.value = true;
+    showContactPanel.value = false;
   }
-}
-
-function stopResize() {
-  if (resizing) {
-    localStorage.setItem('chat-left-width', String(leftWidth.value));
-    localStorage.setItem('chat-right-width', String(rightWidth.value));
-  }
-  resizing = null;
-  document.removeEventListener('mousemove', onResize);
-  document.removeEventListener('mouseup', stopResize);
-  document.body.style.cursor = '';
-  document.body.style.userSelect = '';
-}
+});
 
 onMounted(() => { fetchConversations(); initSocket(); });
 onUnmounted(() => { destroySocket(); });
@@ -312,7 +348,8 @@ watch(searchQuery, () => {
   position: relative;
   flex-shrink: 0;
   min-width: 250px;
-  max-width: 500px;
+  max-width: 900px;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @media (max-width: 768px) {

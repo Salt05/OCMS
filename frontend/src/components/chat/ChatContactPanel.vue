@@ -1,7 +1,7 @@
 <template>
   <div class="chat-contact-panel d-flex flex-column h-100" style="width: 100%; height: 100%; overflow: hidden; background-color: rgb(var(--v-theme-surface));">
     
-    <!-- 1. Profile Summary Card (Avatar, Name, UID, Ngày tạo, Cập nhật) -->
+    <!-- 1. Profile Summary Header (Avatar, Name, UID, Dates) -->
     <div class="px-4 py-3 border-b flex-shrink-0 profile-summary-card">
       <div class="d-flex align-center justify-space-between gap-3">
         <!-- Left: Avatar & Name -->
@@ -19,9 +19,12 @@
                 #{{ form.customerId }}
               </v-chip>
             </div>
-            <div v-if="form.status" class="mt-1">
+            <div v-if="form.status" class="mt-1 d-flex align-center gap-1">
               <v-chip :color="statusColor(form.status)" size="x-small" variant="tonal" class="font-weight-bold" style="font-size: 10px; height: 18px;">
                 {{ statusLabel(form.status) }}
+              </v-chip>
+              <v-chip :color="customerTier.color" size="x-small" variant="flat" class="font-weight-bold" style="font-size: 10px; height: 18px;">
+                {{ customerTier.label }}
               </v-chip>
             </div>
           </div>
@@ -51,35 +54,46 @@
       </div>
     </div>
 
-    <!-- 2. Tabs Navigation -->
+    <!-- 2. Tabs Navigation (4 Tabs: Thông tin, Lịch hẹn, Đơn hàng, File & Media) -->
     <v-tabs v-model="activeTab" color="primary" density="compact" class="border-b px-2 flex-shrink-0 panel-tabs">
-      <v-tab value="info" class="text-caption font-weight-bold">Thông tin</v-tab>
+      <v-tab value="info" class="text-caption font-weight-bold">
+        <v-icon start size="14">lucide-user</v-icon>
+        Thông tin
+      </v-tab>
       <v-tab value="appointments" class="text-caption font-weight-bold">
+        <v-icon start size="14">lucide-calendar</v-icon>
         Lịch hẹn ({{ contactAppointments.length }})
       </v-tab>
-      <v-tab value="orders" class="text-caption font-weight-bold">Đơn hàng</v-tab>
+      <v-tab value="orders" class="text-caption font-weight-bold">
+        <v-icon start size="14">lucide-shopping-bag</v-icon>
+        Đơn hàng
+      </v-tab>
+      <v-tab value="media" class="text-caption font-weight-bold">
+        <v-icon start size="14">lucide-folder</v-icon>
+        File & Media
+      </v-tab>
     </v-tabs>
 
-    <!-- 3. Tab Body -->
+    <!-- 3. Tab Body Content -->
     <div class="flex-grow-1 overflow-y-auto px-4 py-3 custom-scrollbar" style="min-height: 0;">
       
-      <!-- TAB 1: THÔNG TIN -->
+      <!-- TAB 1: THÔNG TIN (2-COLUMN GRID) -->
       <div v-show="activeTab === 'info'" class="d-flex flex-column gap-3">
         
-        <!-- Card 1: HỒ SƠ KHÁCH HÀNG -->
-        <v-card variant="outlined" class="rounded-xl pa-3 customer-profile-card">
-          <div class="d-flex align-center justify-space-between mb-3 pb-2 border-b">
-            <div class="d-flex align-center gap-2">
-              <div class="card-icon-badge">
-                <v-icon size="16" color="primary">lucide-user-cog</v-icon>
+        <v-row dense>
+          <!-- CỘT 1 (BÊN TRÁI): THÔNG TIN LIÊN HỆ CƠ BẢN -->
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" class="rounded-xl pa-3 customer-profile-card h-100">
+              <div class="d-flex align-center justify-space-between mb-3 pb-2 border-b">
+                <div class="d-flex align-center gap-2">
+                  <div class="card-icon-badge">
+                    <v-icon size="16" color="primary">lucide-contact</v-icon>
+                  </div>
+                  <span class="text-subtitle-2 font-weight-bold text-primary tracking-wide">THÔNG TIN LIÊN HỆ</span>
+                </div>
               </div>
-              <span class="text-subtitle-2 font-weight-bold text-primary tracking-wide">HỒ SƠ KHÁCH HÀNG</span>
-            </div>
-          </div>
 
-          <v-row dense>
-            <!-- Loại tài khoản -->
-            <v-col cols="12">
+              <!-- Loại tài khoản -->
               <v-select
                 v-model="form.contactType"
                 :items="[{ title: 'Khách hàng', value: 'customer' }, { title: 'Nhân viên', value: 'employee' }, { title: 'Khác', value: 'other' }]"
@@ -92,70 +106,23 @@
                 hide-details="auto"
                 class="mb-2"
               />
-            </v-col>
 
-            <!-- ID Customer -->
-            <v-col cols="12" sm="6">
-              <v-text-field
-                v-model="form.customerId"
-                label="ID Customer"
-                placeholder="VD: 16586"
-                density="compact"
-                variant="outlined"
-                prepend-inner-icon="lucide-hash"
-                hide-details="auto"
-                class="mb-2"
-                :readonly="!!form.customerId"
-              >
-                <template v-if="form.customerId" #append-inner>
-                  <v-btn
-                    icon="lucide-unlink"
-                    variant="text"
-                    color="error"
-                    size="x-small"
-                    density="compact"
-                    title="Hủy liên kết Odoo"
-                    @click.stop="form.customerId = ''"
-                  />
-                </template>
-              </v-text-field>
-            </v-col>
-
-            <!-- Phân loại Odoo -->
-            <v-col cols="12" sm="6">
-              <v-select
-                v-model="form.isCompany"
-                :items="[{ title: 'Cá nhân', value: false }, { title: 'Công ty', value: true }]"
-                item-title="title"
-                item-value="value"
-                label="Phân loại (Odoo)"
-                density="compact"
-                variant="outlined"
-                prepend-inner-icon="lucide-building"
-                hide-details="auto"
-                class="mb-2"
-              />
-            </v-col>
-
-            <!-- Tên khách hàng -->
-            <v-col cols="12" sm="6">
+              <!-- Tên khách hàng (Odoo) -->
               <v-text-field
                 v-model="form.fullName"
-                label="Tên khách hàng"
-                placeholder="Tên chính thức Odoo..."
+                label="Tên khách hàng (Odoo)"
+                placeholder="Tên chính thức..."
                 density="compact"
                 variant="outlined"
                 prepend-inner-icon="lucide-user"
                 hide-details="auto"
                 class="mb-2"
               />
-            </v-col>
 
-            <!-- Tên liên lạc (Zalo) -->
-            <v-col cols="12" sm="6">
+              <!-- Tên liên lạc (Zalo) -->
               <v-text-field
                 :model-value="form.zaloName || contact?.zaloName || conversation?.contact?.zaloName || 'Khách hàng Zalo'"
-                label="Tên liên lạc"
+                label="Tên liên lạc (Zalo)"
                 readonly
                 density="compact"
                 variant="outlined"
@@ -163,10 +130,8 @@
                 hide-details="auto"
                 class="mb-2"
               />
-            </v-col>
 
-            <!-- Số điện thoại -->
-            <v-col cols="12" sm="6">
+              <!-- Số điện thoại -->
               <v-text-field
                 v-model="form.phone"
                 label="Số điện thoại"
@@ -177,10 +142,8 @@
                 hide-details="auto"
                 class="mb-2"
               />
-            </v-col>
 
-            <!-- Email -->
-            <v-col cols="12" sm="6">
+              <!-- Email -->
               <v-text-field
                 v-model="form.email"
                 label="Email"
@@ -192,10 +155,8 @@
                 hide-details="auto"
                 class="mb-2"
               />
-            </v-col>
 
-            <!-- Địa chỉ (Address) -->
-            <v-col cols="12">
+              <!-- Địa chỉ -->
               <v-text-field
                 v-model="form.address"
                 label="Địa chỉ (Address)"
@@ -206,43 +167,121 @@
                 hide-details="auto"
                 class="mb-2"
               />
-            </v-col>
 
-            <!-- Khu vực (Zone) -->
-            <v-col cols="12" sm="6">
+              <!-- Khu vực (Zone) -->
               <v-text-field
                 v-model="form.zone"
                 label="Khu vực (Zone)"
-                placeholder="Quận/Huyện, Tỉnh..."
+                placeholder="VD: HCM - Q10, Hà Nội - Cầu Giấy..."
                 density="compact"
                 variant="outlined"
                 prepend-inner-icon="lucide-map"
                 hide-details="auto"
                 class="mb-2"
               />
-            </v-col>
 
-            <!-- Nhân viên CSKH -->
-            <v-col cols="12" sm="6">
-              <v-select
-                v-model="form.assignedUserId"
-                :items="users"
-                item-title="fullName"
-                item-value="id"
-                label="Nhân viên CSKH"
-                placeholder="Chọn nhân viên..."
+              <!-- Ghi chú -->
+              <v-textarea
+                v-model="form.notes"
+                label="Ghi chú khách hàng"
+                placeholder="Lưu ý đặc biệt, sở thích, thói quen mua hàng..."
+                rows="2"
                 density="compact"
                 variant="outlined"
-                clearable
-                :readonly="!isAdmin"
+                prepend-inner-icon="lucide-file-text"
+                hide-details="auto"
+              />
+            </v-card>
+          </v-col>
+
+          <!-- CỘT 2 (BÊN PHẢI): THÔNG TIN NÂNG CAO & DỮ LIỆU TÍNH TOÁN CRM -->
+          <v-col cols="12" md="6" class="d-flex flex-column gap-3">
+            
+            <!-- Card Nâng cao (Odoo & CSKH) -->
+            <v-card variant="outlined" class="rounded-xl pa-3 customer-profile-card">
+              <div class="d-flex align-center justify-space-between mb-3 pb-2 border-b">
+                <div class="d-flex align-center gap-2">
+                  <div class="card-icon-badge">
+                    <v-icon size="16" color="teal">lucide-settings-2</v-icon>
+                  </div>
+                  <span class="text-subtitle-2 font-weight-bold text-teal tracking-wide">THÔNG TIN NÂNG CAO (ODOO & CRM)</span>
+                </div>
+                <v-tooltip v-if="!isAdmin" text="Chỉ Admin mới có quyền sửa các trường này" location="top">
+                  <template #activator="{ props }">
+                    <v-icon v-bind="props" size="16" color="grey">lucide-lock</v-icon>
+                  </template>
+                </v-tooltip>
+              </div>
+
+              <!-- ID Customer (Admin only edit) -->
+              <v-text-field
+                v-model="form.customerId"
+                label="ID Customer (Odoo)"
+                placeholder="VD: 17864"
+                density="compact"
+                variant="outlined"
+                prepend-inner-icon="lucide-hash"
+                hide-details="auto"
+                class="mb-2"
+                :disabled="!isAdmin"
+                :readonly="!isAdmin || !!form.customerId"
+              >
+                <template v-if="form.customerId && isAdmin" #append-inner>
+                  <v-btn
+                    icon="lucide-unlink"
+                    variant="text"
+                    color="error"
+                    size="x-small"
+                    density="compact"
+                    title="Hủy liên kết Odoo"
+                    @click.stop="form.customerId = ''"
+                  />
+                </template>
+              </v-text-field>
+
+              <!-- Phân loại Odoo (Admin only edit) -->
+              <v-select
+                v-model="form.isCompany"
+                :items="[{ title: 'Cá nhân', value: false }, { title: 'Công ty', value: true }]"
+                item-title="title"
+                item-value="value"
+                label="Phân loại (Odoo)"
+                density="compact"
+                variant="outlined"
+                prepend-inner-icon="lucide-building"
+                hide-details="auto"
+                class="mb-2"
+                :disabled="!isAdmin"
+              />
+
+              <!-- Thẻ phân loại (Tags) -->
+              <div class="mb-2">
+                <TagSelector
+                  v-model="form.tags"
+                  :contact-id="contact?.id"
+                  density="compact"
+                  variant="outlined"
+                  label="Thẻ phân loại (Tags)"
+                />
+              </div>
+
+              <!-- Nhân viên CSKH (Admin only edit) -->
+              <v-select
+                v-model="form.assignedUserId"
+                :items="userOptions"
+                item-title="title"
+                item-value="value"
+                label="Nhân viên CSKH"
+                density="compact"
+                variant="outlined"
                 prepend-inner-icon="lucide-user-check"
                 hide-details="auto"
                 class="mb-2"
+                clearable
+                :disabled="!isAdmin"
               />
-            </v-col>
 
-            <!-- Trạng thái -->
-            <v-col cols="12" sm="6">
+              <!-- Trạng thái khách hàng (Admin only edit) -->
               <v-select
                 v-model="form.status"
                 :items="STATUS_OPTIONS"
@@ -251,14 +290,13 @@
                 label="Trạng thái"
                 density="compact"
                 variant="outlined"
-                clearable
+                prepend-inner-icon="lucide-activity"
                 hide-details="auto"
                 class="mb-2"
+                :disabled="!isAdmin"
               />
-            </v-col>
 
-            <!-- Nguồn -->
-            <v-col cols="12" sm="6">
+              <!-- Nguồn liên hệ -->
               <v-select
                 v-model="form.source"
                 :items="SOURCE_OPTIONS"
@@ -267,164 +305,66 @@
                 label="Nguồn"
                 density="compact"
                 variant="outlined"
+                prepend-inner-icon="lucide-share-2"
+                hide-details="auto"
                 clearable
-                hide-details="auto"
-                class="mb-2"
               />
-            </v-col>
+            </v-card>
 
-            <!-- Tag phân loại -->
-            <v-col cols="12" class="mb-2">
-              <TagSelector v-model="form.tags" label="Tag phân loại" />
-            </v-col>
-
-            <!-- Ghi chú -->
-            <v-col cols="12" class="mb-2">
-              <v-textarea
-                v-model="form.notes"
-                label="Ghi chú"
-                placeholder="Nhập ghi chú chăm sóc..."
-                rows="2"
-                density="compact"
-                variant="outlined"
-                hide-details="auto"
-                auto-grow
-              />
-            </v-col>
-
-            <!-- Nút Lưu -->
-            <v-col cols="12" class="mt-2">
-              <v-btn color="primary" block :loading="saving" @click="saveContact" rounded="lg">
-                Lưu thông tin CRM
-              </v-btn>
-              <v-alert v-if="saveSuccess" type="success" density="compact" class="mt-2" closable @click:close="saveSuccess = false">
-                Đã lưu thành công!
-              </v-alert>
-              <v-alert v-if="saveError" type="error" density="compact" class="mt-2" closable @click:close="saveError = false">
-                Lưu thất bại, thử lại!
-              </v-alert>
-            </v-col>
-          </v-row>
-        </v-card>
-
-        <!-- Card 2: TRA CỨU DỮ LIỆU TỪ ODOO -->
-        <v-card variant="outlined" class="rounded-xl pa-3 odoo-lookup-card">
-          <div class="d-flex align-center justify-space-between mb-3 pb-2 border-b">
-            <div class="d-flex align-center gap-2">
-              <div class="card-icon-badge">
-                <v-icon size="16" color="primary">lucide-database</v-icon>
+            <!-- Card Dữ liệu Tính toán CRM & Lịch sử Mua hàng -->
+            <v-card variant="outlined" class="rounded-xl pa-3 bg-surface-variant">
+              <div class="d-flex align-center gap-2 mb-2 pb-1 border-b">
+                <v-icon size="16" color="primary">lucide-bar-chart-3</v-icon>
+                <span class="text-caption font-weight-bold text-primary">CHỈ SỐ MUA HÀNG (CRM)</span>
               </div>
-              <span class="text-subtitle-2 font-weight-bold text-primary tracking-wide">TRA CỨU DỮ LIỆU TỪ ODOO</span>
-            </div>
-            <v-chip size="x-small" color="primary" variant="tonal" class="font-weight-medium px-2">
-              Đọc dữ liệu Odoo
-            </v-chip>
+
+              <div class="d-flex flex-column gap-1.5 text-caption">
+                <div class="d-flex justify-space-between align-center">
+                  <span class="text-medium-emphasis">💰 Tổng tiền đã chi:</span>
+                  <span class="font-weight-bold text-teal font-monospace">{{ formatVND(customerRevenue) }}</span>
+                </div>
+                <div class="d-flex justify-space-between align-center">
+                  <span class="text-medium-emphasis">📦 Tổng số đơn hàng:</span>
+                  <span class="font-weight-bold text-primary">{{ customerOrdersCount }} đơn</span>
+                </div>
+                <div class="d-flex justify-space-between align-center">
+                  <span class="text-medium-emphasis">⭐ Giá trị TB/đơn (AOV):</span>
+                  <span class="font-weight-bold">{{ formatVND(customerAov) }}</span>
+                </div>
+                <div class="d-flex justify-space-between align-center">
+                  <span class="text-medium-emphasis">📅 Ngày mua gần nhất:</span>
+                  <span class="font-weight-medium">{{ customerLastOrderDate }}</span>
+                </div>
+              </div>
+            </v-card>
+
+          </v-col>
+        </v-row>
+
+        <!-- Save Button Footer -->
+        <div class="d-flex align-center justify-space-between mt-2 pt-2 border-t">
+          <div>
+            <span v-if="saveSuccess" class="text-caption text-success font-weight-medium d-flex align-center gap-1">
+              <v-icon size="14">lucide-check</v-icon> Đã lưu thông tin
+            </span>
+            <span v-else-if="saveError" class="text-caption text-error font-weight-medium">
+              Lỗi khi lưu thông tin
+            </span>
           </div>
 
-          <div class="d-flex align-center gap-2 mb-2">
-            <v-text-field
-              v-model="odooSearchId"
-              label="ID / SĐT Khách hàng Odoo"
-              placeholder="Nhập ID hoặc SĐT..."
-              density="compact"
-              variant="outlined"
-              prepend-inner-icon="lucide-hash"
-              :loading="loadingOdoo"
-              clearable
-              hide-details
-              class="flex-grow-1"
-              @keyup.enter="lookupOdooCustomer(odooSearchId)"
-            />
-            <v-btn
-              color="primary"
-              variant="flat"
-              height="40"
-              class="px-4 font-weight-bold rounded-lg flex-shrink-0"
-              :loading="loadingOdoo"
-              prepend-icon="lucide-search"
-              @click="lookupOdooCustomer(odooSearchId)"
-            >
-              Tìm kiếm
-            </v-btn>
-          </div>
-
-          <div class="d-flex justify-start mb-2">
-            <v-btn
-              color="primary"
-              variant="tonal"
-              prepend-icon="lucide-plus"
-              size="small"
-              class="font-weight-medium rounded-pill px-3"
-              :loading="creatingOdoo"
-              @click="createOdooCustomer"
-            >
-              Tạo mới trên Odoo
-            </v-btn>
-          </div>
-
-          <div v-if="hasSearchedOdoo && odooCustomer" class="mt-3 pt-3 border-t">
-            <div class="d-flex align-center justify-space-between mb-2">
-              <span class="text-caption font-weight-bold text-success d-flex align-center gap-1">
-                <v-icon size="14">lucide-check-circle</v-icon> Thông tin Odoo tìm thấy
-              </span>
-              <v-chip size="x-small" color="primary" variant="flat" class="font-weight-bold">
-                Mã Odoo #{{ odooCustomer.id }}
-              </v-chip>
-            </div>
-
-            <v-table density="compact" class="border rounded-lg text-caption mb-3 odoo-result-table" style="font-size: 11.5px;">
-              <tbody>
-                <tr>
-                  <td class="font-weight-bold text-medium-emphasis py-1.5" style="width: 130px;">Customer Name</td>
-                  <td class="font-weight-bold text-high-emphasis py-1.5">{{ odooCustomer.name || '—' }}</td>
-                </tr>
-                <tr>
-                  <td class="font-weight-bold text-medium-emphasis py-1.5">Phone</td>
-                  <td class="font-weight-medium text-high-emphasis py-1.5">{{ odooCustomer.phone || odooCustomer.mobile || '—' }}</td>
-                </tr>
-                <tr>
-                  <td class="font-weight-bold text-medium-emphasis py-1.5">Address</td>
-                  <td class="text-high-emphasis py-1.5">{{ odooCustomer.fullAddress || odooCustomer.street || '—' }}</td>
-                </tr>
-                <tr>
-                  <td class="font-weight-bold text-medium-emphasis py-1.5">Zone</td>
-                  <td class="text-high-emphasis py-1.5">{{ odooCustomer.zone || odooCustomer.state || odooCustomer.city || '—' }}</td>
-                </tr>
-                <tr>
-                  <td class="font-weight-bold text-medium-emphasis py-1.5">Nhân viên CSKH</td>
-                  <td class="text-high-emphasis py-1.5">{{ odooCustomer.salesperson || '—' }}</td>
-                </tr>
-                <tr>
-                  <td class="font-weight-bold text-medium-emphasis py-1.5">Email</td>
-                  <td class="text-high-emphasis py-1.5">{{ odooCustomer.email || '—' }}</td>
-                </tr>
-              </tbody>
-            </v-table>
-
-            <div class="d-flex justify-end">
-              <v-btn
-                color="success"
-                size="small"
-                variant="flat"
-                prepend-icon="lucide-link"
-                class="font-weight-bold rounded-lg px-3"
-                @click="confirmApplyOdooData"
-              >
-                Liên kết Odoo
-              </v-btn>
-            </div>
-          </div>
-
-          <v-alert
-            v-else-if="hasSearchedOdoo && odooError"
-            density="compact"
-            type="warning"
-            variant="tonal"
-            class="text-caption mt-2 mb-0 rounded-lg"
+          <v-btn
+            color="primary"
+            variant="flat"
+            size="small"
+            class="text-none px-4"
+            prepend-icon="lucide-save"
+            :loading="saving"
+            @click="saveContact"
           >
-            {{ odooError }}
-          </v-alert>
-        </v-card>
+            Lưu thay đổi
+          </v-btn>
+        </div>
+
       </div>
 
       <!-- TAB 2: LỊCH HẸN -->
@@ -433,10 +373,10 @@
           v-if="props.contactId"
           :contact-id="props.contactId"
           :appointments="contactAppointments"
-          @refresh="reloadAppointments"
+          @appointment-created="reloadAppointments"
         />
         <div v-else class="text-caption text-grey text-center py-4">
-          Chưa có liên hệ để quản lý lịch hẹn
+          Chưa có liên hệ để xem lịch hẹn
         </div>
       </div>
 
@@ -448,13 +388,17 @@
         </div>
       </div>
 
+      <!-- TAB 4: FILE & MEDIA GALLERY -->
+      <div v-show="activeTab === 'media'" class="h-100">
+        <ChatMediaGallery :messages="messages || []" />
+      </div>
+
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue';
-import { api } from '@/api/index';
+import { ref, onMounted, computed } from 'vue';
 import type { Contact } from '@/composables/use-contacts';
 import { STATUS_OPTIONS, SOURCE_OPTIONS } from '@/composables/use-contacts';
 import { useChatContactPanel } from '@/composables/use-chat-contact-panel';
@@ -462,6 +406,7 @@ import { useUsers } from '@/composables/use-users';
 import { useAuthStore } from '@/stores/auth';
 import ChatAppointments from './ChatAppointments.vue';
 import ChatOrders from './ChatOrders.vue';
+import ChatMediaGallery from './ChatMediaGallery.vue';
 import TagSelector from '@/components/common/TagSelector.vue';
 
 const props = defineProps<{
@@ -491,140 +436,88 @@ const {
   () => emit('saved'),
 );
 
-const odooSearchId = ref('');
-const hasSearchedOdoo = ref(false);
-const odooCustomer = ref<any>(null);
-const loadingOdoo = ref(false);
-const odooError = ref('');
-const creatingOdoo = ref(false);
+const userOptions = computed(() => {
+  return users.value.map(u => ({
+    title: u.fullName || u.email,
+    value: u.id,
+  }));
+});
 
-async function lookupOdooCustomer(idStr?: string | null) {
-  const cleanId = (idStr || odooSearchId.value || form.customerId || '').trim();
-  if (!cleanId) return;
+function formatDateShort(dateStr: string) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('vi-VN');
+}
 
-  hasSearchedOdoo.value = true;
-  loadingOdoo.value = true;
-  odooError.value = '';
+function formatVND(n?: number) {
+  if (n === undefined || n === null) return '0 ₫';
+  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n);
+}
 
-  try {
-    const res = await api.get('/odoo/customers/' + cleanId);
-    if (res.data?.success && res.data?.customer) {
-      odooCustomer.value = res.data.customer;
-      odooError.value = '';
-    } else {
-      odooCustomer.value = null;
-      odooError.value = 'Không tìm thấy khách hàng #' + cleanId + ' trên Odoo';
-    }
-  } catch (err: any) {
-    odooCustomer.value = null;
-    odooError.value = err.response?.data?.error || ('Không tìm thấy khách hàng #' + cleanId + ' trên Odoo');
-  } finally {
-    loadingOdoo.value = false;
+function statusColor(val?: string | null) {
+  switch (val) {
+    case 'new': return 'info';
+    case 'contacted': return 'primary';
+    case 'qualified': return 'purple';
+    case 'won': return 'success';
+    case 'lost': return 'error';
+    default: return 'grey';
   }
 }
 
-function confirmApplyOdooData() {
-  if (!odooCustomer.value) return;
-
-  form.customerId = String(odooCustomer.value.id);
-  if (odooCustomer.value.name) form.fullName = odooCustomer.value.name;
-  if (odooCustomer.value.phone) {
-    form.phone = odooCustomer.value.phone;
-  } else if (odooCustomer.value.mobile) {
-    form.phone = odooCustomer.value.mobile;
-  }
-  if (odooCustomer.value.email) form.email = odooCustomer.value.email;
-  if (odooCustomer.value.fullAddress || odooCustomer.value.street) {
-    form.address = odooCustomer.value.fullAddress || odooCustomer.value.street;
-  }
-  if (odooCustomer.value.zone || odooCustomer.value.state || odooCustomer.value.city) {
-    form.zone = odooCustomer.value.zone || odooCustomer.value.state || odooCustomer.value.city;
-  }
-  if (odooCustomer.value.salesperson) {
-    form.salesperson = odooCustomer.value.salesperson;
-  }
-
-  form.contactType = 'customer';
+function statusLabel(val?: string | null) {
+  const opt = STATUS_OPTIONS.find(o => o.value === val);
+  return opt ? opt.text : 'Mới';
 }
 
-async function createOdooCustomer() {
-  if (!form.fullName || !form.address || !form.zone || !form.assignedUserId) {
-    odooError.value = "Vui lòng nhập đủ các trường: Tên, Địa chỉ, Khu vực, và Nhân viên CSKH";
-    hasSearchedOdoo.value = true;
-    return;
-  }
-  
-  creatingOdoo.value = true;
-  odooError.value = "";
-  hasSearchedOdoo.value = true;
-  
-  try {
-    const res = await api.post('/odoo/customers', {
-      is_company: form.isCompany,
-      name: form.fullName,
-      street: form.address,
-      city: form.zone,
-      phone: form.phone,
-      email: form.email,
-      salesperson: users.value.find(u => u.id === form.assignedUserId)?.fullName || '',
-    });
-    
-    if (res.data?.success && res.data?.id) {
-      form.customerId = String(res.data.id);
-      form.contactType = 'customer';
-      odooCustomer.value = res.data.customer;
-      odooError.value = "";
-    }
-  } catch (err: any) {
-    odooError.value = err.response?.data?.error || "Lỗi khi tạo mới trên Odoo";
-  } finally {
-    creatingOdoo.value = false;
-  }
-}
+// Calculated CRM Metrics
+const customerRevenue = computed(() => {
+  return (props.contact as any)?.customer?.totalRevenue || props.conversation?.contact?.customer?.totalRevenue || 0;
+});
 
-watch(() => props.contact, (c) => {
-  if (c?.customerId) {
-    odooSearchId.value = c.customerId;
+const customerOrdersCount = computed(() => {
+  return (props.contact as any)?.customer?.totalOrders || props.conversation?.contact?.customer?.totalOrders || 0;
+});
+
+const customerAov = computed(() => {
+  if (customerOrdersCount.value > 0) {
+    return customerRevenue.value / customerOrdersCount.value;
   }
-}, { immediate: true });
+  return 0;
+});
+
+const customerLastOrderDate = computed(() => {
+  const d = (props.contact as any)?.customer?.lastOrderDate || props.conversation?.contact?.customer?.lastOrderDate;
+  return d ? formatDateShort(d) : 'Chưa có đơn';
+});
+
+const customerTier = computed(() => {
+  const rev = customerRevenue.value;
+  if (rev >= 50000000) return { label: 'VIP Kim Cương', color: 'purple' };
+  if (rev >= 10000000) return { label: 'Khách Thân Thiết', color: 'amber-darken-3' };
+  if (customerOrdersCount.value > 0) return { label: 'Khách Quen', color: 'teal' };
+  return { label: 'Khách Mới', color: 'info' };
+});
 
 onMounted(() => {
   fetchUsers();
 });
-
-function statusLabel(value: string) {
-  return STATUS_OPTIONS.find(o => o.value === value)?.text ?? value;
-}
-
-function statusColor(status: string) {
-  const map: Record<string, string> = {
-    new: 'grey',
-    contacted: 'primary',
-    interested: 'accent',
-    converted: 'success',
-    lost: 'error',
-  };
-  return map[status] ?? 'grey';
-}
-
-function formatDateShort(dateStr?: string | null) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
 </script>
 
 <style scoped>
-.profile-summary-card {
-  background-color: rgba(var(--v-theme-surface-variant), 0.35);
-  transition: background-color 0.2s ease;
+.chat-contact-panel {
+  font-family: inherit;
 }
-
+.profile-summary-card {
+  background-color: rgba(var(--v-theme-on-surface), 0.02);
+}
 .profile-meta-box {
-  font-size: 11px;
+  background: rgba(var(--v-theme-on-surface), 0.04);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
   min-width: 170px;
 }
-
 .card-icon-badge {
   display: flex;
   align-items: center;
@@ -632,31 +525,10 @@ function formatDateShort(dateStr?: string | null) {
   width: 26px;
   height: 26px;
   border-radius: 6px;
-  background-color: rgba(var(--v-theme-primary), 0.12);
+  background: rgba(var(--v-theme-primary), 0.1);
 }
-
-.customer-profile-card,
-.odoo-lookup-card {
-  border-color: rgba(var(--v-border-color), 0.18) !important;
+.customer-profile-card {
   background-color: rgb(var(--v-theme-surface));
-  transition: all 0.2s ease;
-}
-
-.customer-profile-card:hover,
-.odoo-lookup-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.35) !important;
-}
-
-.odoo-lookup-card {
-  background-color: rgba(var(--v-theme-surface-variant), 0.18);
-}
-
-.odoo-result-table {
-  overflow: hidden;
-  border-color: rgba(var(--v-border-color), 0.15) !important;
-}
-
-.odoo-result-table td {
-  border-bottom-color: rgba(var(--v-border-color), 0.08) !important;
+  border-color: rgba(var(--v-theme-on-surface), 0.12) !important;
 }
 </style>

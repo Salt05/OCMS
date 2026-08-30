@@ -393,7 +393,8 @@
         class="zalo-conv-item d-flex align-center px-3 py-2 cursor-pointer position-relative"
         :class="{
           'is-active': conv.id === selectedId,
-          'is-unread': conv.unreadCount > 0 && conv.id !== selectedId
+          'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
+          'needs-confirmation-blink': conv.currentState === 'CONFIRMATION'
         }"
         @click="$emit('select', conv.id)"
       >
@@ -788,5 +789,15 @@ function formatTime(dateStr: string | null): string {
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
+}
+
+.needs-confirmation-blink {
+  border-left: 4px solid #10B981 !important;
+  animation: blink-green 2.5s infinite ease-in-out;
+}
+
+@keyframes blink-green {
+  0%, 100% { background-color: rgba(16, 185, 129, 0.02); }
+  50% { background-color: rgba(16, 185, 129, 0.12); }
 }
 </style>

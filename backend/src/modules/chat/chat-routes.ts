@@ -39,6 +39,33 @@ export async function checkConversationContactAccess(conversationId: string, use
 export async function chatRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
 
+  // ── Global unread message count (Role-scoped) ───────────────────────────
+  app.get('/api/v1/chat/unread-count', async (request: FastifyRequest) => {
+    const user = request.user!;
+    const isAdmin = ['owner', 'admin'].includes(user.role);
+
+    const where: any = {
+      orgId: user.orgId,
+      ...(isAdmin ? {} : { contact: { assignedUserId: user.id } }),
+    };
+
+    const [sumAgg, unreadConvCount] = await Promise.all([
+      prisma.conversation.aggregate({
+        where,
+        _sum: { unreadCount: true },
+      }),
+      prisma.conversation.count({
+        where: { ...where, unreadCount: { gt: 0 } },
+      }),
+    ]);
+
+    return {
+      unreadTotal: sumAgg._sum.unreadCount || 0,
+      unreadConversations: unreadConvCount,
+      role: user.role,
+    };
+  });
+
   // ── List conversations ───────────────────────────────────────────────────
   app.get(
     '/api/v1/conversations',
@@ -78,26 +105,6 @@ export async function chatRoutes(app: FastifyInstance) {
               },
             },
           ],
-        };
-      }
-
-      // Members can only see conversations
-      // from Zalo accounts they have access to
-      if (user.role === 'member') {
-        const accessibleAccounts =
-          await prisma.zaloAccountAccess.findMany({
-            where: {
-              userId: user.id,
-            },
-            select: {
-              zaloAccountId: true,
-            },
-          });
-
-        where.zaloAccountId = {
-          in: accessibleAccounts.map(
-            (a) => a.zaloAccountId,
-          ),
         };
       }
 
@@ -935,19 +942,6 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'accountId required' });
       }
 
-      if (user.role === 'member') {
-        const hasAccess = await prisma.zaloAccountAccess.findUnique({
-          where: {
-            zaloAccountId_userId: {
-              zaloAccountId: accountId,
-              userId: user.id,
-            },
-          },
-        });
-        if (!hasAccess) {
-          return reply.status(403).send({ error: 'Forbidden' });
-        }
-      }
 
       const instance = zaloPool.getInstance(accountId);
       if (!instance?.api) {

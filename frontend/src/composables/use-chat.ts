@@ -310,6 +310,14 @@ export function useChat() {
       fetchConversations();
     });
 
+    // Real-time conversation state updates (e.g. green blinking border)
+    socket.on('chat:state_updated', (data: { conversationId: string; currentState: string }) => {
+      const conv = conversations.value.find(c => c.id === data.conversationId);
+      if (conv) {
+        conv.currentState = data.currentState;
+      }
+    });
+
     if (typeof window !== 'undefined') {
       window.addEventListener('online', handleOnline);
     }

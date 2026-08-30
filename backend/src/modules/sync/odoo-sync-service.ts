@@ -9,12 +9,39 @@
  *  - sale.order.line  -> OrderLineHistory
  *  - product.product  -> ProductCache
  */
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { directusService } from '../directus/directus-service.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
 import { logger } from '../../shared/utils/logger.js';
 
 const DEFAULT_ORG_ID = process.env.DEFAULT_ORG_ID || '';
+
+function normalizePhoneNumber(raw?: string | null): string[] {
+  if (!raw) return [];
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return [];
+
+  const variants = new Set<string>();
+  variants.add(digits);
+
+  // If starts with 84, add 0... variant
+  if (digits.startsWith('84') && digits.length >= 10) {
+    variants.add('0' + digits.slice(2));
+  }
+  // If starts with 0, add 84... and +84... variant
+  if (digits.startsWith('0') && digits.length >= 10) {
+    variants.add(digits);
+    variants.add('84' + digits.slice(1));
+    variants.add('+84' + digits.slice(1));
+  }
+
+  variants.add(raw.trim());
+  return Array.from(variants);
+}
 
 class OdooSyncService {
   private isSyncing = false;
@@ -184,7 +211,45 @@ class OdooSyncService {
   // ──────────────────────────────────────────────────────────────────────────
   // SYNC: Orders (sale.order + sale.order.line)
   // ──────────────────────────────────────────────────────────────────────────
-  async syncOrders(orgId?: string): Promise<number> {
+  async cleanAndSyncOrders(orgId?: string): Promise<{ total: number; newCount: number; updatedCount: number }> {
+    const oid = orgId || (await this.getOrgId());
+    const modelName = 'sale.order';
+    logger.info(`[sync] Clean sync triggered for ${modelName} on org ${oid}`);
+
+    // 1. Delete all existing order lines and orders for this org
+    await prisma.orderLineHistory.deleteMany({
+      where: {
+        orderHistory: { orgId: oid },
+      },
+    });
+    await prisma.orderHistory.deleteMany({
+      where: { orgId: oid },
+    });
+
+    // 2. Reset OdooSyncState
+    await prisma.odooSyncState.upsert({
+      where: { orgId_modelName: { orgId: oid, modelName } },
+      update: {
+        lastWriteDate: null,
+        recordCount: 0,
+        status: 'syncing',
+        errorMessage: null,
+      },
+      create: {
+        orgId: oid,
+        modelName,
+        lastSyncedAt: new Date(),
+        lastWriteDate: null,
+        recordCount: 0,
+        status: 'syncing',
+      },
+    });
+
+    // 3. Run syncOrders
+    return await this.syncOrders(oid);
+  }
+
+  async syncOrders(orgId?: string): Promise<{ total: number; newCount: number; updatedCount: number }> {
     const oid = orgId || (await this.getOrgId());
     const modelName = 'sale.order';
     const syncState = await this.getSyncState(oid, modelName);
@@ -194,15 +259,35 @@ class OdooSyncService {
     try {
       const domain: any[] = [];
       if (syncState.lastWriteDate) {
-        domain.push(['write_date', '>', syncState.lastWriteDate]);
+        try {
+          // Odoo returns write_date string without milliseconds, but comparison in DB has milliseconds.
+          // Adding 1 second prevents querying the same latest modified order repeatedly.
+          const lastDate = new Date(syncState.lastWriteDate.includes('T') ? syncState.lastWriteDate : `${syncState.lastWriteDate.replace(' ', 'T')}Z`);
+          if (!isNaN(lastDate.getTime())) {
+            const nextSec = new Date(lastDate.getTime() + 1000);
+            const yyyy = nextSec.getUTCFullYear();
+            const mm = String(nextSec.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(nextSec.getUTCDate()).padStart(2, '0');
+            const hh = String(nextSec.getUTCHours()).padStart(2, '0');
+            const min = String(nextSec.getUTCMinutes()).padStart(2, '0');
+            const ss = String(nextSec.getUTCSeconds()).padStart(2, '0');
+            const formatted = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+            domain.push(['write_date', '>', formatted]);
+          } else {
+            domain.push(['write_date', '>', syncState.lastWriteDate]);
+          }
+        } catch (e) {
+          domain.push(['write_date', '>', syncState.lastWriteDate]);
+        }
       }
 
       const orders = await odooService.executeKw<any[]>('sale.order', 'search_read', [domain], {
         fields: [
-          'id', 'name', 'partner_id', 'date_order', 'state',
-          'amount_untaxed', 'amount_tax', 'amount_total',
-          'invoice_status', 'user_id', 'note',
-          'order_line', 'write_date',
+          'id', 'name', 'partner_id', 'date_order', 'validity_date', 'expected_date',
+          'state', 'amount_untaxed', 'amount_tax', 'amount_total', 'amount_undiscounted',
+          'margin', 'margin_percent', 'invoice_status', 'delivery_status',
+          'warehouse_id', 'pricelist_id', 'user_id', 'note',
+          'order_line', 'activity_summary', 'picking_ids', 'write_date',
         ],
         order: 'write_date asc',
       });
@@ -213,7 +298,7 @@ class OdooSyncService {
           recordCount: syncState.recordCount,
         });
         logger.debug(`[sync] ${modelName}: No new records to sync.`);
-        return 0;
+        return { total: 0, newCount: 0, updatedCount: 0 };
       }
 
       // Pre-fetch customer profile mapping for fast lookup
@@ -237,8 +322,8 @@ class OdooSyncService {
             [['id', 'in', chunk]],
           ], {
             fields: [
-              'id', 'product_id', 'name', 'product_uom_qty',
-              'price_unit', 'discount', 'price_subtotal',
+              'id', 'product_id', 'name', 'product_uom_qty', 'product_uom',
+              'price_unit', 'discount', 'price_subtotal', 'price_total',
               'qty_delivered', 'qty_invoiced',
             ],
           });
@@ -252,6 +337,8 @@ class OdooSyncService {
       }
 
       let upsertCount = 0;
+      let newCount = 0;
+      let updatedCount = 0;
       let latestWriteDate = syncState.lastWriteDate || '';
 
       for (const order of orders) {
@@ -263,41 +350,61 @@ class OdooSyncService {
         const salespersonId = Array.isArray(order.user_id) && order.user_id.length > 0
           ? order.user_id[0] : null;
 
+        const warehouseName = Array.isArray(order.warehouse_id) && order.warehouse_id.length > 1
+          ? String(order.warehouse_id[1]) : null;
+        const pricelistName = Array.isArray(order.pricelist_id) && order.pricelist_id.length > 1
+          ? String(order.pricelist_id[1]) : null;
+
         const customerProfileId = customerMap.get(partnerId) || null;
+
+        const orderData = {
+          orderCode: order.name || `ODOO-${order.id}`,
+          odooPartnerId: partnerId,
+          partnerName,
+          customerProfileId,
+          dateOrder: new Date(order.date_order),
+          state: order.state || 'draft',
+          amountUntaxed: parseFloat(order.amount_untaxed) || 0,
+          amountTax: parseFloat(order.amount_tax) || 0,
+          amountTotal: parseFloat(order.amount_total) || 0,
+          amountUndiscounted: parseFloat(order.amount_undiscounted) || parseFloat(order.amount_untaxed) || 0,
+          margin: parseFloat(order.margin) || 0,
+          marginPercent: parseFloat(order.margin_percent) || 0,
+          invoiceStatus: order.invoice_status || null,
+          deliveryStatus: typeof order.delivery_status === 'string' ? order.delivery_status : null,
+          warehouseName,
+          pricelistName,
+          salesperson,
+          salespersonId,
+          expectedDate: order.expected_date ? new Date(order.expected_date) : null,
+          validityDate: order.validity_date ? new Date(order.validity_date) : null,
+          activitySummary: typeof order.activity_summary === 'string' ? order.activity_summary : null,
+          pickingIds: Array.isArray(order.picking_ids) ? order.picking_ids : null,
+          note: typeof order.note === 'string' ? order.note : null,
+        };
+
+        const existing = await prisma.orderHistory.findUnique({
+          where: { orgId_odooOrderId: { orgId: oid, odooOrderId: order.id } },
+          select: { id: true, state: true, pdfSentAt: true },
+        });
+
+        const isNewlyConfirmed = (order.state === 'sale')
+          && (!existing || existing.state !== 'sale')
+          && (!existing || !existing.pdfSentAt);
+
+        if (existing) {
+          updatedCount++;
+        } else {
+          newCount++;
+        }
 
         const orderHistory = await prisma.orderHistory.upsert({
           where: { orgId_odooOrderId: { orgId: oid, odooOrderId: order.id } },
-          update: {
-            orderCode: order.name || `ODOO-${order.id}`,
-            odooPartnerId: partnerId,
-            partnerName,
-            customerProfileId,
-            dateOrder: new Date(order.date_order),
-            state: order.state || 'draft',
-            amountUntaxed: parseFloat(order.amount_untaxed) || 0,
-            amountTax: parseFloat(order.amount_tax) || 0,
-            amountTotal: parseFloat(order.amount_total) || 0,
-            invoiceStatus: order.invoice_status || null,
-            salesperson,
-            salespersonId,
-            note: typeof order.note === 'string' ? order.note : null,
-          },
+          update: orderData,
           create: {
             orgId: oid,
             odooOrderId: order.id,
-            orderCode: order.name || `ODOO-${order.id}`,
-            odooPartnerId: partnerId,
-            partnerName,
-            customerProfileId,
-            dateOrder: new Date(order.date_order),
-            state: order.state || 'draft',
-            amountUntaxed: parseFloat(order.amount_untaxed) || 0,
-            amountTax: parseFloat(order.amount_tax) || 0,
-            amountTotal: parseFloat(order.amount_total) || 0,
-            invoiceStatus: order.invoice_status || null,
-            salesperson,
-            salespersonId,
-            note: typeof order.note === 'string' ? order.note : null,
+            ...orderData,
           },
         });
 
@@ -305,6 +412,19 @@ class OdooSyncService {
         if (order.order_line && order.order_line.length > 0) {
           const linesToSave = order.order_line.map((lid: number) => lineMap.get(lid)).filter(Boolean);
           await this.saveOrderLines(orderHistory.id, linesToSave);
+        }
+
+        // Trigger automatic PDF sending if order transitioned to 'sale' or newly created 'sale'
+        if (isNewlyConfirmed) {
+          this.onOrderConfirmed(
+            oid,
+            order.id,
+            order.name || `ODOO-${order.id}`,
+            partnerId,
+            partnerName,
+          ).catch((err) => {
+            logger.error(`[sync] Failed onOrderConfirmed for order ${order.id}:`, err);
+          });
         }
 
         if (order.write_date && order.write_date > latestWriteDate) {
@@ -321,8 +441,8 @@ class OdooSyncService {
         recordCount: (syncState.recordCount || 0) + upsertCount,
       });
 
-      logger.info(`[sync] ${modelName}: Synced ${upsertCount} orders.`);
-      return upsertCount;
+      logger.info(`[sync] ${modelName}: Synced ${upsertCount} orders (New: ${newCount}, Updated: ${updatedCount}).`);
+      return { total: upsertCount, newCount, updatedCount };
     } catch (err: any) {
       await this.updateSyncState(oid, modelName, {
         status: 'error',
@@ -341,36 +461,35 @@ class OdooSyncService {
         const odooProductId = Array.isArray(line.product_id) && line.product_id.length > 0
           ? line.product_id[0] : null;
 
+        const uomName = Array.isArray(line.product_uom) && line.product_uom.length > 1
+          ? String(line.product_uom[1]) : (typeof line.product_uom === 'string' ? line.product_uom : null);
+
         const skuMatch = productName.match(/^\[([^\]]+)\]/);
         const productSku = skuMatch ? skuMatch[1] : null;
+
+        const lineData = {
+          productName,
+          productSku,
+          odooProductId,
+          uomName,
+          quantity: parseFloat(line.product_uom_qty) || 0,
+          priceUnit: parseFloat(line.price_unit) || 0,
+          discount: parseFloat(line.discount) || 0,
+          priceSubtotal: parseFloat(line.price_subtotal) || 0,
+          priceTotal: parseFloat(line.price_total) || parseFloat(line.price_subtotal) || 0,
+          qtyDelivered: parseFloat(line.qty_delivered) || 0,
+          qtyInvoiced: parseFloat(line.qty_invoiced) || 0,
+        };
 
         await prisma.orderLineHistory.upsert({
           where: {
             orderHistoryId_odooLineId: { orderHistoryId, odooLineId: line.id },
           },
-          update: {
-            productName,
-            productSku,
-            odooProductId,
-            quantity: parseFloat(line.product_uom_qty) || 0,
-            priceUnit: parseFloat(line.price_unit) || 0,
-            discount: parseFloat(line.discount) || 0,
-            priceSubtotal: parseFloat(line.price_subtotal) || 0,
-            qtyDelivered: parseFloat(line.qty_delivered) || 0,
-            qtyInvoiced: parseFloat(line.qty_invoiced) || 0,
-          },
+          update: lineData,
           create: {
             orderHistoryId,
             odooLineId: line.id,
-            productName,
-            productSku,
-            odooProductId,
-            quantity: parseFloat(line.product_uom_qty) || 0,
-            priceUnit: parseFloat(line.price_unit) || 0,
-            discount: parseFloat(line.discount) || 0,
-            priceSubtotal: parseFloat(line.price_subtotal) || 0,
-            qtyDelivered: parseFloat(line.qty_delivered) || 0,
-            qtyInvoiced: parseFloat(line.qty_invoiced) || 0,
+            ...lineData,
           },
         });
       }
@@ -402,6 +521,173 @@ class OdooSyncService {
       `;
     } catch (err: any) {
       logger.warn('[sync] updateCustomerOrderStats error:', err.message);
+    }
+  }
+
+  /**
+   * Automatically sends quotation/order PDF to customer via Zalo when order is confirmed.
+   */
+  async onOrderConfirmed(
+    orgId: string,
+    odooOrderId: number,
+    orderCode: string,
+    odooPartnerId: number,
+    partnerName?: string,
+  ): Promise<void> {
+    try {
+      logger.info(`[sync] Order ${orderCode} confirmed → sending PDF via Zalo (odooOrderId: ${odooOrderId}, partnerId: ${odooPartnerId})`);
+
+      // 1. Query CustomerProfile to get phone / mobile
+      const profile = await prisma.customerProfile.findUnique({
+        where: { orgId_odooPartnerId: { orgId, odooPartnerId } },
+      });
+
+      const rawPhones = [profile?.phone, profile?.mobile].filter(Boolean) as string[];
+      const phoneVariants = rawPhones.flatMap(p => normalizePhoneNumber(p));
+
+      if (phoneVariants.length === 0) {
+        logger.warn(`[sync] Order ${orderCode}: No phone number found for partner ${odooPartnerId} (${profile?.name || partnerName || 'Unknown'}). Skipping PDF send.`);
+        return;
+      }
+
+      // 2. Query Contact matching phone numbers
+      const contacts = await prisma.contact.findMany({
+        where: {
+          orgId,
+          OR: phoneVariants.map(p => ({ phone: { contains: p } })),
+        },
+        include: {
+          conversations: {
+            include: { zaloAccount: true },
+            orderBy: { lastMessageAt: 'desc' },
+          },
+        },
+      });
+
+      let matchedConversation: any = null;
+      let matchedContact: any = null;
+
+      for (const contact of contacts) {
+        if (contact.conversations && contact.conversations.length > 0) {
+          const conv = contact.conversations.find((c: any) => c.externalThreadId && c.zaloAccount?.status === 'connected') || contact.conversations[0];
+          if (conv && conv.externalThreadId) {
+            matchedConversation = conv;
+            matchedContact = contact;
+            break;
+          }
+        }
+      }
+
+      if (!matchedConversation) {
+        logger.warn(`[sync] Order ${orderCode}: No matching Zalo conversation found for customer ${partnerName || profile?.name || odooPartnerId} (Phones: ${rawPhones.join(', ')}).`);
+        return;
+      }
+
+      const instance = zaloPool.getInstance(matchedConversation.zaloAccountId);
+      if (!instance || !instance.api) {
+        logger.warn(`[sync] Order ${orderCode}: Zalo account ${matchedConversation.zaloAccountId} is not connected. Cannot send PDF.`);
+        return;
+      }
+
+      // 3. Download PDF report from Odoo
+      logger.info(`[sync] Fetching PDF report from Odoo for order ${orderCode} (ID: ${odooOrderId})...`);
+      const reportPdf = await odooService.getOrderReportPdf(odooOrderId);
+      if (!reportPdf || !reportPdf.buffer || reportPdf.buffer.length === 0) {
+        logger.error(`[sync] Order ${orderCode}: Failed to retrieve PDF from Odoo.`);
+        return;
+      }
+
+      // 4. Save to temporary file
+      const safeOrderCode = orderCode.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const tempDir = path.join(os.tmpdir(), 'zalo-crm-pdf');
+      await fs.promises.mkdir(tempDir, { recursive: true });
+      const tempFilePath = path.join(tempDir, `${safeOrderCode}.pdf`);
+      await fs.promises.writeFile(tempFilePath, reportPdf.buffer);
+
+      const customerDisplayName = partnerName || matchedContact?.fullName || profile?.name || 'Quý khách';
+      const textMessage = `Cảm ơn Quý khách ${customerDisplayName} đã đặt hàng tại LA PET!\nChúng tôi xin gửi bản báo giá chi tiết cho đơn hàng ${orderCode} kèm theo đây.\nNếu cần hỗ trợ thêm, vui lòng nhắn tin cho chúng tôi.\nTrân trọng cảm ơn!`;
+
+      const threadId = matchedConversation.externalThreadId;
+      const threadType = matchedConversation.threadType === 'group' ? 1 : 0;
+
+      try {
+        // 5. Send greeting text message via Zalo
+        await instance.api.sendMessage(
+          { msg: textMessage },
+          threadId,
+          threadType,
+        );
+
+        // Send PDF attachment via Zalo
+        await instance.api.sendMessage(
+          {
+            msg: '',
+            attachments: [tempFilePath],
+          },
+          threadId,
+          threadType,
+        );
+
+        logger.info(`[sync] Order ${orderCode} confirmed → PDF sent successfully via Zalo to ${customerDisplayName} (${threadId})`);
+
+        // 6. Save messages to DB for chat history
+        const savedTextMessage = await prisma.message.create({
+          data: {
+            conversationId: matchedConversation.id,
+            senderType: 'self',
+            content: textMessage,
+            contentType: 'text',
+            sentAt: new Date(),
+          },
+        });
+
+        const savedFileMessage = await prisma.message.create({
+          data: {
+            conversationId: matchedConversation.id,
+            senderType: 'self',
+            content: `[File PDF] ${reportPdf.filename || `${orderCode}.pdf`}`,
+            contentType: 'file',
+            attachments: [{
+              name: reportPdf.filename || `${orderCode}.pdf`,
+              size: reportPdf.buffer.length,
+              type: 'application/pdf',
+            }],
+            sentAt: new Date(),
+          },
+        });
+
+        await prisma.conversation.update({
+          where: { id: matchedConversation.id },
+          data: {
+            lastMessageAt: new Date(),
+            isReplied: true,
+          },
+        });
+
+        // Emit Socket.IO events for UI update
+        const io = zaloPool.getIO();
+        if (io) {
+          io.to(`conversation:${matchedConversation.id}`).emit('chat:message', {
+            message: savedTextMessage,
+            conversationId: matchedConversation.id,
+          });
+          io.to(`conversation:${matchedConversation.id}`).emit('chat:message', {
+            message: savedFileMessage,
+            conversationId: matchedConversation.id,
+          });
+        }
+
+        // 7. Update pdfSentAt in DB to prevent re-sending
+        await prisma.orderHistory.update({
+          where: { orgId_odooOrderId: { orgId, odooOrderId } },
+          data: { pdfSentAt: new Date() },
+        });
+
+      } finally {
+        await fs.promises.rm(tempFilePath, { force: true }).catch(() => {});
+      }
+    } catch (err: any) {
+      logger.error(`[sync] onOrderConfirmed error for order ${orderCode}:`, err);
     }
   }
 
@@ -618,7 +904,8 @@ class OdooSyncService {
       const results: Record<string, number> = {};
 
       results.customers = await this.syncCustomers(oid);
-      results.orders = await this.syncOrders(oid);
+      const ordersRes = await this.syncOrders(oid);
+      results.orders = ordersRes.total;
       results.products = await this.syncProducts(oid);
       results.invoices = await this.syncInvoices(oid);
 
@@ -647,7 +934,8 @@ class OdooSyncService {
       const results: Record<string, number> = {};
 
       results.customers = await this.syncCustomers(oid);
-      results.orders = await this.syncOrders(oid);
+      const ordersRes = await this.syncOrders(oid);
+      results.orders = ordersRes.total;
       results.invoices = await this.syncInvoices(oid);
 
       const totalChanged = Object.values(results).reduce((a, b) => a + b, 0);

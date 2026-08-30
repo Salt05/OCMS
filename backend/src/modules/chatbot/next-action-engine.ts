@@ -77,7 +77,8 @@ export class NextActionEngine {
     customer: StructuredCustomerProfile,
     extracted: ExtractedSlots,
     lastAiQuestion?: string | null,
-    pendingSlots: string[] = []
+    pendingSlots: string[] = [],
+    hasPaymentTerm: boolean = false
   ): NextActionDecision {
     // 1. Check for Direct Human Handoff Request
     if (extracted.intent === 'HANDOFF_REQUEST') {
@@ -157,11 +158,12 @@ export class NextActionEngine {
       const missing: string[] = [];
       if (!hasPhone) missing.push('phone');
       if (!hasAddress) missing.push('address');
+      if (!hasPaymentTerm) missing.push('payment_term');
 
       return {
         action: 'CREATE_ORDER_DRAFT',
         nextState: missing.length > 0 ? 'ORDER_COLLECTION' : 'ORDER_DRAFT',
-        reason: 'Khách bày tỏ ý định mua rõ ràng. Xác nhận sản phẩm + số lượng, hỏi info giao hàng.',
+        reason: 'Khách bày tỏ ý định mua rõ ràng. Xác nhận sản phẩm + số lượng, hỏi info giao hàng và hình thức thanh toán.',
         missingRequiredSlots: missing,
       };
     }

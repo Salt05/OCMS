@@ -9,6 +9,7 @@
  * - Context Builder with Anti-Hallucination rules
  * - Claim Validator & Safety Guardrails
  */
+import { randomUUID } from 'crypto';
 import { config } from '../../config/index.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
@@ -40,6 +41,8 @@ export function isRecentAiMessage(conversationId: string, content: string): bool
 }
 
 class ChatbotService {
+  private activeProcessingLocks = new Map<string, number>();
+
   private get LLM_API_URL(): string {
     return config.llm?.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
   }
@@ -61,6 +64,14 @@ class ChatbotService {
     let isHandoff = false;
     let intentDetected = 'GENERAL';
     const executedTools: Array<{ name: string; args: any }> = [];
+
+    // Concurrency Lock: Ignore duplicate webhook calls for the same conversation within 15 seconds
+    const existingLock = this.activeProcessingLocks.get(conversationId);
+    if (existingLock && Date.now() - existingLock < 15000) {
+      logger.warn(`[chatbot-service] Skipped duplicate concurrent webhook for conversation ${conversationId}`);
+      return;
+    }
+    this.activeProcessingLocks.set(conversationId, Date.now());
 
     try {
       // 1. Check AI reply eligibility
@@ -124,7 +135,8 @@ class ChatbotService {
         memory.sessionState.customerInfo,
         extracted,
         memory.sessionState.lastAiQuestion,
-        memory.sessionState.pendingSlots
+        memory.sessionState.pendingSlots,
+        !!(memory.sessionState.draftOrder?.paymentTerm)
       );
 
       let toolResultsSummary: string | undefined;
@@ -333,6 +345,42 @@ class ChatbotService {
         nextDecision.nextState
       );
 
+      // 14.1 Emit real-time socket events for order draft auto-population
+      const hasExtractedDraft = executedTools.some(t => t.name === 'extract_order_draft');
+      if (hasExtractedDraft) {
+        zaloPool.getIO()?.emit('chat:order_draft_updated', {
+          conversationId,
+          draftOrder: memory.sessionState.draftOrder,
+        });
+      }
+
+      // 14.2 If order is in confirmation stage, create bell notifications for crm staff
+      if (nextDecision.nextState === 'CONFIRMATION') {
+        const users = await prisma.user.findMany({
+          where: { orgId, isActive: true },
+        });
+
+        for (const user of users) {
+          const notif = await prisma.notification.create({
+            data: {
+              id: randomUUID(),
+              userId: user.id,
+              type: 'order_needs_confirmation',
+              title: 'Cần xác nhận đơn hàng',
+              detail: `Khách hàng ${memory.contact?.fullName || 'Chưa rõ'} đã xác nhận chốt đơn. Vui lòng duyệt đơn sang Odoo!`,
+              conversationId,
+            },
+          });
+          zaloPool.getIO()?.emit(`notification:created:${user.id}`, { notification: notif });
+        }
+
+        // Emit conversation state change to frontend so the chat list updates the blinking border
+        zaloPool.getIO()?.emit('chat:state_updated', {
+          conversationId,
+          currentState: 'CONFIRMATION',
+        });
+      }
+
       // 15. Record Audit Log (with CTA tracking)
       const hasCTA = /(?:muốn mua|lên đơn|chốt đơn|đặt hàng|ship cho)/i.test(generatedReply);
       await this.logAudit({
@@ -350,6 +398,8 @@ class ChatbotService {
 
     } catch (err: any) {
       logger.error('[chatbot-service] processIncomingMessage error:', err.message);
+    } finally {
+      this.activeProcessingLocks.delete(conversationId);
     }
   }
 

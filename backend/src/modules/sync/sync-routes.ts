@@ -120,15 +120,45 @@ export async function syncRoutes(app: FastifyInstance) {
   app.post('/api/v1/sync/orders', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
-      const count = await odooSyncService.syncOrders(user.orgId);
+      const res = await odooSyncService.syncOrders(user.orgId);
+
+      let message = 'Dữ liệu đơn hàng Odoo đã ở trạng thái mới nhất';
+      if (res.newCount > 0 && res.updatedCount > 0) {
+        message = `Đồng bộ thành công: ${res.newCount} đơn mới, ${res.updatedCount} đơn cập nhật từ Odoo`;
+      } else if (res.newCount > 0) {
+        message = `Đồng bộ thành công: ${res.newCount} đơn hàng mới từ Odoo`;
+      } else if (res.updatedCount > 0) {
+        message = `Đồng bộ thành công: Đã cập nhật ${res.updatedCount} đơn hàng từ Odoo`;
+      }
+
       return reply.send({
         success: true,
-        message: `Đã đồng bộ ${count} đơn hàng`,
-        count,
+        message,
+        ...res,
       });
     } catch (err: any) {
       logger.error('[sync-routes] Order sync error:', err);
       return reply.status(500).send({ error: err.message || 'Lỗi đồng bộ đơn hàng' });
+    }
+  });
+
+  // POST /api/v1/sync/orders/clean — Clean and re-sync all orders from Odoo
+  app.post('/api/v1/sync/orders/clean', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      if (user.role !== 'owner' && user.role !== 'admin') {
+        return reply.status(403).send({ error: 'Chỉ admin mới có quyền làm sạch và đồng bộ lại đơn hàng' });
+      }
+
+      const count = await odooSyncService.cleanAndSyncOrders(user.orgId);
+      return reply.send({
+        success: true,
+        message: `Đã làm sạch dữ liệu cũ và đồng bộ thành công ${count} đơn hàng từ Odoo`,
+        count,
+      });
+    } catch (err: any) {
+      logger.error('[sync-routes] Clean order sync error:', err);
+      return reply.status(500).send({ error: err.message || 'Lỗi làm sạch và đồng bộ đơn hàng' });
     }
   });
 }

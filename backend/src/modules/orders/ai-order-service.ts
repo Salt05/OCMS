@@ -221,6 +221,15 @@ async function callGroqChat(systemPrompt: string, userMessage: string): Promise<
   return data.choices?.[0]?.message?.content || '{}';
 }
 
+function cleanExtractedValue(val: any): string | null {
+  if (val === null || val === undefined) return null;
+  const s = String(val).trim();
+  if (!s || /^(null|undefined|chua biet|chua co|khong co|none|unknown)$/i.test(removeVietnameseTones(s))) {
+    return null;
+  }
+  return s;
+}
+
 // ── Main extraction function ─────────────────────────────────────────────────
 
 export async function extractOrderFromConversation(
@@ -228,14 +237,21 @@ export async function extractOrderFromConversation(
   conversationId: string,
   additionalInstruction?: string,
 ): Promise<AiOrderDraft> {
-  // 1. Fetch today's messages from the conversation first
+  // 1. Fetch today's messages from the conversation (ignoring messages before the last order was placed)
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
+
+  const latestOrder = await prisma.order.findFirst({
+    where: { conversationId, orgId },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const queryStart = latestOrder ? latestOrder.createdAt : todayStart;
 
   let messages = await prisma.message.findMany({
     where: {
       conversationId,
-      sentAt: { gte: todayStart },
+      sentAt: { gte: queryStart },
       isDeleted: false,
       contentType: { in: ['text'] },
     },
@@ -455,13 +471,13 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
   return {
     thinking: llmData.thinking || 'Đã phân tích các tin nhắn trong hội thoại hôm nay, nhận diện khách hàng và đối chiếu danh mục sản phẩm.',
     customer: {
-      name: llmData.customer?.name || conversation?.contact?.fullName || null,
-      phone: llmData.customer?.phone || conversation?.contact?.phone || null,
-      shippingAddress: llmData.customer?.shippingAddress || conversation?.contact?.address || null,
+      name: cleanExtractedValue(llmData.customer?.name) || conversation?.contact?.fullName || null,
+      phone: cleanExtractedValue(llmData.customer?.phone) || conversation?.contact?.phone || null,
+      shippingAddress: cleanExtractedValue(llmData.customer?.shippingAddress) || conversation?.contact?.address || null,
     },
     items: extractedItems,
     notes: llmData.notes || null,
-    paymentTerm: llmData.paymentTerm || null,
+    paymentTerm: cleanExtractedValue(llmData.paymentTerm) || null,
     missingInfo: Array.from(new Set(missingInfo)),
   };
 }

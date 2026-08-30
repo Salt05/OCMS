@@ -3,7 +3,7 @@
     <div class="d-flex align-center mb-4">
       <h1 class="editorial-heading">Tài khoản Zalo</h1>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="lucide-plus" @click="showAddDialog = true">Thêm Zalo</v-btn>
+      <v-btn v-if="authStore.isAdmin" color="primary" prepend-icon="lucide-plus" @click="showAddDialog = true">Thêm Zalo</v-btn>
     </div>
 
     <!-- Health check & Reconnect monitor card -->
@@ -28,7 +28,7 @@
           </div>
         </div>
 
-        <div class="d-flex align-center">
+        <div v-if="authStore.isAdmin" class="d-flex align-center">
           <v-btn
             color="primary"
             variant="flat"
@@ -72,10 +72,7 @@
             </v-switch>
           </div>
         </template>
-        <template #item.actions="{ item }">
-          <v-btn v-if="authStore.isAdmin" icon size="small" color="primary" title="Phân quyền truy cập" @click="openAccess(item)">
-            <v-icon>lucide-shield-check</v-icon>
-          </v-btn>
+        <template v-if="authStore.isAdmin" #item.actions="{ item }">
           <v-btn icon size="small" color="success" @click="syncContacts(item.id)" title="Đồng bộ danh bạ Zalo" :loading="syncing === item.id">
             <v-icon>lucide-user-round-cog</v-icon>
           </v-btn>
@@ -146,13 +143,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Access control dialog -->
-    <ZaloAccessDialog
-      v-model="showAccessDialog"
-      :account-id="accessTarget?.id ?? ''"
-      :account-name="accessTarget?.displayName ?? accessTarget?.id ?? ''"
-    />
-
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3500" location="top">
       {{ snackbar.text }}
     </v-snackbar>
@@ -163,7 +153,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useZaloAccounts, type ZaloAccount } from '@/composables/use-zalo-accounts';
 import { useAuthStore } from '@/stores/auth';
-import ZaloAccessDialog from '@/components/settings/ZaloAccessDialog.vue';
 import { api } from '@/api/index';
 
 const {
@@ -180,10 +169,8 @@ const authStore = useAuthStore();
 const showAddDialog = ref(false);
 const syncing = ref<string | null>(null);
 const showDeleteDialog = ref(false);
-const showAccessDialog = ref(false);
 const newAccountName = ref('');
 const deleteTarget = ref<ZaloAccount | null>(null);
-const accessTarget = ref<ZaloAccount | null>(null);
 
 const countdownSeconds = ref(300); // 5 minutes
 const cooldownSeconds = ref(0);
@@ -191,14 +178,19 @@ const isReconnectingAll = ref(false);
 const snackbar = ref({ show: false, text: '', color: 'info' });
 let timerInterval: any = null;
 
-const headers = [
-  { title: 'Tên', key: 'displayName', sortable: true },
-  { title: 'Zalo UID', key: 'zaloUid' },
-  { title: 'SĐT', key: 'phone' },
-  { title: 'Trạng thái', key: 'status', sortable: true },
-  { title: 'AI Auto Chat', key: 'aiSettings', sortable: false, width: '130px' },
-  { title: 'Hành động', key: 'actions', sortable: false, align: 'end' as const },
-];
+const headers = computed(() => {
+  const list: any[] = [
+    { title: 'Tên', key: 'displayName', sortable: true },
+    { title: 'Zalo UID', key: 'zaloUid' },
+    { title: 'SĐT', key: 'phone' },
+    { title: 'Trạng thái', key: 'status', sortable: true },
+    { title: 'AI Auto Chat', key: 'aiSettings', sortable: false, width: '130px' },
+  ];
+  if (authStore.isAdmin) {
+    list.push({ title: 'Hành động', key: 'actions', sortable: false, align: 'end' as const });
+  }
+  return list;
+});
 
 async function handleToggleAiAutoReply(item: ZaloAccount, enabled: boolean) {
   const success = await updateAccountAiSettings(item.id, { aiAutoReply: enabled });
@@ -290,10 +282,7 @@ function confirmDelete(account: ZaloAccount) {
   showDeleteDialog.value = true;
 }
 
-function openAccess(account: ZaloAccount) {
-  accessTarget.value = account;
-  showAccessDialog.value = true;
-}
+
 
 async function handleDeleteAccount() {
   if (!deleteTarget.value) return;

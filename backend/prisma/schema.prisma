@@ -460,24 +460,35 @@ model CustomerProfile {
 
 // Order history synced from Odoo sale.order
 model OrderHistory {
-  id                String   @id @default(uuid())
-  orgId             String   @map("org_id")
-  odooOrderId       Int      @map("odoo_order_id")
-  orderCode         String   @map("order_code") // e.g. S02300
-  customerProfileId String?  @map("customer_profile_id")
-  odooPartnerId     Int      @map("odoo_partner_id")
-  partnerName       String?  @map("partner_name")
-  dateOrder         DateTime @map("date_order")
-  state             String   // draft, sale, done, cancel
-  amountUntaxed     Float    @default(0) @map("amount_untaxed")
-  amountTax         Float    @default(0) @map("amount_tax")
-  amountTotal       Float    @default(0) @map("amount_total")
-  invoiceStatus     String?  @map("invoice_status")
-  salesperson       String?
-  salespersonId     Int?     @map("salesperson_id")
-  note              String?  @db.Text
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(uuid())
+  orgId              String   @map("org_id")
+  odooOrderId        Int      @map("odoo_order_id")
+  orderCode          String   @map("order_code") // e.g. S02300
+  customerProfileId  String?  @map("customer_profile_id")
+  odooPartnerId      Int      @map("odoo_partner_id")
+  partnerName        String?  @map("partner_name")
+  dateOrder          DateTime @map("date_order")
+  state              String   // draft, sale, done, cancel
+  amountUntaxed      Float    @default(0) @map("amount_untaxed")
+  amountTax          Float    @default(0) @map("amount_tax")
+  amountTotal        Float    @default(0) @map("amount_total")
+  amountUndiscounted Float    @default(0) @map("amount_undiscounted")
+  margin             Float    @default(0)
+  marginPercent      Float    @default(0) @map("margin_percent")
+  invoiceStatus      String?  @map("invoice_status")
+  deliveryStatus     String?  @map("delivery_status") // pending, started, full
+  warehouseName      String?  @map("warehouse_name") // e.g. TPHCM
+  pricelistName      String?  @map("pricelist_name")
+  salesperson        String?
+  salespersonId      Int?     @map("salesperson_id")
+  expectedDate       DateTime? @map("expected_date")
+  validityDate       DateTime? @map("validity_date")
+  activitySummary    String?  @map("activity_summary")
+  pickingIds         Json?    @map("picking_ids")
+  note               String?  @db.Text
+  pdfSentAt          DateTime? @map("pdf_sent_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id])
@@ -495,10 +506,12 @@ model OrderLineHistory {
   productName    String @map("product_name")
   productSku     String? @map("product_sku")
   odooProductId  Int?   @map("odoo_product_id")
+  uomName        String? @map("uom_name")
   quantity       Float  @default(0)
   priceUnit      Float  @default(0) @map("price_unit")
   discount       Float  @default(0)
   priceSubtotal  Float  @default(0) @map("price_subtotal")
+  priceTotal     Float  @default(0) @map("price_total")
   qtyDelivered   Float  @default(0) @map("qty_delivered")
   qtyInvoiced    Float  @default(0) @map("qty_invoiced")
 
