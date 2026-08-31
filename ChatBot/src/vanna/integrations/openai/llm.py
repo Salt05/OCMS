@@ -200,10 +200,16 @@ class OpenAILlmService(LlmService):
                 for tc in streamed_tool_calls:
                     idx = getattr(tc, "index", 0) or 0
                     b = tc_builders.setdefault(
-                        idx, {"id": None, "name": None, "arguments": ""}
+                        idx, {"id": None, "name": None, "arguments": "", "extra_content": None}
                     )
                     if getattr(tc, "id", None):
                         b["id"] = tc.id
+                    extra_c = getattr(tc, "extra_content", None)
+                    if not extra_c and hasattr(tc, "model_dump"):
+                        extra_c = tc.model_dump().get("extra_content")
+                    if extra_c:
+                        b["extra_content"] = extra_c
+
                     fn = getattr(tc, "function", None)
                     if fn is not None:
                         if getattr(fn, "name", None):
@@ -232,6 +238,7 @@ class OpenAILlmService(LlmService):
                     id=b.get("id") or "tool_call",
                     name=b["name"] or "tool",
                     arguments=args_dict,
+                    extra_content=b.get("extra_content"),
                 )
             )
 
@@ -266,16 +273,17 @@ class OpenAILlmService(LlmService):
                 # Convert tool calls to OpenAI format
                 tool_calls_payload = []
                 for tc in m.tool_calls:
-                    tool_calls_payload.append(
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": json.dumps(tc.arguments),
-                            },
-                        }
-                    )
+                    tc_dict: Dict[str, Any] = {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else str(tc.arguments),
+                        },
+                    }
+                    if getattr(tc, "extra_content", None):
+                        tc_dict["extra_content"] = tc.extra_content
+                    tool_calls_payload.append(tc_dict)
                 msg["tool_calls"] = tool_calls_payload
             messages.append(msg)
 
@@ -324,11 +332,17 @@ class OpenAILlmService(LlmService):
                     args_dict = {"args": loaded}
             except Exception:
                 args_dict = {"_raw": args_raw}
+
+            extra_content = getattr(tc, "extra_content", None)
+            if not extra_content and hasattr(tc, "model_dump"):
+                extra_content = tc.model_dump().get("extra_content")
+
             tool_calls.append(
                 ToolCall(
                     id=getattr(tc, "id", "tool_call"),
                     name=getattr(fn, "name", "tool"),
                     arguments=args_dict,
+                    extra_content=extra_content,
                 )
             )
         return tool_calls

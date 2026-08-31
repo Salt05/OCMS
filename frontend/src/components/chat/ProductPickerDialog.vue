@@ -56,10 +56,31 @@
         </div>
       </v-card-title>
 
-      <!-- Dialog Body: Two Column Layout -->
-      <div class="d-flex flex-grow-1 overflow-hidden picker-layout-body">
-        <!-- Left Sidebar: Search Bar + Product Groups -->
-        <div class="picker-sidebar border-e d-flex flex-column flex-shrink-0 bg-surface-variant">
+      <!-- Dialog Body: Two Column Layout / Overlay on Mobile -->
+      <div class="d-flex flex-grow-1 overflow-hidden picker-layout-body position-relative">
+        <!-- Mobile Backdrop when sidebar overlay is open -->
+        <div
+          v-if="isMobile && showMobileSidebar"
+          class="picker-mobile-backdrop"
+          @click="showMobileSidebar = false"
+        ></div>
+
+        <!-- Left Sidebar: Search Bar + Product Groups (Floating overlay on mobile) -->
+        <div
+          class="picker-sidebar border-e d-flex flex-column flex-shrink-0 bg-surface-variant"
+          :class="{ 'is-mobile-sidebar': isMobile, 'mobile-overlay-open': isMobile && showMobileSidebar }"
+        >
+          <!-- Mobile Sidebar Header -->
+          <div v-if="isMobile" class="pa-3 border-b d-flex align-center justify-space-between bg-surface flex-shrink-0">
+            <div class="font-weight-bold text-subtitle-2 d-flex align-center gap-1.5 text-high-emphasis">
+              <v-icon size="18" color="primary">lucide-layers</v-icon>
+              Tìm kiếm & Nhóm sản phẩm
+            </div>
+            <v-btn icon size="x-small" variant="text" @click="showMobileSidebar = false">
+              <v-icon size="18">lucide-x</v-icon>
+            </v-btn>
+          </div>
+
           <!-- Search Input moved to top of left panel -->
           <div class="pa-3 border-b flex-shrink-0">
             <v-text-field
@@ -72,7 +93,7 @@
               bg-color="surface"
               class="search-input-field rounded-lg shadow-xs"
               prepend-inner-icon="lucide-search"
-              autofocus
+              :autofocus="!isMobile"
             />
           </div>
 
@@ -92,7 +113,7 @@
             <div
               class="group-nav-item rounded-lg px-3 py-2 d-flex align-center justify-space-between cursor-pointer"
               :class="{ 'group-nav-item-active': selectedGroupId === null }"
-              @click="selectedGroupId = null"
+              @click="selectGroup(null)"
             >
               <div class="d-flex align-center gap-2 overflow-hidden mr-1">
                 <v-icon size="16" :color="selectedGroupId === null ? 'primary' : 'medium-emphasis'">
@@ -116,7 +137,7 @@
               :key="grp.id"
               class="group-nav-item rounded-lg px-3 py-2 d-flex align-center justify-space-between cursor-pointer"
               :class="{ 'group-nav-item-active': selectedGroupId === grp.id }"
-              @click="selectedGroupId = grp.id"
+              @click="selectGroup(grp.id)"
             >
               <div class="d-flex align-center gap-2 overflow-hidden mr-1">
                 <v-icon size="16" :color="selectedGroupId === grp.id ? 'primary' : 'medium-emphasis'">
@@ -141,13 +162,25 @@
         <!-- Right Content: Products List -->
         <div class="picker-main-content d-flex flex-column flex-grow-1 overflow-hidden bg-surface">
           <!-- Active Category Header Bar -->
-          <div class="px-4 py-2.5 border-b bg-surface-variant d-flex align-center justify-space-between flex-shrink-0">
-            <div class="d-flex align-center gap-2 overflow-hidden">
-              <span class="text-body-2 font-weight-bold text-high-emphasis text-truncate">
+          <div class="px-3 py-2 border-b bg-surface-variant d-flex align-center justify-space-between flex-shrink-0 gap-2">
+            <div class="d-flex align-center gap-2 overflow-hidden flex-grow-1">
+              <!-- Mobile button to trigger sidebar overlay -->
+              <v-btn
+                v-if="isMobile"
+                size="small"
+                variant="tonal"
+                color="primary"
+                class="text-none font-weight-medium px-2.5 flex-shrink-0 rounded-lg"
+                prepend-icon="lucide-layers"
+                @click="showMobileSidebar = true"
+              >
+                Nhóm: {{ selectedGroupName }}
+              </v-btn>
+              <span v-else class="text-body-2 font-weight-bold text-high-emphasis text-truncate">
                 {{ selectedGroupName }}
               </span>
-              <span class="text-caption text-medium-emphasis">
-                ({{ filteredList.length }} sản phẩm)
+              <span class="text-caption text-medium-emphasis flex-shrink-0">
+                ({{ filteredList.length }} sp)
               </span>
             </div>
             <v-chip
@@ -159,7 +192,7 @@
               class="font-weight-medium"
               @click:close="searchQuery = ''"
             >
-              Từ khóa: {{ searchQuery }}
+              {{ searchQuery }}
             </v-chip>
           </div>
 
@@ -467,7 +500,12 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useDisplay } from 'vuetify';
 import { useOdoo, type OdooProduct } from '@/composables/use-odoo';
+
+const display = useDisplay();
+const isMobile = computed(() => display.smAndDown.value);
+const showMobileSidebar = ref(false);
 
 const props = defineProps<{
   modelValue: boolean;
@@ -486,6 +524,13 @@ const searchQuery = ref('');
 const selectedGroupId = ref<number | string | null>(null);
 const showDetailModal = ref(false);
 const detailProduct = ref<OdooProduct | null>(null);
+
+function selectGroup(id: number | string | null) {
+  selectedGroupId.value = id;
+  if (isMobile.value) {
+    showMobileSidebar.value = false;
+  }
+}
 
 // Map of quantities per product ID (defaults to 1)
 const quantities = ref<Record<string | number, number>>({});
@@ -584,6 +629,19 @@ function addFromDetail(product: OdooProduct) {
 
 .picker-layout-body {
   height: 520px;
+  position: relative;
+}
+
+/* Mobile Sidebar Overlay & Backdrop */
+.picker-mobile-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 90;
 }
 
 /* Left Sidebar */
@@ -594,8 +652,36 @@ function addFromDetail(product: OdooProduct) {
 }
 
 .v-theme--dark .picker-sidebar {
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: #1e1e1e;
   border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+@media (max-width: 768px) {
+  .picker-layout-body {
+    height: 75vh;
+    max-height: 560px;
+  }
+  .picker-sidebar.is-mobile-sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 85% !important;
+    max-width: 320px !important;
+    height: 100% !important;
+    z-index: 100;
+    box-shadow: 6px 0 28px rgba(0, 0, 0, 0.5);
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    background-color: #ffffff !important;
+  }
+  .v-theme--dark .picker-sidebar.is-mobile-sidebar {
+    background-color: #1e1e1e !important;
+    border-right-color: rgba(255, 255, 255, 0.12) !important;
+  }
+  .picker-sidebar.is-mobile-sidebar.mobile-overlay-open {
+    transform: translateX(0);
+  }
 }
 
 .picker-groups-list {

@@ -35,22 +35,71 @@ export class ChatbotGuardrails {
   }
 
   /**
+   * Data Privacy & Internal Security Guardrail
+   * Detects and blocks attempts to access internal financial or system secrets.
+   */
+  static checkDataPrivacySafety(userMessage: string): { isViolating: boolean; cannedResponse?: string } {
+    const msg = userMessage.toLowerCase();
+    
+    // Internal company secrets keywords
+    const forbiddenInternalKeywords = [
+      'giá vốn', 'giá nhập', 'giá gốc của công ty', 'doanh thu công ty', 'lợi nhuận công ty',
+      'mật khẩu', 'database password', 'bảng giá mật', 'danh sách khách hàng'
+    ];
+
+    if (forbiddenInternalKeywords.some(k => msg.includes(k))) {
+      return {
+        isViolating: true,
+        cannedResponse: 'Dạ em chỉ hỗ trợ tư vấn thông tin sản phẩm và chính sách bán hàng chính thức của LA PET thôi ạ. Nếu mình cần hỗ trợ thêm thông tin nào khác về sản phẩm, em sẵn sàng giải đáp nhé ạ!',
+      };
+    }
+
+    return { isViolating: false };
+  }
+
+  /**
    * Check allergy safety against product recommendations
    */
   static checkAllergyConflict(responseText: string, allergies: string[]): { conflict: boolean; conflictingAllergy?: string } {
     if (!allergies || allergies.length === 0) return { conflict: false };
 
     const lowerResp = responseText.toLowerCase();
+
     for (const allergy of allergies) {
-      const aLower = allergy.toLowerCase();
+      const aLower = allergy.toLowerCase().trim();
       if (aLower === 'gà' || aLower === 'thịt gà' || aLower === 'chicken') {
-        // Look for chicken SKUs or phrases
-        if (lowerResp.includes('quấn gà') || lowerResp.includes('thịt gà') || lowerResp.includes('c24') || lowerResp.includes('c11')) {
+        // Exclude safe negation contexts (e.g. "không chứa thịt gà", "hoàn toàn không có gà", "tránh gà")
+        const isNegated = /(?:không\s+chứa|không\s+có|hoàn\s+toàn\s+không|loại\s+trừ|tránh|không\s+dùng)\s+(?:thịt\s+)?gà/i.test(lowerResp);
+        if (isNegated) {
+          continue;
+        }
+
+        // Only trigger conflict if actively recommending or containing chicken items
+        if (
+          lowerResp.includes('quấn gà') ||
+          lowerResp.includes('vị gà') ||
+          lowerResp.includes('vị thịt gà') ||
+          lowerResp.includes('ức gà') ||
+          lowerResp.includes('thịt gà tươi')
+        ) {
           return { conflict: true, conflictingAllergy: 'thịt gà' };
         }
       }
+
+      if (aLower === 'bò' || aLower === 'thịt bò' || aLower === 'beef') {
+        const isNegated = /(?:không\s+chứa|không\s+có|hoàn\s+toàn\s+không|loại\s+trừ|tránh)\s+(?:thịt\s+)?bò/i.test(lowerResp);
+        if (isNegated) continue;
+
+        if (lowerResp.includes('vị bò') || lowerResp.includes('thịt bò') || lowerResp.includes('gân bò')) {
+          return { conflict: true, conflictingAllergy: 'thịt bò' };
+        }
+      }
+
       if (aLower === 'da bò' || aLower === 'rawhide') {
-        if (lowerResp.includes('da bò sống')) {
+        const isNegated = /(?:không\s+chứa|không\s+dùng|không\s+có|rawhide-free|không\s+da\s+bò)/i.test(lowerResp);
+        if (isNegated) continue;
+
+        if (lowerResp.includes('da bò sống') || lowerResp.includes('rawhide thô')) {
           return { conflict: true, conflictingAllergy: 'da bò' };
         }
       }

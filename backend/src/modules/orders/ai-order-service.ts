@@ -54,6 +54,22 @@ function removeVietnameseTones(str: string): string {
 
 // ── Fuzzy product matching ───────────────────────────────────────────────────
 
+/**
+ * Robustly parse a quantity value from LLM output.
+ * Handles: number, string with separators (1.100, 1,100), null/undefined.
+ */
+function parseQuantity(val: any): number {
+  if (typeof val === 'number' && !isNaN(val)) return Math.floor(val);
+  if (typeof val === 'string') {
+    // Remove thousand separators (1.100 → 1100, 1,100 → 1100)
+    const cleaned = val.replace(/[.,\s]/g, '');
+    const parsed = parseInt(cleaned, 10);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return 1;
+}
+
+
 interface ProductCacheRow {
   id: string;
   odooId: number;
@@ -415,6 +431,11 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
   const llmItems = llmData.items || [];
   const missingInfo: string[] = Array.isArray(llmData.missingInfo) ? [...llmData.missingInfo] : [];
 
+  // Debug: log raw LLM item quantities for troubleshooting
+  if (llmItems.length > 0) {
+    logger.info(`[ai-order] LLM extracted ${llmItems.length} items: ${llmItems.map((it: any) => `${it.matchedSku || it.productNameRaw}: qty=${JSON.stringify(it.quantity)} (type: ${typeof it.quantity})`).join(', ')}`);
+  }
+
   for (const item of llmItems) {
     const rawName = item.productNameRaw || item.matchedProductName || '';
     const llmSku = (item.matchedSku || '').trim();
@@ -458,7 +479,7 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
         matchedProductOdooId: bestMatch.product.odooId,
         matchedProductName: bestMatch.product.name,
         sku: bestMatch.product.sku || llmSku || null,
-        quantity: Math.max(1, parseInt(item.quantity) || 1),
+        quantity: Math.max(1, parseQuantity(item.quantity)),
         priceUnit: bestMatch.product.wholesalePrice || bestMatch.product.listPrice || 0,
         discount: 0,
         confidence: bestMatch.confidence,
@@ -588,7 +609,7 @@ TRẢ VỀ JSON:
         matchedProductOdooId: bestMatch.product.odooId,
         matchedProductName: bestMatch.product.name,
         sku: bestMatch.product.sku || llmSku || null,
-        quantity: Math.max(1, parseInt(item.quantity) || 1),
+        quantity: Math.max(1, parseQuantity(item.quantity)),
         priceUnit: bestMatch.product.wholesalePrice || bestMatch.product.listPrice || 0,
         discount: 0,
         confidence: bestMatch.confidence,
@@ -750,7 +771,7 @@ TRẢ VỀ JSON DUY NHẤT:
         matchedProductOdooId: bestMatch.product.odooId,
         matchedProductName: bestMatch.product.name,
         sku: bestMatch.product.sku || llmSku || null,
-        quantity: Math.max(0, parseInt(item.quantity) || 0),
+        quantity: Math.max(0, parseQuantity(item.quantity)),
         priceUnit: bestMatch.product.wholesalePrice || bestMatch.product.listPrice || 0,
         discount: 0,
         confidence: bestMatch.confidence,

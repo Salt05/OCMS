@@ -172,7 +172,17 @@ const showDeleteDialog = ref(false);
 const newAccountName = ref('');
 const deleteTarget = ref<ZaloAccount | null>(null);
 
-const countdownSeconds = ref(300); // 5 minutes
+function getSecondsUntilNextHealthCheck(): number {
+  const now = new Date();
+  const minutes = now.getMinutes();
+  const seconds = now.getSeconds();
+  const minutesPastLastRun = minutes % 5;
+  const secondsPastLastRun = minutesPastLastRun * 60 + seconds;
+  const remaining = 300 - secondsPastLastRun;
+  return remaining <= 0 ? 300 : remaining;
+}
+
+const countdownSeconds = ref(getSecondsUntilNextHealthCheck());
 const cooldownSeconds = ref(0);
 const isReconnectingAll = ref(false);
 const snackbar = ref({ show: false, text: '', color: 'info' });
@@ -244,7 +254,7 @@ async function handleManualReconnectAll() {
     };
   } finally {
     await fetchAccounts();
-    countdownSeconds.value = 300; // Reset 5-minute countdown
+    countdownSeconds.value = getSecondsUntilNextHealthCheck();
     isReconnectingAll.value = false;
   }
 }
@@ -297,13 +307,14 @@ onMounted(() => {
   fetchAccounts();
   setupSocket();
 
+  countdownSeconds.value = getSecondsUntilNextHealthCheck();
+
   timerInterval = setInterval(() => {
-    if (countdownSeconds.value > 0) {
-      countdownSeconds.value--;
-    } else {
-      countdownSeconds.value = 300;
+    const remaining = getSecondsUntilNextHealthCheck();
+    if (remaining === 300 || remaining === 1) {
       fetchAccounts();
     }
+    countdownSeconds.value = remaining;
 
     if (cooldownSeconds.value > 0) {
       cooldownSeconds.value--;

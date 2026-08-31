@@ -796,6 +796,41 @@ function extractThinkingFromText(text: string): { thinking: string | null; clean
   return { thinking: null, cleanContent: text };
 }
 
+// Helper to extract [ORDER_DRAFT]...[/ORDER_DRAFT] JSON payload from text
+function extractOrderDraftFromText(text: string): { draft: any | null; cleanContent: string } {
+  if (!text || typeof text !== 'string') return { draft: null, cleanContent: text };
+  const draftRegex = /\[ORDER_DRAFT\]\s*([\s\S]*?)\s*\[\/ORDER_DRAFT\]/i;
+  const match = text.match(draftRegex);
+  if (match && match[1]) {
+    let jsonStr = match[1].trim();
+    // 1. Remove markdown code blocks if wrapped in ```json or ```
+    jsonStr = jsonStr.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    // 2. Remove single-line comments // ...
+    jsonStr = jsonStr.replace(/\/\/.*/g, '');
+    // 3. Remove multi-line comments /* ... */
+    jsonStr = jsonStr.replace(/\/\*[\s\S]*?\*\//g, '');
+    // 4. Remove trailing commas before } or ]
+    jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
+
+    let draftObj: any = null;
+    try {
+      draftObj = JSON.parse(jsonStr);
+    } catch {
+      try {
+        draftObj = Function('"use strict";return (' + jsonStr + ')')();
+      } catch (e2) {
+        console.warn('Failed to parse ORDER_DRAFT JSON:', e2);
+      }
+    }
+
+    if (draftObj) {
+      const cleanContent = text.replace(draftRegex, '').trim();
+      return { draft: draftObj, cleanContent };
+    }
+  }
+  return { draft: null, cleanContent: text };
+}
+
 // Clean internal tool outputs / raw CSV dump from LLM response
 function cleanAssistantText(text: string): string {
   if (!text) return '';
@@ -808,6 +843,7 @@ function cleanAssistantText(text: string): string {
   }
   let cleaned = text;
   cleaned = cleaned.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '');
+  cleaned = cleaned.replace(/\[ORDER_DRAFT\][\s\S]*?(?:\[\/ORDER_DRAFT\]|$)/gi, '');
   cleaned = cleaned.replace(/Created visualization from '[^']+' \(\d+ rows, \d+ columns\)\.?/gi, '');
   cleaned = cleaned.replace(/\(Results truncated to \d+ characters[\s\S]*?\)/gi, '');
   cleaned = cleaned.replace(/\*{0,2}Results saved to file:\s*[^\n\r*]+\*{0,2}/gi, '');
@@ -1089,6 +1125,7 @@ async function loadSession(sessionId: string) {
           const rawContent = m.content || '';
           let thinking = m.metadata?.thinking || m.metadata?.orderDraft?.thinking || null;
           let content = rawContent;
+          let orderDraft = m.metadata?.orderDraft || null;
           if (m.role === 'user') {
             content = cleanDisplayUserMessage(rawContent);
           } else {
@@ -1096,7 +1133,11 @@ async function loadSession(sessionId: string) {
             if (extracted.thinking) {
               thinking = extracted.thinking;
             }
-            content = cleanAssistantText(extracted.cleanContent);
+            const draftExtracted = extractOrderDraftFromText(extracted.cleanContent);
+            if (draftExtracted.draft) {
+              orderDraft = draftExtracted.draft;
+            }
+            content = cleanAssistantText(draftExtracted.cleanContent);
           }
           return {
             role: m.role,
@@ -1105,7 +1146,7 @@ async function loadSession(sessionId: string) {
             chart: m.chart || null,
             thinking,
             showThinking: false,
-            orderDraft: m.metadata?.orderDraft || null,
+            orderDraft,
           };
         });
       } else {
@@ -1650,15 +1691,51 @@ async function sendMessage() {
       }
     }
 
-    // Final pass on full accumulated content to extract thinking / clean content
+    // Final pass on full accumulated content to extract thinking / order draft / clean content
     if (messages.value[assistantMsgIndex].content) {
-      const { thinking, cleanContent } = extractThinkingFromText(messages.value[assistantMsgIndex].content);
+      const { thinking, cleanContent: afterThink } = extractThinkingFromText(messages.value[assistantMsgIndex].content);
       if (thinking && !messages.value[assistantMsgIndex].thinking) {
         messages.value[assistantMsgIndex].thinking = thinking;
       }
-      if (cleanContent) {
-        messages.value[assistantMsgIndex].content = cleanContent;
+      const { draft, cleanContent: afterDraft } = extractOrderDraftFromText(afterThink);
+      if (draft && !messages.value[assistantMsgIndex].orderDraft) {
+        const enrichedItems = (draft.items || []).map((it: any) => {
+          const prodObj = it.product || it;
+          let matched = products.value.find(p => Number(p.odoo_id || p.id) === Number(prodObj.id || prodObj.odoo_id)) || null;
+          if (!matched && (prodObj.sku || prodObj.default_code)) {
+            const s = (prodObj.sku || prodObj.default_code || '').toLowerCase();
+            matched = products.value.find(p => (p.default_code || p.sku || '').toLowerCase() === s) || null;
+          }
+          return {
+            product: matched ? { ...matched, id: Number(matched.odoo_id || matched.id) } : {
+              id: prodObj.id || prodObj.odoo_id || 1001,
+              name: prodObj.name || it.productNameRaw || 'Sản phẩm',
+              sku: prodObj.sku || prodObj.default_code || it.sku || null,
+              default_code: prodObj.default_code || prodObj.sku || null,
+              list_price: prodObj.list_price || it.price || 0,
+            },
+            productNameRaw: it.productNameRaw || prodObj.name || 'Sản phẩm',
+            sku: prodObj.sku || prodObj.default_code || it.sku || null,
+            qty: Number(it.qty || it.quantity || 1),
+            price: Number(it.price || it.priceUnit || prodObj.list_price || 0),
+            discount: Number(it.discount || 0),
+          };
+        });
+
+        messages.value[assistantMsgIndex].orderDraft = {
+          thinking: messages.value[assistantMsgIndex].thinking || null,
+          customer: {
+            name: draft.customer?.name || customerName.value || null,
+            phone: draft.customer?.phone || customerPhone.value || null,
+            shippingAddress: draft.customer?.shippingAddress || customerAddress.value || null,
+          },
+          items: enrichedItems,
+          notes: draft.notes || null,
+          missingInfo: draft.missingInfo || [],
+          orderCreated: false,
+        };
       }
+      messages.value[assistantMsgIndex].content = cleanAssistantText(afterDraft);
     }
 
     // Fallback if content is still empty

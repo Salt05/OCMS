@@ -2,8 +2,35 @@ import { ref } from 'vue';
 import { io, Socket } from 'socket.io-client';
 import { api } from '@/api';
 
+export interface NewOrderNotification {
+  show: boolean;
+  title: string;
+  message: string;
+  orderId?: string;
+  partnerName?: string;
+  amount?: number;
+}
+
 const unreadChatCount = ref(0);
 const pendingOrdersCount = ref(0);
+const orderBadgePulsing = ref(false);
+
+export function triggerBadgePulse() {
+  orderBadgePulsing.value = false;
+  setTimeout(() => {
+    orderBadgePulsing.value = true;
+    setTimeout(() => {
+      orderBadgePulsing.value = false;
+    }, 750);
+  }, 30);
+}
+
+export const newOrderNotification = ref<NewOrderNotification>({
+  show: false,
+  title: 'Có Đơn Hàng AI Mới Cần Xác Nhận!',
+  message: '',
+});
+
 let socket: Socket | null = null;
 let pollTimer: any = null;
 
@@ -20,7 +47,11 @@ export function useAppBadges() {
   async function fetchPendingOrdersCount() {
     try {
       const res = await api.get('/orders/pending-count');
+      const prev = pendingOrdersCount.value;
       pendingOrdersCount.value = res.data.count || 0;
+      if (pendingOrdersCount.value > prev && pendingOrdersCount.value > 0) {
+        triggerBadgePulse();
+      }
     } catch {
       // ignore
     }
@@ -31,6 +62,25 @@ export function useAppBadges() {
       fetchUnreadChatCount(),
       fetchPendingOrdersCount(),
     ]);
+  }
+
+  function triggerNewOrderPopup(data?: any) {
+    const customer = data?.draftOrder?.customer?.name || data?.draftOrder?.recipientName || data?.partnerName;
+    const total = data?.draftOrder?.subtotal || data?.amountTotal;
+    const totalStr = total ? ` (${Number(total).toLocaleString('vi-VN')} đ)` : '';
+
+    triggerBadgePulse();
+
+    newOrderNotification.value = {
+      show: true,
+      title: '🎉 Có Đơn Hàng AI Mới Cần Duyệt!',
+      message: customer
+        ? `Khách hàng ${customer} vừa chốt đơn${totalStr}. Bấm để xem và duyệt sang Odoo!`
+        : `Chatbot AI vừa ghi nhận một đơn hàng mới${totalStr}. Vui lòng kiểm tra và duyệt!`,
+      orderId: data?.conversationId || data?.orderId || data?.id,
+      partnerName: customer,
+      amount: total,
+    };
   }
 
   function setupSocketListeners() {
@@ -57,12 +107,20 @@ export function useAppBadges() {
         fetchPendingOrdersCount();
       });
 
-      socket.on('order:created', () => {
+      socket.on('order:created', (data: any) => {
         fetchPendingOrdersCount();
+        triggerNewOrderPopup(data);
       });
 
-      socket.on('chat:state_updated', () => {
+      socket.on('chat:state_updated', (data: any) => {
         fetchPendingOrdersCount();
+        if (data?.currentState === 'CONFIRMATION') {
+          triggerNewOrderPopup(data);
+        }
+      });
+
+      socket.on('chat:order_draft_updated', () => {
+        // Internal cart preview update; do not trigger new order popup until customer confirms
       });
     } catch (e) {
       console.warn('[useAppBadges] Socket init error:', e);
@@ -78,9 +136,13 @@ export function useAppBadges() {
   return {
     unreadChatCount,
     pendingOrdersCount,
+    orderBadgePulsing,
+    newOrderNotification,
     fetchUnreadChatCount,
     fetchPendingOrdersCount,
     fetchAllBadges,
     setupSocketListeners,
+    triggerNewOrderPopup,
+    triggerBadgePulse,
   };
 }

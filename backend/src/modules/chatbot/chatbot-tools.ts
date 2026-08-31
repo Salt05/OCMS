@@ -7,6 +7,7 @@ import { odooService } from '../odoo/odoo-service.js';
 import { knowledgeService } from './knowledge-service.js';
 import { extractOrderFromConversation } from '../orders/ai-order-service.js';
 import { ProductGroundingEngine } from './product-grounding.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
 import { logger } from '../../shared/utils/logger.js';
 
 export const CHATBOT_TOOL_DEFINITIONS = [
@@ -139,13 +140,29 @@ export const CHATBOT_TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'extract_order_draft',
-      description: 'Bóc tách danh sách món, số lượng, địa chỉ và SĐT từ ngữ cảnh hội thoại thành phiếu đơn hàng nháp.',
+      description: 'Bóc tách danh sách món, số lượng, địa chỉ và SĐT từ ngữ cảnh hội thoại thành phiếu đơn hàng nháp để gửi tóm tắt cho khách kiểm tra.',
       parameters: {
         type: 'object',
         properties: {
           instruction: {
             type: 'string',
             description: 'Ghi chú thêm hoặc yêu cầu chỉnh sửa giỏ hàng (nếu có)',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'confirm_customer_order',
+      description: 'Chốt đơn hàng sau khi khách hàng đã kiểm tra thông tin và nhắn xác nhận đồng ý (ví dụ: "Đồng ý", "Xác nhận", "Ok em", "Chốt đơn"). Chuyển đơn sang trạng thái CONFIRMATION để nhân viên duyệt sang Odoo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          note: {
+            type: 'string',
+            description: 'Ghi chú thêm về đơn hàng từ khách (nếu có)',
           },
         },
       },
@@ -186,6 +203,21 @@ export const CHATBOT_TOOL_DEFINITIONS = [
           },
         },
         required: ['reason'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'lookup_odoo_customer',
+      description: 'Tra cứu hồ sơ khách hàng Odoo ERP (theo SĐT, tên hoặc mã đối tác odooPartnerId) để tự động lấy địa chỉ giao hàng, khu vực/zone, công nợ, nhân viên phụ trách mà không bắt khách nhập lại.',
+      parameters: {
+        type: 'object',
+        properties: {
+          phone: { type: 'string', description: 'Số điện thoại của khách' },
+          odoo_partner_id: { type: 'number', description: 'Mã ID khách hàng trên Odoo nếu có' },
+          name: { type: 'string', description: 'Tên khách hàng hoặc tên cửa hàng/đại lý' },
+        },
       },
     },
   },
@@ -248,8 +280,14 @@ export class ChatbotToolExecutor {
         case 'extract_order_draft':
           return this.extractOrderDraft(args.instruction);
 
+        case 'confirm_customer_order':
+          return this.confirmCustomerOrder(args.note);
+
         case 'create_lead_contact':
           return this.createLeadContact(args);
+
+        case 'lookup_odoo_customer':
+          return this.lookupOdooCustomer(args);
 
         case 'handoff_to_human':
           return this.handoffToHuman(args.reason, args.urgency);
@@ -500,21 +538,141 @@ export class ChatbotToolExecutor {
     };
   }
 
+  private async getCurrentContact(): Promise<any> {
+    if (this.contactId) {
+      const contact = await prisma.contact.findFirst({
+        where: { id: this.contactId, orgId: this.orgId },
+      });
+      if (contact) return contact;
+    }
+
+    if (this.conversationId) {
+      const conv = await prisma.conversation.findFirst({
+        where: { id: this.conversationId, orgId: this.orgId },
+        include: { contact: true },
+      });
+      if (conv?.contact) return conv.contact;
+    }
+
+    return null;
+  }
+
   private async getOrderStatus(phone?: string, orderCode?: string) {
-    const where: any = { orgId: this.orgId };
+    const currentContact = await this.getCurrentContact();
+
+    const contactPhones: string[] = [];
+    if (currentContact?.phone) {
+      const clean = currentContact.phone.replace(/\D/g, '');
+      if (clean.length >= 9) contactPhones.push(clean.slice(-9));
+    }
+    if (phone) {
+      const cleanInput = phone.replace(/\D/g, '');
+      if (cleanInput.length >= 9) contactPhones.push(cleanInput.slice(-9));
+    }
+
+    const contactName = (currentContact?.fullName || '').trim().toLowerCase();
+    const contactOdooId = currentContact?.customerId ? parseInt(currentContact.customerId, 10) : null;
+
     if (orderCode) {
-      where.orderCode = { contains: orderCode.trim(), mode: 'insensitive' };
+      const cleanOrderCode = orderCode.trim();
+      const order = await prisma.orderHistory.findFirst({
+        where: {
+          orgId: this.orgId,
+          orderCode: { contains: cleanOrderCode, mode: 'insensitive' },
+        },
+        include: { lines: true, customerProfile: true },
+      });
+
+      if (!order) {
+        return {
+          found: false,
+          message: `Dạ hệ thống không tìm thấy đơn hàng ${cleanOrderCode} trong lịch sử mua hàng của mình ạ. Mình vui lòng kiểm tra lại mã đơn hàng giúp em nhé!`,
+        };
+      }
+
+      // ── STRICT CUSTOMER OWNERSHIP VERIFICATION ──
+      let isOwner = false;
+
+      // 1. Check matching Odoo Partner ID / Customer Profile ID
+      if (contactOdooId && !isNaN(contactOdooId)) {
+        if (order.odooPartnerId === contactOdooId || order.customerProfile?.odooPartnerId === contactOdooId) {
+          isOwner = true;
+        }
+      }
+      if (currentContact?.customerId && order.customerProfileId === currentContact.customerId) {
+        isOwner = true;
+      }
+
+      // 2. Check matching Phone numbers
+      const orderPhone = (order.customerProfile?.phone || '').replace(/\D/g, '');
+      if (orderPhone && contactPhones.some(p => orderPhone.includes(p))) {
+        isOwner = true;
+      }
+
+      // 3. Check matching Full Name
+      const orderPartnerName = (order.partnerName || '').trim().toLowerCase();
+      if (contactName && orderPartnerName && (contactName.includes(orderPartnerName) || orderPartnerName.includes(contactName))) {
+        isOwner = true;
+      }
+
+      // If the order DOES NOT belong to the current customer -> Block access and return not found!
+      if (!isOwner) {
+        logger.warn(
+          `[chatbot-tools] Security Guardrail: Blocked unauthorized order lookup! Customer "${currentContact?.fullName || 'Unknown'}" (ID: ${currentContact?.id}) tried to access order "${order.orderCode}" belonging to "${order.partnerName}"`
+        );
+        return {
+          found: false,
+          message: `Dạ hệ thống không tìm thấy đơn hàng ${cleanOrderCode} trong lịch sử mua hàng của mình ạ. Mình vui lòng kiểm tra lại mã đơn hàng giúp em nhé!`,
+        };
+      }
+
+      // Customer IS the owner -> return their own order details
+      return {
+        found: true,
+        orders: [{
+          order_code: order.orderCode,
+          partner_name: order.partnerName,
+          date_order: order.dateOrder.toISOString().split('T')[0],
+          state: order.state === 'sale' ? 'Đang giao hàng' : (order.state === 'done' ? 'Đã hoàn tất' : 'Đang xử lý đóng gói'),
+          total_amount: `${order.amountTotal.toLocaleString('vi-VN')} đ`,
+          items: order.lines.map((l: any) => `${l.productName} (x${l.quantity})`),
+        }],
+      };
+    }
+
+    // If no orderCode is specified, lookup the customer's own recent orders only
+    const userOrConditions: any[] = [];
+    if (contactOdooId && !isNaN(contactOdooId)) userOrConditions.push({ odooPartnerId: contactOdooId });
+    if (currentContact?.customerId) userOrConditions.push({ customerProfileId: currentContact.customerId });
+    if (contactName && contactName.length >= 2) userOrConditions.push({ partnerName: { contains: contactName, mode: 'insensitive' } });
+    if (contactPhones.length > 0) {
+      for (const cp of contactPhones) {
+        userOrConditions.push({ customerProfile: { phone: { contains: cp } } });
+      }
+    }
+
+    if (userOrConditions.length === 0) {
+      return {
+        found: false,
+        message: 'Dạ hiện tại em chưa tìm thấy đơn hàng nào trong lịch sử mua hàng của mình ạ. Mình có thể cung cấp mã đơn hàng hoặc SĐT đặt hàng để em tra cứu giúp mình nhé!',
+      };
     }
 
     const orders = await prisma.orderHistory.findMany({
-      where,
+      where: {
+        orgId: this.orgId,
+        OR: userOrConditions,
+      },
       orderBy: { dateOrder: 'desc' },
       take: 3,
       include: { lines: true },
     });
 
     if (!orders || orders.length === 0) {
-      return { found: false, message: 'Chưa tìm thấy thông tin đơn hàng tương ứng.' };
+      return {
+        found: false,
+        message: 'Dạ hiện tại em chưa tìm thấy đơn hàng nào trong lịch sử mua hàng của mình ạ.',
+      };
     }
 
     return {
@@ -523,7 +681,7 @@ export class ChatbotToolExecutor {
         order_code: o.orderCode,
         partner_name: o.partnerName,
         date_order: o.dateOrder.toISOString().split('T')[0],
-        state: o.state === 'sale' ? 'Đang giao hàng' : (o.state === 'done' ? 'Đã hoàn tất' : 'Đang xử lý'),
+        state: o.state === 'sale' ? 'Đang giao hàng' : (o.state === 'done' ? 'Đã hoàn tất' : 'Đang xử lý đóng gói'),
         total_amount: `${o.amountTotal.toLocaleString('vi-VN')} đ`,
         items: o.lines.map((l: any) => `${l.productName} (x${l.quantity})`),
       })),
@@ -532,12 +690,201 @@ export class ChatbotToolExecutor {
 
   private async extractOrderDraft(instruction?: string) {
     const draft = await extractOrderFromConversation(this.orgId, this.conversationId, instruction);
+    
+    if (draft && draft.items && draft.items.length > 0) {
+      const subtotal = draft.items.reduce((sum: number, it: any) => sum + ((it.quantity || 1) * (it.priceUnit || 0)), 0);
+      const savedDraft = {
+        items: draft.items.map((it: any) => ({
+          matchedProductOdooId: it.matchedProductOdooId,
+          sku: it.sku || '',
+          name: it.matchedProductName || it.productNameRaw || '',
+          productNameRaw: it.productNameRaw,
+          quantity: Number(it.quantity) || 1,
+          qty: Number(it.quantity) || 1,
+          priceUnit: it.priceUnit || 0,
+          price: it.priceUnit || 0,
+          discount: it.discount || 0,
+        })),
+        customer: {
+          name: draft.customer?.name || null,
+          phone: draft.customer?.phone || null,
+          shippingAddress: draft.customer?.shippingAddress || null,
+        },
+        recipientName: draft.customer?.name || undefined,
+        phone: draft.customer?.phone || undefined,
+        address: draft.customer?.shippingAddress || undefined,
+        subtotal,
+        amountTotal: subtotal,
+        paymentTerm: draft.paymentTerm || (draft as any).payment_term || null,
+        notes: draft.notes || null,
+        missingInfo: draft.missingInfo || [],
+      };
+
+      if (!savedDraft.paymentTerm) {
+        if (!savedDraft.missingInfo.includes('Điều khoản thanh toán')) {
+          savedDraft.missingInfo.push('Điều khoản thanh toán');
+        }
+      }
+
+      try {
+        await prisma.conversationAiState.upsert({
+          where: { conversationId: this.conversationId },
+          create: {
+            orgId: this.orgId,
+            conversationId: this.conversationId,
+            draftOrder: savedDraft,
+          },
+          update: {
+            draftOrder: savedDraft,
+          },
+        });
+
+        await prisma.conversation.update({
+          where: { id: this.conversationId },
+          data: { currentState: 'ORDER_COLLECTION' },
+        });
+
+        // Realtime notifications to frontend live cart preview (NOT approval queue yet)
+        zaloPool.getIO()?.emit('chat:order_draft_updated', {
+          conversationId: this.conversationId,
+          draftOrder: savedDraft,
+        });
+        zaloPool.getIO()?.emit('chat:state_updated', {
+          conversationId: this.conversationId,
+          currentState: 'ORDER_COLLECTION',
+        });
+      } catch (dbErr) {
+        logger.error('[chatbot-tools] Error persisting draft order:', dbErr);
+      }
+
+      const paymentTermNote = savedDraft.paymentTerm
+        ? `Điều khoản thanh toán: ${savedDraft.paymentTerm}.`
+        : `CẢNH BÁO: ĐƠN HÀNG ĐANG THIẾU ĐIỀU KHOẢN THANH TOÁN! BẮT BUỘC bạn phải hỏi ngắn gọn: "Dạ cho em biết mình muốn thanh toán ngay hay trong bao lâu ạ?". TUYỆT ĐỐI KHÔNG ĐƯỢC BẢO KHÁCH XÁC NHẬN CHỐT ĐƠN KHI CHƯA CÓ ĐIỀU KHOẢN THANH TOÁN!`;
+
+      return {
+        success: true,
+        draft: savedDraft,
+        subtotal,
+        formatted_total: `${subtotal.toLocaleString('vi-VN')} đ`,
+        summary: `Đã bóc tách đơn hàng thành công gồm ${savedDraft.items.length} sản phẩm, tổng tiền: ${subtotal.toLocaleString('vi-VN')} đ. ${paymentTermNote} Khách nhận: ${savedDraft.recipientName || 'Chưa rõ'}, SĐT: ${savedDraft.phone || 'Chưa rõ'}, Địa chỉ: ${savedDraft.address || 'Chưa rõ'}.`,
+      };
+    }
+
     return {
       success: true,
       draft,
       summary: draft.customer?.name
         ? `Đơn hàng cho ${draft.customer.name}, SĐT: ${draft.customer.phone || 'Chưa rõ'}, Địa chỉ: ${draft.customer.shippingAddress || 'Chưa rõ'}. Gồm ${draft.items.length} món.`
         : `Đã ghi nhận ${draft.items.length} món. Còn thiếu: ${draft.missingInfo.join(', ')}.`,
+    };
+  }
+
+  public async confirmCustomerOrder(note?: string) {
+    try {
+      const conv = await prisma.conversation.findUnique({
+        where: { id: this.conversationId },
+        include: { aiState: true, contact: true },
+      });
+
+      if (!conv || !conv.aiState?.draftOrder) {
+        return { success: false, message: 'Chưa có đơn hàng nháp để xác nhận' };
+      }
+
+      const draft = (conv.aiState.draftOrder as any) || {};
+      draft.isConfirmedByCustomer = true;
+      if (note) draft.notes = note;
+
+      await prisma.conversationAiState.update({
+        where: { conversationId: this.conversationId },
+        data: { draftOrder: draft },
+      });
+
+      await prisma.conversation.update({
+        where: { id: this.conversationId },
+        data: { currentState: 'CONFIRMATION' },
+      });
+
+      // Realtime notification to staff
+      zaloPool.getIO()?.emit('chat:order_draft_updated', {
+        conversationId: this.conversationId,
+        draftOrder: draft,
+      });
+      zaloPool.getIO()?.emit('chat:state_updated', {
+        conversationId: this.conversationId,
+        currentState: 'CONFIRMATION',
+      });
+      zaloPool.getIO()?.emit('order:created', {
+        conversationId: this.conversationId,
+        partnerName: draft.customer?.name || conv.contact?.fullName || 'Khách hàng',
+        amountTotal: draft.amountTotal || draft.subtotal || 0,
+      });
+      zaloPool.getIO()?.emit('order:updated');
+
+      return {
+        success: true,
+        message: 'Đã ghi nhận đơn hàng thành công và chuyển sang trạng thái chờ nhân viên kiểm tra duyệt. Hãy phản hồi ngắn gọn đúng 3 nội dung: thông báo đã ghi nhận đơn, đơn đang chờ nhân viên kiểm tra xác nhận, và gửi lời cảm ơn. Tuyệt đối không nói đơn đã chuyển sang bộ phận đóng gói/giao hàng.',
+      };
+    } catch (err: any) {
+      logger.error('[chatbot-tools] Error confirming customer order:', err);
+      return { success: false, error: err.message };
+    }
+  }
+
+  private async lookupOdooCustomer(args: { phone?: string; odoo_partner_id?: number; name?: string }) {
+    const cleanPhone = (args.phone || '').trim().replace(/[^0-9]/g, '');
+    const partnerId = args.odoo_partner_id;
+    const cleanName = (args.name || '').trim();
+
+    const orClauses: any[] = [];
+    if (partnerId && !isNaN(partnerId)) orClauses.push({ odooPartnerId: partnerId });
+    if (cleanPhone && cleanPhone.length >= 7) {
+      orClauses.push({ phone: { contains: cleanPhone } });
+      orClauses.push({ mobile: { contains: cleanPhone } });
+    }
+    if (cleanName && cleanName.length >= 3) {
+      orClauses.push({ name: { contains: cleanName, mode: 'insensitive' } });
+    }
+
+    if (orClauses.length === 0) {
+      return { found: false, message: 'Vui lòng cung cấp SĐT, tên hoặc mã ID khách hàng để tra cứu.' };
+    }
+
+    const profile = await prisma.customerProfile.findFirst({
+      where: {
+        orgId: this.orgId,
+        OR: orClauses,
+      },
+    });
+
+    if (!profile) {
+      return { found: false, message: 'Chưa tìm thấy hồ sơ khách hàng khớp trên hệ thống Odoo ERP.' };
+    }
+
+    // Auto-link to Contact if contactId exists
+    if (this.contactId) {
+      await prisma.contact.update({
+        where: { id: this.contactId },
+        data: {
+          customerId: String(profile.odooPartnerId),
+          fullName: profile.name || undefined,
+          phone: profile.phone || profile.mobile || undefined,
+          address: profile.fullAddress || profile.street || undefined,
+          zone: profile.zone || undefined,
+          salesperson: profile.salesperson || undefined,
+        },
+      });
+    }
+
+    return {
+      found: true,
+      partner_id: profile.odooPartnerId,
+      name: profile.name,
+      phone: profile.phone || profile.mobile || 'Chưa có',
+      address: profile.fullAddress || profile.street || 'Chưa có',
+      city: profile.city || undefined,
+      zone: profile.zone || 'Chưa phân vùng',
+      salesperson: profile.salesperson || 'Chưa phân bổ',
+      payment_term: profile.paymentTermName || 'Thanh toán khi nhận hàng (COD)',
     };
   }
 

@@ -45,6 +45,7 @@ import { quickMessageRoutes } from './modules/quick-messages/quick-message-route
 import { odooRoutes } from './modules/odoo/odoo-routes.js';
 import { syncRoutes } from './modules/sync/sync-routes.js';
 import { chatbotRoutes } from './modules/chatbot/chatbot-routes.js';
+import { chatbotTestRoutes } from './modules/chatbot-test/chatbot-test-routes.js';
 import { odooSyncService } from './modules/sync/odoo-sync-service.js';
 import cron from 'node-cron';
 
@@ -188,6 +189,7 @@ async function bootstrap() {
   await app.register(odooRoutes);
   await app.register(syncRoutes);
   await app.register(chatbotRoutes, { prefix: '/api/v1/chatbot' });
+  await app.register(chatbotTestRoutes);
 
   // Liveness/readiness probe — also checks DB connectivity
   app.get('/health', async () => {

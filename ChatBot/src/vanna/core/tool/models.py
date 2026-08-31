@@ -23,6 +23,9 @@ class ToolCall(BaseModel):
     id: str = Field(description="Unique identifier for this tool call")
     name: str = Field(description="Name of the tool to execute")
     arguments: Dict[str, Any] = Field(description="Raw arguments from LLM")
+    extra_content: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional provider-specific payload e.g. Gemini thought_signature"
+    )
 
 
 class ToolContext(BaseModel):

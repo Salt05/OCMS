@@ -1,44 +1,63 @@
 <template>
-  <div class="chat-container d-flex" style="height: 100vh;">
-    <!-- Conversation list — resizable -->
-    <div class="chat-panel-left" :style="{ width: leftWidth + 'px' }">
+  <div class="chat-container d-flex" style="height: 100%; width: 100%;">
+    <!-- ─────────────────────────────────────────────────────────────
+         1. CONVERSATION LIST (Desktop: Left panel | Mobile: Fullscreen when no active chat)
+         ───────────────────────────────────────────────────────────── -->
+    <div
+      v-if="!isMobile || !selectedConvId"
+      class="chat-panel-left"
+      :class="{ 'is-mobile-panel': isMobile }"
+      :style="isMobile ? { width: '100%' } : { width: leftWidth + 'px' }"
+    >
       <ConversationList
         :conversations="conversations"
         :selected-id="selectedConvId"
         :loading="loadingConvs"
         v-model:search="searchQuery"
-        @select="selectConversation"
+        @select="onSelectConversation"
         @filter-account="onFilterAccount"
       />
-      <!-- Resize handle -->
-      <div class="resize-handle" @mousedown="startResize('left', $event)" />
+      <!-- Resize handle (Desktop only) -->
+      <div v-if="!isMobile" class="resize-handle" @mousedown="startResize('left', $event)" />
     </div>
 
-    <!-- Message thread — flexible center -->
-    <MessageThread
-      :conversation="selectedConv"
-      :messages="messages"
-      :loading="loadingMsgs"
-      :loading-more="loadingMoreMsgs"
-      :has-more="hasMoreMessages"
-      :sending="sendingMsg"
-      @send="sendMessage"
-      @send-attachment="sendAttachment"
-      @react="sendReaction"
-      @load-more="loadMoreMessages"
-      @toggle-contact-panel="toggleContactPanel"
-      @open-order-panel="openOrderPanel"
-      @pause-ai="pauseAi"
-      @resume-ai="resumeAi"
-      @toggle-ai="toggleAi"
-      :show-contact-panel="showContactPanel && !showOrderPanel"
-      :show-order-panel="showOrderPanel"
-      style="flex: 1; min-width: 300px;"
-    />
-
-    <!-- Right Panels: Contact Info OR Order Form OR Chatbot -->
+    <!-- ─────────────────────────────────────────────────────────────
+         2. MESSAGE THREAD (Desktop: Center panel | Mobile: Fullscreen when chat active)
+         ───────────────────────────────────────────────────────────── -->
     <div
-      v-if="(showContactPanel || showOrderPanel) && selectedConv"
+      v-if="!isMobile || selectedConvId"
+      class="chat-thread-wrapper flex-grow-1 h-100 position-relative overflow-hidden"
+      :style="isMobile ? { width: '100%' } : { flex: 1, minWidth: '300px' }"
+    >
+      <MessageThread
+        :conversation="selectedConv"
+        :messages="messages"
+        :loading="loadingMsgs"
+        :loading-more="loadingMoreMsgs"
+        :has-more="hasMoreMessages"
+        :sending="sendingMsg"
+        :is-mobile="isMobile"
+        @back="onMobileBack"
+        @send="sendMessage"
+        @send-attachment="sendAttachment"
+        @react="sendReaction"
+        @load-more="loadMoreMessages"
+        @toggle-contact-panel="toggleContactPanel"
+        @open-order-panel="openOrderPanel"
+        @pause-ai="pauseAi"
+        @resume-ai="resumeAi"
+        @toggle-ai="toggleAi"
+        :show-contact-panel="showContactPanel && !showOrderPanel"
+        :show-order-panel="showOrderPanel"
+        style="height: 100%;"
+      />
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────────
+         3. DESKTOP: Right Panels (Contact Info / Order Form / Chatbot)
+         ───────────────────────────────────────────────────────────── -->
+    <div
+      v-if="!isMobile && (showContactPanel || showOrderPanel) && selectedConv"
       class="chat-panel-right d-flex flex-column"
       :style="{ width: showOrderPanel ? '500px' : rightWidth + 'px', maxWidth: '85vw', height: '100%', overflow: 'hidden' }"
     >
@@ -71,7 +90,7 @@
           </v-btn>
         </div>
         <div class="d-flex align-center gap-1">
-          <!-- Button with icon "..." for Chatbot history (Only visible when rightPanelTab === 'chatbot') -->
+          <!-- Button with icon "..." for Chatbot history -->
           <v-menu v-if="rightPanelTab === 'chatbot'" location="bottom end" :close-on-content-click="false">
             <template v-slot:activator="{ props }">
               <v-btn
@@ -188,18 +207,96 @@
         @created="fetchConversations()"
       />
     </div>
+
+    <!-- ─────────────────────────────────────────────────────────────
+         4. MOBILE: Full-screen Slide Over Panel for Details (< 768px)
+         ───────────────────────────────────────────────────────────── -->
+    <transition name="slide-x-reverse-transition">
+      <div
+        v-if="isMobile && (showContactPanel || showOrderPanel) && selectedConv"
+        class="mobile-chat-panel-overlay position-fixed top-0 left-0 w-100 h-100 d-flex flex-column bg-surface"
+        style="z-index: 500;"
+      >
+        <div class="d-flex flex-column h-100 overflow-hidden">
+          <!-- Drawer Header -->
+          <div class="px-3 py-2 d-flex align-center justify-space-between border-b flex-shrink-0">
+            <div v-if="!showOrderPanel" class="d-flex align-center gap-2">
+              <v-btn
+                variant="flat"
+                size="small"
+                :color="rightPanelTab === 'info' ? 'primary' : 'surface-variant'"
+                class="text-none font-weight-medium rounded-md px-3"
+                @click="rightPanelTab = 'info'"
+              >
+                Thông tin
+              </v-btn>
+              <v-btn
+                variant="flat"
+                size="small"
+                :color="rightPanelTab === 'chatbot' ? 'primary' : 'surface-variant'"
+                class="text-none font-weight-medium rounded-md px-3"
+                @click="rightPanelTab = 'chatbot'"
+              >
+                Chatbot
+              </v-btn>
+            </div>
+            <div v-else class="text-subtitle-2 font-weight-bold">
+              Tạo đơn hàng
+            </div>
+
+            <v-btn icon size="small" variant="text" @click="closeMobilePanels">
+              <v-icon size="20">lucide-x</v-icon>
+            </v-btn>
+          </div>
+
+          <!-- Panel content -->
+          <div class="flex-grow-1 overflow-y-auto">
+            <ChatContactPanel
+              v-if="!showOrderPanel && rightPanelTab === 'info'"
+              :conversation="selectedConv"
+              :contact-id="selectedConv.contact?.id || null"
+              :contact="selectedConv.contact || null"
+              :messages="messages"
+              @close="closeMobilePanels"
+              @saved="fetchConversations()"
+            />
+            <ChatbotSidebar
+              v-else-if="!showOrderPanel && rightPanelTab === 'chatbot'"
+              ref="chatbotSidebarRef"
+              :contact="selectedConv?.contact || null"
+              :conversation="selectedConv"
+              :messages="messages"
+              @order-created="fetchConversations()"
+            />
+            <OrderFormDrawer
+              v-else-if="showOrderPanel"
+              :contact="selectedConv.contact || null"
+              :conversation-id="selectedConv.id"
+              @close="closeMobilePanels"
+              @created="fetchConversations()"
+            />
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
+import { useDisplay } from 'vuetify';
 import ConversationList from '@/components/chat/ConversationList.vue';
 import MessageThread from '@/components/chat/MessageThread.vue';
 import ChatContactPanel from '@/components/chat/ChatContactPanel.vue';
 import OrderFormDrawer from '@/components/chat/OrderFormDrawer.vue';
 import ChatbotSidebar from '@/components/chat/ChatbotSidebar.vue';
 import { useChat } from '@/composables/use-chat';
+
+const display = useDisplay();
+const isMobile = computed(() => display.smAndDown.value);
+const router = useRouter();
+const route = useRoute();
 
 const {
   conversations, selectedConvId, selectedConv, messages,
@@ -217,10 +314,31 @@ function onFilterAccount(id: string | null) {
   fetchConversations();
 }
 
+function onSelectConversation(id: string) {
+  showContactPanel.value = false;
+  showOrderPanel.value = false;
+  selectConversation(id);
+  if (isMobile.value) {
+    router.replace({ path: '/chat', query: { id } });
+  }
+}
+
+function onMobileBack() {
+  showContactPanel.value = false;
+  showOrderPanel.value = false;
+  selectConversation(null);
+  router.replace({ path: '/chat', query: {} });
+}
+
 const showContactPanel = ref(false);
 const showOrderPanel = ref(false);
 const rightPanelTab = ref<'info' | 'chatbot'>('info');
 const chatbotSidebarRef = ref<any>(null);
+
+function closeMobilePanels() {
+  showContactPanel.value = false;
+  showOrderPanel.value = false;
+}
 
 // Resizable panel widths (restored from localStorage)
 const leftWidth = ref(parseInt(localStorage.getItem('chat-left-width') || '350'));
@@ -305,10 +423,10 @@ function openOrderPanel() {
   showOrderPanel.value = !showOrderPanel.value;
 }
 
-const route = useRoute();
-
 watch(() => route.query.id, (newId) => {
   if (newId && typeof newId === 'string' && newId !== selectedConvId.value) {
+    showContactPanel.value = false;
+    showOrderPanel.value = false;
     selectConversation(newId);
   }
 }, { immediate: true });
@@ -334,7 +452,8 @@ watch(searchQuery, () => {
 .chat-container {
   margin: 0;
   width: 100%;
-  height: 100vh;
+  height: 100%;
+  overflow: hidden;
 }
 
 .chat-panel-left {
@@ -342,6 +461,19 @@ watch(searchQuery, () => {
   flex-shrink: 0;
   min-width: 200px;
   max-width: 500px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat-panel-left.is-mobile-panel {
+  max-width: 100% !important;
+  min-width: 100% !important;
+  width: 100% !important;
+}
+
+.chat-thread-wrapper {
+  height: 100%;
+  overflow: hidden;
 }
 
 .chat-panel-right {
@@ -350,20 +482,6 @@ watch(searchQuery, () => {
   min-width: 250px;
   max-width: 900px;
   transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@media (max-width: 768px) {
-  .chat-panel-right {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    width: 100% !important;
-    max-width: 100vw !important;
-    min-width: 100vw !important;
-    z-index: 100;
-  }
 }
 
 /* Resize handle — thin vertical line on the edge */
@@ -402,5 +520,9 @@ watch(searchQuery, () => {
 .session-item:hover :deep(.session-delete-btn) {
   opacity: 1 !important;
   transform: scale(1);
+}
+
+.mobile-chat-side-drawer {
+  background-color: var(--v-theme-surface) !important;
 }
 </style>

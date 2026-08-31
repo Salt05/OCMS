@@ -9,24 +9,36 @@
     </div>
 
     <template v-else>
-      <!-- Zalo PC Header (Heightened & Symmetrically Padded) -->
-      <div class="zalo-chat-header d-flex align-center justify-space-between border-b">
-        <!-- Left: Avatar + Title + Subtitle -->
-        <div class="d-flex align-center overflow-hidden mr-4">
-          <v-avatar size="44" class="mr-3 flex-shrink-0 zalo-header-avatar">
+      <!-- Zalo Chat Header (Responsive for Desktop & Mobile) -->
+      <div class="zalo-chat-header d-flex align-center justify-space-between border-b px-2 px-md-3">
+        <!-- Left: Back button (Mobile) + Avatar + Title + Subtitle -->
+        <div class="d-flex align-center overflow-hidden mr-2 flex-grow-1">
+          <v-btn
+            v-if="isMobile"
+            icon
+            variant="text"
+            size="small"
+            class="mr-1 flex-shrink-0"
+            @click="$emit('back')"
+            title="Quay lại danh sách"
+          >
+            <v-icon size="22">lucide-chevron-left</v-icon>
+          </v-btn>
+
+          <v-avatar size="40" class="mr-2 mr-md-3 flex-shrink-0 zalo-header-avatar">
             <v-img v-if="conversation.contact?.avatarUrl" :src="conversation.contact.avatarUrl" />
-            <v-icon v-else-if="conversation.threadType === 'group'" icon="lucide-users" color="white" size="22" />
-            <v-icon v-else icon="lucide-user" color="white" size="22" />
+            <v-icon v-else-if="conversation.threadType === 'group'" icon="lucide-users" color="white" size="20" />
+            <v-icon v-else icon="lucide-user" color="white" size="20" />
           </v-avatar>
           <div class="overflow-hidden d-flex flex-column justify-center">
             <div class="d-flex align-center gap-1 mb-0.5">
-              <span class="text-subtitle-1 font-weight-bold text-truncate" style="font-size: 15.5px !important; line-height: 1.2;">
+              <span class="text-subtitle-1 font-weight-bold text-truncate" style="font-size: 15px !important; line-height: 1.2;">
                 {{ conversation.threadType === 'group' ? (conversation.contact?.fullName || 'Nhóm') : (conversation.contact?.fullName || 'Khách hàng') }}
               </span>
             </div>
-            <div class="text-caption text-grey d-flex align-center gap-1 text-truncate" style="font-size: 12px !important; line-height: 1.2;">
+            <div class="text-caption text-grey d-flex align-center gap-1 text-truncate" style="font-size: 11.5px !important; line-height: 1.2;">
               <span v-if="conversation.threadType === 'group'" class="d-flex align-center">
-                <v-icon size="13" class="mr-1">lucide-users</v-icon>
+                <v-icon size="12" class="mr-1">lucide-users</v-icon>
                 {{ conversation.contact?.tags?.length ? `${conversation.contact.tags.length} thành viên` : 'Nhóm Zalo' }}
               </span>
               <span v-else>
@@ -37,7 +49,7 @@
         </div>
 
         <!-- Right: Action Icons (Add User, Video, Search, Info Sidebar Toggle) -->
-        <div class="d-flex align-center gap-2 flex-shrink-0">
+        <div class="d-flex align-center gap-1 gap-md-2 flex-shrink-0">
           <!-- AI Auto Chat Control Badge (Only visible for 'customer' contacts) -->
           <v-menu
             v-if="conversation.threadType === 'user' && conversation.contact?.contactType === 'customer'"
@@ -50,15 +62,16 @@
                 size="small"
                 variant="tonal"
                 rounded="md"
-                class="text-none font-weight-medium px-2"
+                class="text-none font-weight-medium px-1.5 px-md-2"
                 :color="conversation.aiPaused ? 'warning' : (conversation.aiActive ? 'success' : 'grey')"
                 style="height: 28px; text-transform: none !important;"
               >
-                <v-icon start size="14" class="mr-1">
+                <v-icon start size="14" class="mr-0.5 mr-md-1">
                   {{ conversation.aiPaused ? 'lucide-pause-circle' : (conversation.aiActive ? 'lucide-bot' : 'lucide-bot-off') }}
                 </v-icon>
-                {{ conversation.aiPaused ? 'AI Tạm dừng' : (conversation.aiActive ? 'AI Đang trực' : 'AI Tắt') }}
-                <v-icon end size="12" class="ml-1 opacity-70">lucide-chevron-down</v-icon>
+                <span class="d-none d-sm-inline">{{ conversation.aiPaused ? 'AI Tạm dừng' : (conversation.aiActive ? 'AI Đang trực' : 'AI Tắt') }}</span>
+                <span class="d-inline d-sm-none">{{ conversation.aiPaused ? 'Tạm dừng' : (conversation.aiActive ? 'AI Bật' : 'AI Tắt') }}</span>
+                <v-icon end size="12" class="ml-0.5 opacity-70">lucide-chevron-down</v-icon>
               </v-btn>
             </template>
             <v-list density="compact" class="py-1 elevation-4 rounded-lg" min-width="210">
@@ -89,15 +102,6 @@
             </v-list>
           </v-menu>
 
-          <button type="button" class="zalo-header-btn" title="Thêm thành viên vào cuộc trò chuyện">
-            <v-icon size="19">lucide-user-plus</v-icon>
-          </button>
-          <button type="button" class="zalo-header-btn" title="Cuộc gọi video">
-            <v-icon size="19">lucide-video</v-icon>
-          </button>
-          <button type="button" class="zalo-header-btn" title="Tìm kiếm tin nhắn">
-            <v-icon size="19">lucide-search</v-icon>
-          </button>
           <button
             type="button"
             class="zalo-header-btn"
@@ -783,6 +787,7 @@ const props = defineProps<{
   sending: boolean;
   showContactPanel?: boolean;
   showOrderPanel?: boolean;
+  isMobile?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -795,6 +800,7 @@ const emit = defineEmits<{
   'resume-ai': [convId: string];
   'toggle-ai': [convId: string, aiActive: boolean];
   react: [messageId: string, icon: string];
+  back: [];
 }>();
 
 const isNoteMode = ref(false);

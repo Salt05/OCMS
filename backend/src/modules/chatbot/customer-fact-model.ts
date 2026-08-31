@@ -64,6 +64,7 @@ export interface StructuredCustomerProfile {
   phone: FactItem<string>;
   address: FactItem<string>;
   customer_type: FactItem<'retail' | 'wholesale'>;
+  payment_term: FactItem<string>;
   budget: FactItem<string>;
   buying_intent: FactItem<'high' | 'medium' | 'low' | 'browsing'>;
 }
@@ -90,6 +91,7 @@ export function createDefaultCustomerProfile(): StructuredCustomerProfile {
     phone: createEmptyFact<string>(),
     address: createEmptyFact<string>(),
     customer_type: createEmptyFact<'retail' | 'wholesale'>('retail'),
+    payment_term: createEmptyFact<string>(),
     budget: createEmptyFact<string>(),
     buying_intent: createEmptyFact<'high' | 'medium' | 'low' | 'browsing'>('medium'),
   };
@@ -153,6 +155,7 @@ export function hydrateCustomerProfile(raw: any, contact?: any): StructuredCusto
       phone: raw.phone || profile.phone,
       address: raw.address || profile.address,
       customer_type: raw.customer_type || profile.customer_type,
+      payment_term: raw.payment_term || profile.payment_term,
       budget: raw.budget || profile.budget,
       buying_intent: raw.buying_intent || profile.buying_intent,
     };
@@ -161,6 +164,7 @@ export function hydrateCustomerProfile(raw: any, contact?: any): StructuredCusto
   if (raw.fullName || raw.name) profile.name = createConfirmedFact(raw.fullName || raw.name, 'customer_message');
   if (raw.phone) profile.phone = createConfirmedFact(raw.phone, 'customer_message');
   if (raw.address) profile.address = createConfirmedFact(raw.address, 'customer_message');
+  if (raw.payment_term || raw.paymentTerm) profile.payment_term = createConfirmedFact(raw.payment_term || raw.paymentTerm, 'customer_message');
 
   return profile;
 }

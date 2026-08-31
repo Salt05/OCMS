@@ -329,6 +329,75 @@ class TestChatbotWorkflowGuard(unittest.TestCase):
         self.assertIn("Nguyễn Tấn Dũng", last_msg.content)
         self.assertNotIn("Bạn muốn đặt đơn này cho ai", last_msg.content)
 
+    def test_case_7_customer_info_query_never_hijacked(self):
+        """
+        Case 7: User asks 'thông tin về khách hàng này' in context containing customer details
+        and past message thread with items/numbers.
+        Expected:
+        - Intent must be CUSTOMER_INFO (NOT CREATE_ORDER)
+        - Guard should_stop must be FALSE
+        - No [ORDER_DRAFT] emitted
+        - items must be empty
+        """
+        state = ConversationWorkflowState()
+        user_msg = (
+            "[NGỮ CẢNH HỘI THOẠI HIỆN TẠI]:\n"
+            "- Khách hàng: Võ Tấn Dũng (Tên Zalo: Võ Tấn Dũng)\n"
+            "- Số điện thoại: 0979028480\n"
+            "- Địa chỉ: 123 Lê Lợi, TP.HCM\n"
+            "- Mã khách hàng Odoo (Partner ID): 17864\n"
+            "- Mã CRM Contact ID: crm_999\n"
+            "- Nhân viên đang phụ trách/chat: Admin\n"
+            "- Các tin nhắn gần nhất giữa nhân viên và khách hàng trong hội thoại này:\n"
+            "+ [09:15] Khách hàng: Cho mình 235 bao E-4A6C-, 118552 kg A24678, 6 cái C1F1D01, 8 cái AF8\n"
+            "+ [09:20] Nhân viên: Dạ em kiểm tra kho ạ\n\n"
+            "[CÂU HỎI / YÊU CẦU CỦA NHÂN VIÊN]: thông tin về khách hàng này"
+        )
+
+        tool_results = [
+            {
+                "tool_call_id": "call_cust_info",
+                "content": (
+                    "id,odoo_partner_id,name,phone,email,full_address,total_orders,total_revenue\n"
+                    "123,17864,Võ Tấn Dũng,0979028480,dung@example.com,123 Lê Lợi,12,150000000"
+                )
+            }
+        ]
+
+        should_stop, response = OrderWorkflowGuard.check_guard(state, user_msg, tool_results)
+
+        self.assertFalse(should_stop, "OrderWorkflowGuard must NOT stop loop for CUSTOMER_INFO intent")
+        self.assertIsNone(response, "No guard response should be emitted for CUSTOMER_INFO")
+        self.assertEqual(state.intent, "CUSTOMER_INFO")
+        self.assertEqual(len(state.items), 0, "No order items should be extracted from context messages")
+        self.assertEqual(state.customer.name, "Võ Tấn Dũng")
+        self.assertEqual(state.customer.phone, "0979028480")
+        self.assertEqual(state.customer.odoo_partner_id, "17864")
+
+    def test_case_8_order_mode_then_customer_info_resets_intent(self):
+        """
+        Case 8: Conversation state previously had CREATE_ORDER, now user asks about customer info.
+        Expected:
+        - Intent switches to CUSTOMER_INFO
+        - items are cleared
+        - Guard does not hijack
+        """
+        state = ConversationWorkflowState(
+            intent="CREATE_ORDER",
+            workflow_status=WorkflowStatus.COMPLETED,
+            customer=CustomerInfo(name="Võ Tấn Dũng", odoo_partner_id="17864"),
+            items=[OrderItem(sku="BO3", qty=5)]
+        )
+
+        user_msg = "[CÂU HỎI / YÊU CẦU CỦA NHÂN VIÊN]: lịch sử mua hàng của khách này"
+
+        should_stop, response = OrderWorkflowGuard.check_guard(state, user_msg, [])
+
+        self.assertFalse(should_stop)
+        self.assertIsNone(response)
+        self.assertEqual(state.intent, "CUSTOMER_INFO")
+        self.assertEqual(len(state.items), 0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

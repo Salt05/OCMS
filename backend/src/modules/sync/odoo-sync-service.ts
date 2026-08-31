@@ -324,7 +324,7 @@ class OdooSyncService {
             fields: [
               'id', 'product_id', 'name', 'product_uom_qty', 'product_uom',
               'price_unit', 'discount', 'price_subtotal', 'price_total',
-              'qty_delivered', 'qty_invoiced',
+              'qty_delivered', 'qty_invoiced', 'display_type',
             ],
           });
           if (lines) {
@@ -385,12 +385,8 @@ class OdooSyncService {
 
         const existing = await prisma.orderHistory.findUnique({
           where: { orgId_odooOrderId: { orgId: oid, odooOrderId: order.id } },
-          select: { id: true, state: true, pdfSentAt: true },
+          select: { id: true },
         });
-
-        const isNewlyConfirmed = (order.state === 'sale')
-          && (!existing || existing.state !== 'sale')
-          && (!existing || !existing.pdfSentAt);
 
         if (existing) {
           updatedCount++;
@@ -412,19 +408,6 @@ class OdooSyncService {
         if (order.order_line && order.order_line.length > 0) {
           const linesToSave = order.order_line.map((lid: number) => lineMap.get(lid)).filter(Boolean);
           await this.saveOrderLines(orderHistory.id, linesToSave);
-        }
-
-        // Trigger automatic PDF sending if order transitioned to 'sale' or newly created 'sale'
-        if (isNewlyConfirmed) {
-          this.onOrderConfirmed(
-            oid,
-            order.id,
-            order.name || `ODOO-${order.id}`,
-            partnerId,
-            partnerName,
-          ).catch((err) => {
-            logger.error(`[sync] Failed onOrderConfirmed for order ${order.id}:`, err);
-          });
         }
 
         if (order.write_date && order.write_date > latestWriteDate) {
@@ -455,7 +438,48 @@ class OdooSyncService {
 
   private async saveOrderLines(orderHistoryId: string, lines: any[]): Promise<void> {
     try {
-      for (const line of lines) {
+      // 1. Separate valid product lines from note / section lines
+      const validLines = lines.filter(line => {
+        if (line.display_type === 'line_note' || line.display_type === 'line_section') return false;
+        const hasProductId = Array.isArray(line.product_id) ? line.product_id.length > 0 : !!line.product_id;
+        const qty = parseFloat(line.product_uom_qty) || 0;
+        const price = parseFloat(line.price_unit) || 0;
+        if (!hasProductId && qty === 0 && price === 0) return false;
+        return true;
+      });
+
+      // 2. Extract line notes and append to Order note if applicable
+      const noteLines = lines.filter(line => line.display_type === 'line_note' || (!line.product_id && typeof line.name === 'string' && line.name.trim()));
+      if (noteLines.length > 0) {
+        const noteTexts = noteLines.map(l => String(l.name).trim()).filter(Boolean);
+        if (noteTexts.length > 0) {
+          const order = await prisma.orderHistory.findUnique({
+            where: { id: orderHistoryId },
+            select: { note: true },
+          });
+          const currentNote = order?.note || '';
+          const missingNotes = noteTexts.filter(nt => !currentNote.includes(nt));
+          if (missingNotes.length > 0) {
+            const updatedNote = currentNote ? `${currentNote}\n${missingNotes.join('\n')}` : missingNotes.join('\n');
+            await prisma.orderHistory.update({
+              where: { id: orderHistoryId },
+              data: { note: updatedNote },
+            });
+          }
+        }
+      }
+
+      // 3. Remove obsolete, deleted, or temporary local dummy lines (e.g. odooLineId: 1, 2)
+      const validOdooLineIds = validLines.map((l: any) => l.id).filter(Boolean);
+      await prisma.orderLineHistory.deleteMany({
+        where: {
+          orderHistoryId,
+          odooLineId: { notIn: validOdooLineIds },
+        },
+      });
+
+      // 4. Upsert valid product lines
+      for (const line of validLines) {
         const productName = Array.isArray(line.product_id) && line.product_id.length > 1
           ? String(line.product_id[1]) : (typeof line.name === 'string' ? line.name : '');
         const odooProductId = Array.isArray(line.product_id) && line.product_id.length > 0

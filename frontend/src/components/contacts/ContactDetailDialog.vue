@@ -5,7 +5,8 @@
       v-model="show"
       location="right"
       temporary
-      width="540"
+      :width="$vuetify.display.xs ? '100%' : '540'"
+      style="max-width: 100vw;"
       class="contact-detail-drawer elevation-12"
     >
       <div class="d-flex flex-column h-100" style="min-height: 0; overflow: hidden;">
@@ -90,7 +91,7 @@
         </div>
 
         <!-- Tabs Navigation -->
-        <v-tabs v-model="activeTab" color="primary" class="border-b px-2 flex-shrink-0 panel-tabs">
+        <v-tabs v-model="activeTab" color="primary" class="border-b px-2 flex-shrink-0 panel-tabs" :grow="$vuetify.display.smAndDown" show-arrows>
           <v-tab value="profile">Thông tin</v-tab>
           <v-tab v-if="!isNew" value="appointments">
             Lịch hẹn ({{ appointmentsList.length }})

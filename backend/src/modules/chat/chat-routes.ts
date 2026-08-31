@@ -371,6 +371,83 @@ export async function chatRoutes(app: FastifyInstance) {
     },
   );
 
+  // ── Get All Media / Files / Links in Conversation ────────────────────────
+  app.get(
+    '/api/v1/conversations/:id/media',
+    {
+      preHandler: requireZaloAccess('read'),
+    },
+    async (
+      request: FastifyRequest,
+      reply: FastifyReply,
+    ) => {
+      const user = request.user!;
+      const { id } = request.params as {
+        id: string;
+      };
+
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id,
+          orgId: user.orgId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!conversation) {
+        return reply.status(404).send({
+          error: 'Conversation not found',
+        });
+      }
+
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const messages = await prisma.message.findMany({
+        where: {
+          conversationId: id,
+          isDeleted: false,
+          OR: [
+            { contentType: { in: ['image', 'photo', 'video', 'file', 'document', 'link', 'rich'] } },
+            { content: { contains: 'http' } },
+            { content: { contains: 'href' } },
+            { content: { contains: '.pdf' } },
+            { content: { contains: '.doc' } },
+            { content: { contains: '.xls' } },
+            { content: { contains: '.zip' } },
+            { content: { contains: '.rar' } },
+            { content: { contains: '.mp4' } },
+            { content: { contains: 'thumb' } },
+            { content: { contains: 'params' } },
+          ],
+        },
+        orderBy: {
+          sentAt: 'desc',
+        },
+        select: {
+          id: true,
+          content: true,
+          contentType: true,
+          senderType: true,
+          senderName: true,
+          sentAt: true,
+          createdAt: true,
+          attachments: true,
+        },
+        take: 1000,
+      });
+
+      return {
+        messages: messages.reverse(),
+        total: messages.length,
+      };
+    },
+  );
+
   // ── Send message ─────────────────────────────────────────────────────────
   app.post(
     '/api/v1/conversations/:id/messages',

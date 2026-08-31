@@ -79,96 +79,166 @@ class ConversationWorkflowState(BaseModel):
             return cls()
 
 
+def extract_actual_user_prompt(message: str) -> tuple[str, str]:
+    """
+    Split an enriched message into (context_part, user_part).
+    If no enrichment prefix is found, returns ("", message).
+    """
+    if not message:
+        return "", ""
+
+    delimiters = [
+        "[CÂU HỎI / YÊU CẦU CỦA NHÂN VIÊN]:",
+        "[CÂU HỎI / YÊU CẦU]:",
+        "Câu hỏi của nhân viên:",
+        "[YÊU CẦU TẠO ĐƠN HÀNG / LÊN ĐƠN]:",
+        "[YÊU CẦU]:",
+    ]
+
+    for delim in delimiters:
+        if delim in message:
+            parts = message.split(delim, 1)
+            return parts[0].strip(), parts[1].strip()
+
+    return "", message.strip()
+
+
 def detect_intent(message: str, current_intent: Optional[str] = None) -> str:
     """Detect the user intent from text."""
     if not message:
         return current_intent or "GENERAL_CHAT"
 
-    msg_lower = message.lower().strip()
+    _, user_part = extract_actual_user_prompt(message)
+    msg_lower = user_part.lower().strip() if user_part else message.lower().strip()
 
-    # Order creation keywords
-    order_keywords = [
-        "lên đơn", "len don", "tạo đơn", "tao don", "lập đơn", "lap don",
-        "đặt đơn", "dat don", "đặt hàng", "dat hang", "bóc tách đơn", "boc tach don",
-        "tạo order", "lên order", "order nháp", "lên đơn hàng"
-    ]
-    if any(kw in msg_lower for kw in order_keywords) or "[yêu cầu tạo đơn hàng" in msg_lower:
-        return "CREATE_ORDER"
-
-    # Customer lookup keywords
+    # 1. Customer profile / Lookup keywords (checked first to prevent false order intent)
     customer_keywords = [
-        "thông tin khách", "tìm khách", "tra cứu khách", "khách hàng này",
-        "hồ sơ khách", "doanh thu của khách", "lịch sử mua hàng của khách"
+        "thông tin khách", "thông tin về khách", "tìm khách", "tra cứu khách", "khách hàng này",
+        "hồ sơ khách", "doanh thu của khách", "lịch sử mua hàng", "lịch sử đơn hàng",
+        "đơn hàng của khách", "khách này", "khách này mua gì", "khách này đã mua",
+        "thông tin người này", "thông tin của khách", "thông tin chi tiết khách",
+        "khách hàng mua gì", "khách hàng đã mua"
     ]
     if any(kw in msg_lower for kw in customer_keywords):
         return "CUSTOMER_INFO"
 
-    # Data query keywords
+    # 2. General Data query keywords
     query_keywords = [
         "select", "doanh thu", "tổng tiền", "thống kê", "báo cáo",
-        "sản phẩm nào", "bán chạy", "tồn kho", "danh sách đơn"
+        "sản phẩm nào", "bán chạy", "tồn kho", "danh sách đơn", "danh sách khách",
+        "top sản phẩm", "doanh số", "biểu đồ", "bảng dữ liệu"
     ]
     if any(kw in msg_lower for kw in query_keywords):
         return "QUERY_DATA"
 
-    return current_intent or "GENERAL_CHAT"
+    # 3. Explicit Order creation keywords (ONLY if user explicitly asks to create/make/extract an order)
+    order_keywords = [
+        "lên đơn", "len don", "tạo đơn", "tao don", "lập đơn", "lap don",
+        "đặt đơn", "dat don", "đặt hàng", "dat hang", "bóc tách đơn", "boc tach don",
+        "tạo order", "lên order", "order nháp", "lên đơn hàng", "tạo đơn hàng"
+    ]
+    if any(kw in msg_lower for kw in order_keywords) or "[yêu cầu tạo đơn hàng" in msg_lower:
+        return "CREATE_ORDER"
+
+    # 4. Greetings / Chit-chat
+    greetings = ["chào", "hello", "hi", "hey", "cảm ơn", "cam on", "thanks", "tks", "ok", "oke", "được rồi"]
+    if any(msg_lower.startswith(g) or msg_lower == g for g in greetings):
+        return "GENERAL_CHAT"
+
+    # If current_intent was CREATE_ORDER, only maintain it if user prompt has items or confirmation
+    if current_intent == "CREATE_ORDER":
+        if re.search(r"\b\d+\s*(?:bao|gói|túi|hộp|thùng|phần|cái|lon|kg|[A-Za-z0-9_-]+)\b", msg_lower):
+            return "CREATE_ORDER"
+        if any(w in msg_lower for w in ["xác nhận", "đồng ý", "sửa", "thêm", "bớt", "xóa"]):
+            return "CREATE_ORDER"
+
+    return "GENERAL_CHAT"
 
 
 def extract_raw_entities_from_text(text: str) -> Dict[str, Any]:
     """
-    Extract customer name, SKUs, quantities, and phone numbers from user text.
+    Extract customer name, SKUs, quantities, and phone numbers.
+    Customer info can be extracted from context or user message.
+    Order items MUST ONLY be extracted from the user prompt when creating an order.
     """
     if not text:
         return {}
 
+    context_part, user_part = extract_actual_user_prompt(text)
+    user_text = user_part if user_part else text
+
     entities: Dict[str, Any] = {
         "customer_name": None,
         "phone": None,
+        "odoo_partner_id": None,
+        "address": None,
         "items": []
     }
 
-    # Extract phone number
-    phone_match = re.search(r"\b(0[3|5|7|8|9][0-9]{8})\b", text)
+    # 1. Extract customer details from context if present
+    if context_part:
+        name_match = re.search(r"-\s*Khách hàng:\s*([^\n(]+)", context_part, re.IGNORECASE)
+        if name_match:
+            entities["customer_name"] = name_match.group(1).strip()
+
+        phone_ctx_match = re.search(r"-\s*Số điện thoại:\s*([0-9+]+)", context_part, re.IGNORECASE)
+        if phone_ctx_match:
+            entities["phone"] = phone_ctx_match.group(1).strip()
+
+        odoo_ctx_match = re.search(r"-\s*Mã khách hàng Odoo[^:]*:\s*(\d+)", context_part, re.IGNORECASE)
+        if odoo_ctx_match:
+            entities["odoo_partner_id"] = odoo_ctx_match.group(1).strip()
+
+        addr_ctx_match = re.search(r"-\s*Địa chỉ:\s*([^\n]+)", context_part, re.IGNORECASE)
+        if addr_ctx_match:
+            entities["address"] = addr_ctx_match.group(1).strip()
+
+    # 2. Extract customer details from user text if not already found or explicitly specified
+    phone_match = re.search(r"\b(0[3|5|7|8|9][0-9]{8})\b", user_text)
     if phone_match:
         entities["phone"] = phone_match.group(1)
 
-    # Extract customer name following 'cho khách hàng', 'cho khách', 'cho anh/chị', 'cho'
     customer_patterns = [
         r"(?:cho khách hàng|cho khách|cho KH|cho anh|cho chị|cho bác|cho cô|cho chú)\s+([A-ZÀ-Ỹa-zà-ỹ\s]+?)(?:\s+(?:sđt|đt|sdt|ở|tại|với|gồm|nhé|nha|ạ|\.|\,|$))",
         r"(?:khách hàng|khách|KH):\s*([A-ZÀ-Ỹa-zà-ỹ\s]+?)(?:\s+(?:sđt|đt|sdt|ở|tại|với|gồm|nhé|nha|ạ|\.|\,|$))",
         r"\bcho\s+([A-ZÀ-Ỹ][a-zà-ỹ]+(?:\s+[A-ZÀ-Ỹ][a-zà-ỹ]+)+)",  # Capitalized Vietnamese Name
     ]
     for pattern in customer_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
+        match = re.search(pattern, user_text, re.IGNORECASE)
         if match:
             extracted_name = match.group(1).strip()
-            # Filter out non-names like product names or stop words
-            if len(extracted_name.split()) <= 5 and not any(w in extracted_name.lower() for w in ["bao", "gói", "phần", "hộp", "thùng", "đơn"]):
+            if len(extracted_name.split()) <= 5 and not any(w in extracted_name.lower() for w in ["bao", "gói", "phần", "hộp", "thùng", "đơn", "sản phẩm"]):
                 entities["customer_name"] = extracted_name
                 break
 
-    # Extract items: e.g. "5 bao BO3", "10 gói E01", "50 phần B03", "3 C24"
+    # 3. Extract items ONLY from user_text (never from context_part!)
+    stop_skus = {
+        "CHO", "KH", "DON", "TAO", "LEN", "VUI", "LONG", "BAN", "MUA", "OD", "S02", "SDT",
+        "HANG", "KHACH", "THONG", "TIN", "NAY", "NGAY", "GIO", "PHUT", "GIAY", "NAM", "THANG",
+        "TRONG", "THEO", "CUA", "HOI", "DAP", "XEM", "DOC", "GUI", "NHAN", "CO", "CHUA", "ROI"
+    }
+
     matched_spans: List[tuple[int, int]] = []
 
     # Pattern 1: (qty) (unit)? (sku) e.g. "5 bao BO3", "10 gói E01", "3 C24"
-    p1 = r"\b(\d+)\s*(?:bao|gói|túi|hộp|thùng|phần|cái|lon|kg|lon)?\s*([A-Za-z][A-Za-z0-9_-]{1,8})\b"
-    for match in re.finditer(p1, text, re.IGNORECASE):
+    p1 = r"\b(\d{1,5})\s*(?:bao|gói|túi|hộp|thùng|phần|cái|lon|kg|lon)?\s*([A-Za-z][A-Za-z0-9_-]{1,8})\b"
+    for match in re.finditer(p1, user_text, re.IGNORECASE):
         span = match.span()
         matched_spans.append(span)
         qty = int(match.group(1))
         sku = match.group(2).upper()
-        if sku not in ["CHO", "KH", "DON", "TAO", "LEN", "VUI", "LONG", "BAN", "MUA", "OD", "S02", "SDT"]:
+        if sku not in stop_skus and len(sku) >= 2:
             entities["items"].append({"sku": sku, "qty": max(1, qty)})
 
     # Pattern 2: (sku) (x|sl)? (qty) e.g. "BO3 x 5", "E01 10" (only for unmatched spans)
-    p2 = r"\b([A-Za-z][A-Za-z0-9_-]{1,8})\s*(?:x|số\s*lượng|sl)?\s*(\d+)\b"
-    for match in re.finditer(p2, text, re.IGNORECASE):
+    p2 = r"\b([A-Za-z][A-Za-z0-9_-]{1,8})\s*(?:x|số\s*lượng|sl)?\s*(\d{1,5})\b"
+    for match in re.finditer(p2, user_text, re.IGNORECASE):
         span = match.span()
         if any(s[0] <= span[0] < s[1] or s[0] < span[1] <= s[1] for s in matched_spans):
             continue
         sku = match.group(1).upper()
         qty = int(match.group(2))
-        if sku not in ["CHO", "KH", "DON", "TAO", "LEN", "VUI", "LONG", "BAN", "MUA", "OD", "S02", "SDT"]:
+        if sku not in stop_skus and len(sku) >= 2:
             entities["items"].append({"sku": sku, "qty": max(1, qty)})
 
     return entities
@@ -254,27 +324,43 @@ class WorkflowEngine:
         state.iteration_count += 1
         state.updated_at = datetime.now(timezone.utc)
 
-        # 1. Detect or preserve intent
+        # 1. Detect intent
         new_intent = detect_intent(user_message, state.intent)
-        if new_intent:
-            state.intent = new_intent
+        state.intent = new_intent
 
-        # 2. Extract raw entities from user message
+        # 2. Reset order items and draft if intent is not CREATE_ORDER
+        if new_intent != "CREATE_ORDER":
+            state.items = []
+            state.missing_fields = []
+            state.order_draft = None
+            if new_intent in ["QUERY_DATA", "CUSTOMER_INFO"]:
+                state.workflow_status = WorkflowStatus.PROCESSING
+            else:
+                state.workflow_status = WorkflowStatus.COMPLETED
+
+        # 3. Extract raw entities from user message
         extracted = extract_raw_entities_from_text(user_message)
 
-        if extracted.get("customer_name"):
+        if extracted.get("customer_name") or extracted.get("phone") or extracted.get("odoo_partner_id"):
             if not state.customer:
-                state.customer = CustomerInfo(name=extracted["customer_name"], source="text")
+                state.customer = CustomerInfo(
+                    odoo_partner_id=extracted.get("odoo_partner_id"),
+                    name=extracted.get("customer_name"),
+                    phone=extracted.get("phone"),
+                    address=extracted.get("address"),
+                    source="text" if not extracted.get("odoo_partner_id") else "context"
+                )
             else:
-                state.customer.name = extracted["customer_name"]
+                if extracted.get("customer_name"):
+                    state.customer.name = extracted["customer_name"]
+                if extracted.get("phone"):
+                    state.customer.phone = extracted["phone"]
+                if extracted.get("odoo_partner_id"):
+                    state.customer.odoo_partner_id = extracted["odoo_partner_id"]
+                if extracted.get("address"):
+                    state.customer.address = extracted["address"]
 
-        if extracted.get("phone"):
-            if not state.customer:
-                state.customer = CustomerInfo(phone=extracted["phone"], source="text")
-            else:
-                state.customer.phone = extracted["phone"]
-
-        if extracted.get("items"):
+        if new_intent == "CREATE_ORDER" and extracted.get("items"):
             # Merge or set items
             for item in extracted["items"]:
                 existing = next((it for it in state.items if (it.sku and it.sku.upper() == item["sku"].upper())), None)
@@ -288,7 +374,7 @@ class WorkflowEngine:
                         price=0.0
                     ))
 
-        # 3. Parse tool results if any
+        # 4. Parse tool results if any
         if tool_results_list:
             for tr in tool_results_list:
                 content = tr.get("content", "")
@@ -315,8 +401,8 @@ class WorkflowEngine:
                         state.customer.address = db_cust.get("address") or state.customer.address
                         state.customer.source = "database"
 
-                # Merge product info from DB
-                if parsed["products"]:
+                # Merge product info from DB ONLY for CREATE_ORDER intent
+                if new_intent == "CREATE_ORDER" and parsed["products"]:
                     for db_prod in parsed["products"]:
                         sku = db_prod.get("sku")
                         matched_item = next((it for it in state.items if it.sku and sku and it.sku.upper() == sku.upper()), None)
@@ -336,7 +422,7 @@ class WorkflowEngine:
                                 price=db_prod.get("price") or 0.0
                             ))
 
-        # 4. Evaluate Workflow Completeness
+        # 5. Evaluate Workflow Completeness
         WorkflowEngine.evaluate_workflow_status(state)
         return state
 

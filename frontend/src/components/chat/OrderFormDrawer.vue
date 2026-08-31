@@ -633,20 +633,24 @@ async function loadSavedDraft() {
   try {
     const res = await api.get(`/orders/draft/${props.conversationId}`);
     if (res.data?.success && res.data.draft) {
-      fillOrderFromAI(res.data.draft);
+      await fillOrderFromAI(res.data.draft);
     }
   } catch (err) {
     console.error('Failed to load saved draft order:', err);
   }
 }
 
-function fillOrderFromAI(draft: any) {
+async function fillOrderFromAI(draft: any) {
+  if (products.value.length === 0) {
+    await fetchProducts();
+  }
+
   // Store missing info alerts
   aiMissingInfo.value = draft.missingInfo || [];
 
   // Store shipping address if extracted
-  if (draft.customer?.shippingAddress) {
-    aiShippingAddress.value = draft.customer.shippingAddress;
+  if (draft.customer?.shippingAddress || draft.address) {
+    aiShippingAddress.value = draft.customer?.shippingAddress || draft.address;
   }
 
   // Store notes if any
@@ -657,7 +661,6 @@ function fillOrderFromAI(draft: any) {
   // Map AI items to order lines
   const items = draft.items || [];
   if (items.length === 0) {
-    snackbar.value = { show: true, text: 'AI không tìm thấy yêu cầu đặt hàng trong tin nhắn hôm nay.', color: 'warning' };
     return;
   }
 
@@ -665,55 +668,86 @@ function fillOrderFromAI(draft: any) {
   orderLines.value = [];
 
   let matchedCount = 0;
-  let unmatchedCount = 0;
 
   for (const item of items) {
-    // Try to find the product in our local products cache by odooId
     let matchedProduct: OdooProduct | null = null;
 
-    if (item.matchedProductOdooId) {
+    // 1. Match by exact Odoo ID
+    const odooIdToMatch = Number(item.matchedProductOdooId || item.odooProductId || item.product_id);
+    if (odooIdToMatch && odooIdToMatch > 0) {
       matchedProduct = products.value.find(
-        (p) => Number(p.odoo_id || p.id) === item.matchedProductOdooId
+        (p) => Number(p.odoo_id || p.id) === odooIdToMatch
       ) || null;
     }
 
-    // Fallback: try matching by SKU
-    if (!matchedProduct && item.sku) {
+    // 2. Match by SKU
+    const itemSku = (item.sku || item.matchedSku || '').trim().toLowerCase();
+    if (!matchedProduct && itemSku) {
       matchedProduct = products.value.find(
-        (p) => (p.default_code || p.sku || '').toLowerCase() === item.sku.toLowerCase()
+        (p) => (p.default_code || p.sku || '').trim().toLowerCase() === itemSku
       ) || null;
     }
 
-    if (matchedProduct) {
-      matchedCount++;
-    } else {
-      unmatchedCount++;
+    // 3. Match SKU extracted from name / rawName (e.g. 'B01 Nơ hương sữa 2.3"')
+    const rawName = (item.matchedProductName || item.name || item.productNameRaw || '').trim();
+    if (!matchedProduct && rawName) {
+      const skuPrefix = rawName.match(/^\[?([A-Za-z0-9_-]+)\]?/)?.[1]?.toLowerCase();
+      if (skuPrefix) {
+        matchedProduct = products.value.find(
+          (p) => (p.default_code || p.sku || '').trim().toLowerCase() === skuPrefix
+        ) || null;
+      }
     }
+
+    // 4. Match by name substring
+    if (!matchedProduct && rawName) {
+      const lowerName = rawName.toLowerCase();
+      matchedProduct = products.value.find(
+        (p) => (p.name || '').toLowerCase().includes(lowerName) ||
+               (p.display_name || '').toLowerCase().includes(lowerName) ||
+               lowerName.includes((p.name || '').toLowerCase())
+      ) || null;
+    }
+
+    // Fallback: create product representation directly so it never shows "Chưa chọn sản phẩm"
+    const finalSku = item.sku || matchedProduct?.default_code || (rawName.match(/^\[?([A-Za-z0-9_-]+)\]?/)?.[1] || '');
+    const finalName = matchedProduct?.name || matchedProduct?.display_name || rawName || finalSku || 'Sản phẩm';
+    const finalPrice = item.priceUnit || item.price || matchedProduct?.wholesale_price || matchedProduct?.list_price || 0;
+    const finalOdooId = matchedProduct ? Number(matchedProduct.odoo_id || matchedProduct.id) : (odooIdToMatch || 0);
+
+    const productObj: OdooProduct = matchedProduct ? {
+      ...matchedProduct,
+      id: finalOdooId,
+    } : {
+      id: finalOdooId,
+      odoo_id: finalOdooId,
+      name: finalName,
+      display_name: finalName,
+      default_code: finalSku,
+      sku: finalSku,
+      list_price: finalPrice,
+      wholesale_price: finalPrice,
+      retail_price: finalPrice,
+      uom_id: null,
+      uom_name: 'Gói',
+    };
+
+    matchedCount++;
 
     orderLines.value.push({
-      product: matchedProduct ? {
-        ...matchedProduct,
-        id: Number(matchedProduct.odoo_id || matchedProduct.id),
-      } : null,
-      qty: item.quantity || 1,
-      price: item.priceUnit || matchedProduct?.wholesale_price || matchedProduct?.list_price || 0,
+      product: productObj,
+      qty: Number(item.quantity) || Number(item.qty) || 1,
+      price: finalPrice,
       discount: item.discount || 0,
-      aiConfidence: item.confidence,
-      aiRawName: item.productNameRaw,
+      aiConfidence: item.confidence || 0.95,
+      aiRawName: rawName,
     });
   }
 
-  const totalItems = matchedCount + unmatchedCount;
-  if (unmatchedCount > 0) {
+  if (matchedCount > 0) {
     snackbar.value = {
       show: true,
-      text: `AI bóc tách ${totalItems} sản phẩm (${matchedCount} khớp, ${unmatchedCount} cần kiểm tra)`,
-      color: 'warning',
-    };
-  } else {
-    snackbar.value = {
-      show: true,
-      text: `✨ AI đã điền thành công ${totalItems} sản phẩm vào đơn hàng!`,
+      text: `✨ Đã điền ${matchedCount} sản phẩm vào bảng tạo đơn!`,
       color: 'success',
     };
   }

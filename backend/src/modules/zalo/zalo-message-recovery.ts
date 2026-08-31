@@ -395,6 +395,8 @@ async function processAndPersistMessage(
         accountId,
         message: result.message,
         conversationId: result.conversationId,
+        contactId: result.contactId,
+        assignedUserId: result.assignedUserId,
       });
       return true;
     }

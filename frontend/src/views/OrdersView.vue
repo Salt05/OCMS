@@ -121,7 +121,7 @@
     </v-row>
 
     <!-- Navigation Tabs -->
-    <v-tabs v-model="activeTab" color="primary" class="border-b mb-4">
+    <v-tabs v-model="activeTab" color="primary" class="border-b mb-4" :grow="$vuetify.display.smAndDown" show-arrows>
       <v-tab value="orders" class="text-none font-weight-medium">
         <v-icon start size="18">lucide-list</v-icon>
         Danh sách Đơn hàng
@@ -133,13 +133,6 @@
           {{ pendingTotal }}
         </v-chip>
       </v-tab>
-      <v-tab value="processed_ai" class="text-none font-weight-medium">
-        <v-icon start size="18" color="info">lucide-bot</v-icon>
-        Đơn nháp AI đã xử lý
-        <v-chip v-if="processedAiTotal > 0" size="x-small" color="info" variant="tonal" class="ml-2 font-weight-bold">
-          {{ processedAiTotal }}
-        </v-chip>
-      </v-tab>
       <v-tab value="staff" class="text-none font-weight-medium">
         <v-icon start size="18">lucide-users</v-icon>
         Hiệu suất Nhân viên
@@ -147,7 +140,7 @@
     </v-tabs>
 
     <!-- Window for Tabs -->
-    <v-window v-model="activeTab">
+    <v-window v-model="activeTab" :touch="false">
       
       <!-- TAB 1: ALL ORDERS -->
       <v-window-item value="orders">
@@ -229,9 +222,9 @@
               />
             </v-col>
 
-            <!-- Reset Filter -->
-            <v-col cols="12" md="1" class="text-right">
-              <v-btn icon size="small" variant="text" color="grey" title="Đặt lại bộ lọc" @click="resetFilters">
+            <!-- Reset Filter (Only shown when active filters exist) -->
+            <v-col v-if="hasActiveFilters" cols="12" sm="6" md="1" class="d-flex align-center justify-end">
+              <v-btn icon size="small" variant="text" color="error" title="Xóa bộ lọc" @click="resetFilters">
                 <v-icon size="18">lucide-filter-x</v-icon>
               </v-btn>
             </v-col>
@@ -242,23 +235,23 @@
         <v-card variant="outlined" class="rounded-lg mb-4 overflow-hidden">
           <v-progress-linear v-if="loading" indeterminate color="primary" />
 
-          <v-table density="comfortable" hover class="orders-table">
+          <v-table density="compact" hover class="orders-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th style="width: 120px;">Mã đơn</th>
-                <th>Khách hàng</th>
-                <th style="width: 150px;">Nhân viên</th>
-                <th style="width: 130px;">Ngày tạo</th>
-                <th style="width: 80px;" class="text-center">Số món</th>
-                <th style="width: 150px;" class="text-right">Tổng tiền</th>
-                <th style="width: 130px;" class="text-center">Trạng thái</th>
-                <th style="width: 120px;" class="text-center">Giao hàng</th>
-                <th style="width: 60px;" class="text-center"></th>
+                <th class="text-center" :style="isMobile ? 'width: 15%;' : ''">Mã đơn</th>
+                <th class="text-left" :style="isMobile ? 'width: 23%;' : ''">Khách hàng</th>
+                <th v-if="!isMobile" class="text-left">Nhân viên</th>
+                <th class="text-center" :style="isMobile ? 'width: 16%;' : ''">Ngày tạo</th>
+                <th v-if="!isMobile" class="text-center">Số món</th>
+                <th class="text-right" :style="isMobile ? 'width: 22%;' : ''">Tổng tiền</th>
+                <th class="text-center" :style="isMobile ? 'width: 24%;' : ''">Trạng thái</th>
+                <th v-if="!isMobile" class="text-center">Giao hàng</th>
+                <th v-if="!isMobile" class="text-center"></th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!loading && orders.length === 0">
-                <td colspan="9" class="text-center text-medium-emphasis py-12">
+                <td :colspan="isMobile ? 5 : 9" class="text-center text-medium-emphasis py-12">
                   <v-icon icon="lucide-inbox" size="48" color="grey" class="mb-2" />
                   <div class="text-body-1 font-weight-medium">Không tìm thấy đơn hàng nào</div>
                   <div class="text-caption text-grey">Thử thay đổi bộ lọc hoặc bấm "Đồng bộ Odoo"</div>
@@ -271,36 +264,41 @@
                 class="cursor-pointer order-row"
                 @click="openDetail(o.id)"
               >
-                <!-- Order Code -->
-                <td>
-                  <span class="font-weight-bold font-monospace text-body-2 text-primary">
+                <!-- Order Code (Centered) -->
+                <td class="text-center">
+                  <span class="font-weight-bold font-monospace text-caption text-primary">
                     {{ o.orderCode }}
                   </span>
                 </td>
 
-                <!-- Customer -->
-                <td>
-                  <div class="font-weight-medium text-body-2 line-clamp-1">
-                    {{ o.partnerName || o.customerProfile?.name || '—' }}
+                <!-- Customer (Single line on desktop) -->
+                <td class="text-left">
+                  <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="o.partnerName || o.customerProfile?.name || ''">
+                    {{ formatCustomerName(o.partnerName || o.customerProfile?.name) }}
                   </div>
-                  <div v-if="o.customerProfile?.phone || o.customerProfile?.city" class="text-caption text-medium-emphasis">
-                    {{ [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ') }}
+                  <div v-else class="d-flex align-center gap-1 flex-nowrap" :title="o.partnerName || o.customerProfile?.name || ''">
+                    <span class="font-weight-medium text-caption text-high-emphasis">{{ o.partnerName || o.customerProfile?.name || '—' }}</span>
+                    <span v-if="o.customerProfile?.phone || o.customerProfile?.city" class="text-caption text-medium-emphasis ml-1.5 font-weight-regular">
+                      ({{ [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ') }})
+                    </span>
                   </div>
                 </td>
 
                 <!-- Salesperson -->
-                <td>
-                  <span class="text-body-2 text-medium-emphasis">{{ o.salesperson || '—' }}</span>
+                <td v-if="!isMobile" class="text-left">
+                  <span class="text-caption text-medium-emphasis">{{ o.salesperson || '—' }}</span>
                 </td>
 
-                <!-- Date Order -->
-                <td>
-                  <div class="text-body-2">{{ formatDate(o.dateOrder) }}</div>
-                  <div class="text-caption text-medium-emphasis">{{ formatTime(o.dateOrder) }}</div>
+                <!-- Date Order (Single line on desktop) -->
+                <td class="text-center">
+                  <div v-if="isMobile" class="text-caption">{{ formatDate(o.dateOrder) }}</div>
+                  <div v-else class="text-caption text-medium-emphasis text-nowrap">
+                    {{ formatDateTime(o.dateOrder) }}
+                  </div>
                 </td>
 
                 <!-- Items count -->
-                <td class="text-center">
+                <td v-if="!isMobile" class="text-center">
                   <v-chip size="x-small" variant="tonal" color="grey">
                     {{ o._count?.lines ?? o.lines?.length ?? 0 }} món
                   </v-chip>
@@ -308,20 +306,20 @@
 
                 <!-- Total Amount -->
                 <td class="text-right">
-                  <span class="font-weight-bold text-body-2 text-primary font-monospace">
+                  <span class="font-weight-bold text-caption text-primary font-monospace">
                     {{ formatVND(o.amountTotal) }}
                   </span>
                 </td>
 
                 <!-- Order State -->
                 <td class="text-center">
-                  <v-chip size="x-small" :color="stateColor(o.state)" variant="flat" class="font-weight-medium">
+                  <v-chip size="x-small" :color="stateColor(o.state)" variant="flat" class="font-weight-medium px-2" style="white-space: nowrap;">
                     {{ stateLabel(o.state) }}
                   </v-chip>
                 </td>
 
                 <!-- Delivery Status -->
-                <td class="text-center">
+                <td v-if="!isMobile" class="text-center">
                   <v-chip v-if="o.deliveryStatus" size="x-small" :color="deliveryStatusColor(o.deliveryStatus)" variant="tonal">
                     {{ deliveryStatusLabel(o.deliveryStatus) }}
                   </v-chip>
@@ -329,9 +327,9 @@
                 </td>
 
                 <!-- Action -->
-                <td class="text-center" @click.stop>
-                  <v-btn icon size="small" variant="text" color="primary" title="Xem chi tiết" @click="openDetail(o.id)">
-                    <v-icon size="18">lucide-eye</v-icon>
+                <td v-if="!isMobile" class="text-center" @click.stop>
+                  <v-btn icon size="x-small" variant="text" color="primary" title="Xem chi tiết" @click="openDetail(o.id)">
+                    <v-icon size="16">lucide-eye</v-icon>
                   </v-btn>
                 </td>
               </tr>
@@ -375,23 +373,23 @@
 
           <v-progress-linear v-if="pendingLoading" indeterminate color="amber-darken-2" />
 
-          <v-table density="comfortable" hover class="orders-table">
+          <v-table density="compact" hover class="orders-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th style="width: 120px;">Mã đơn</th>
-                <th>Khách hàng</th>
-                <th style="width: 150px;">Nhân viên</th>
-                <th style="width: 130px;">Thời gian tạo</th>
-                <th style="width: 80px;" class="text-center">Số món</th>
-                <th style="width: 150px;" class="text-right">Tổng tiền</th>
-                <th style="width: 120px;" class="text-center">Trạng thái</th>
-                <th>Ghi chú</th>
-                <th style="width: 180px;" class="text-center">Hành động</th>
+                <th v-if="!isMobile" class="text-center">Mã đơn</th>
+                <th class="text-left" :style="isMobile ? 'width: 28%;' : ''">Tên khách hàng</th>
+                <th class="text-left" :style="isMobile ? 'width: 22%;' : ''">Nhân viên</th>
+                <th class="text-center" :style="isMobile ? 'width: 24%;' : ''">Thời gian tạo</th>
+                <th v-if="!isMobile" class="text-center">Số món</th>
+                <th class="text-right" :style="isMobile ? 'width: 26%;' : ''">Tổng tiền</th>
+                <th v-if="!isMobile" class="text-center">Trạng thái</th>
+                <th v-if="!isMobile" class="text-left">Phương thức thanh toán</th>
+                <th v-if="!isMobile" class="text-center">Hành động</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!pendingLoading && pendingOrders.length === 0">
-                <td colspan="8" class="text-center text-medium-emphasis py-12">
+                <td :colspan="isMobile ? 4 : 9" class="text-center text-medium-emphasis py-12">
                   <v-icon icon="lucide-check-circle" size="48" color="success" class="mb-2" />
                   <div class="text-body-1 font-weight-medium">Không có đơn hàng nào chờ xác nhận</div>
                   <div class="text-caption text-grey">Tất cả đơn hàng nháp đã được xử lý hoàn tất!</div>
@@ -404,74 +402,109 @@
                 class="cursor-pointer order-row"
                 @click="openDetail(o.id)"
               >
-                <!-- Order Code -->
-                <td>
-                  <span class="font-weight-bold font-monospace text-body-2 text-primary">
+                <!-- Order Code (Desktop only) -->
+                <td v-if="!isMobile" class="text-center">
+                  <span class="font-weight-bold font-monospace text-caption text-primary">
                     {{ o.orderCode }}
                   </span>
                 </td>
 
-                <!-- Customer -->
-                <td>
-                  <div class="font-weight-medium text-body-2 line-clamp-1">
-                    {{ o.partnerName || o.customerProfile?.name || '—' }}
+                <!-- Customer (Tên khách hàng - single line on desktop) -->
+                <td class="text-left">
+                  <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="o.partnerName || o.customerProfile?.name || ''">
+                    {{ formatCustomerName(o.partnerName || o.customerProfile?.name) }}
                   </div>
-                  <div v-if="o.customerProfile?.phone || o.customerProfile?.city" class="text-caption text-medium-emphasis">
-                    {{ [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ') }}
+                  <div v-else class="d-flex align-center gap-1 flex-nowrap" :title="o.partnerName || o.customerProfile?.name || ''">
+                    <span class="font-weight-medium text-caption text-high-emphasis">{{ o.partnerName || o.customerProfile?.name || '—' }}</span>
+                    <span v-if="o.customerProfile?.phone || o.customerProfile?.city" class="text-caption text-medium-emphasis ml-1.5 font-weight-regular">
+                      ({{ [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ') }}
+                    </span>
                   </div>
                 </td>
 
-                <!-- Salesperson -->
-                <td>
-                  <span class="text-body-2 text-medium-emphasis">{{ o.salesperson || '—' }}</span>
+                <!-- Salesperson (Nhân viên) -->
+                <td class="text-left">
+                  <span class="text-caption text-medium-emphasis text-truncate d-inline-block" :title="o.salesperson || ''">
+                    {{ o.salesperson ? (isMobile ? formatCustomerName(o.salesperson) : o.salesperson) : '—' }}
+                  </span>
                 </td>
 
-                <!-- Date Order -->
-                <td>
-                  <div class="text-body-2">{{ formatDate(o.dateOrder) }}</div>
-                  <div class="text-caption text-medium-emphasis">{{ formatTime(o.dateOrder) }}</div>
-                </td>
-
-                <!-- Items count -->
+                <!-- Date Order (Thời gian tạo - single line on desktop) -->
                 <td class="text-center">
+                  <div v-if="isMobile">
+                    <div class="text-caption">{{ formatDate(o.dateOrder) }}</div>
+                    <div class="text-caption text-medium-emphasis" style="font-size: 11px;">{{ formatTime(o.dateOrder) }}</div>
+                  </div>
+                  <div v-else class="text-caption text-medium-emphasis text-nowrap">
+                    {{ formatDateTime(o.dateOrder) }}
+                  </div>
+                </td>
+
+                <!-- Items count (Desktop only) -->
+                <td v-if="!isMobile" class="text-center">
                   <v-chip size="x-small" variant="tonal" color="grey">
                     {{ o._count?.lines ?? o.lines?.length ?? 0 }} món
                   </v-chip>
                 </td>
 
-                <!-- Total Amount -->
+                <!-- Total Amount (Tổng tiền) -->
                 <td class="text-right">
-                  <span class="font-weight-bold text-body-2 text-primary font-monospace">
+                  <span class="font-weight-bold text-caption text-primary font-monospace">
                     {{ formatVND(o.amountTotal) }}
                   </span>
                 </td>
 
-                <!-- Order State -->
-                <td class="text-center">
-                  <v-chip size="x-small" color="warning" variant="flat" class="font-weight-medium">
+                <!-- Order State (Desktop only) -->
+                <td v-if="!isMobile" class="text-center">
+                  <v-chip size="x-small" color="warning" variant="flat" class="font-weight-medium px-2">
                     Chờ duyệt
                   </v-chip>
                 </td>
 
-                <!-- Note -->
-                <td>
-                  <div class="text-caption text-medium-emphasis line-clamp-2" :title="o.note || ''">
-                    {{ o.note || '—' }}
-                  </div>
+                <!-- Payment Method (Phương thức thanh toán - Desktop only) -->
+                <td v-if="!isMobile" class="text-left">
+                  <v-chip v-if="o.paymentTerm" size="x-small" variant="tonal" color="teal" prepend-icon="lucide-credit-card">
+                    {{ o.paymentTerm }}
+                  </v-chip>
+                  <span v-else class="text-caption text-medium-emphasis">—</span>
                 </td>
 
-                <!-- Actions -->
-                <td class="text-center" @click.stop>
-                  <div class="d-flex align-center justify-center">
+                <!-- Actions (Desktop only) -->
+                <td v-if="!isMobile" class="text-center" @click.stop>
+                  <div class="d-flex align-center justify-center gap-1 flex-nowrap">
+                    <v-btn
+                      size="small"
+                      color="success"
+                      variant="flat"
+                      class="text-none px-2"
+                      prepend-icon="lucide-check-circle-2"
+                      @click="openConfirmModal(o)"
+                      title="Xác nhận & Đồng bộ sang Odoo"
+                    >
+                      Duyệt
+                    </v-btn>
+
+                    <v-btn
+                      size="small"
+                      color="error"
+                      variant="outlined"
+                      class="text-none px-2"
+                      prepend-icon="lucide-x-circle"
+                      @click="openRejectModal(o)"
+                      title="Từ chối đơn hàng"
+                    >
+                      Từ chối
+                    </v-btn>
+
                     <v-btn
                       size="small"
                       color="primary"
-                      variant="flat"
-                      class="text-none px-3"
-                      prepend-icon="lucide-message-square"
+                      variant="text"
+                      icon
+                      title="Xem trong khung Chat"
                       @click="goToChat(o.conversationId)"
                     >
-                      Duyệt đơn trong Chat
+                      <v-icon size="18">lucide-message-square</v-icon>
                     </v-btn>
                   </div>
                 </td>
@@ -481,119 +514,7 @@
         </v-card>
       </v-window-item>
 
-      <!-- TAB 3: PROCESSED AI DRAFTS -->
-      <v-window-item value="processed_ai">
-        <v-card variant="outlined" class="rounded-lg mb-4 overflow-hidden">
-          <div class="pa-4 bg-surface-variant d-flex align-center justify-space-between border-b">
-            <div>
-              <div class="font-weight-bold text-subtitle-1 d-flex align-center gap-2">
-                <v-icon color="info" size="20">lucide-bot</v-icon>
-                Danh sách Đơn nháp AI đã được Nhân viên Xử lý
-              </div>
-              <div class="text-caption text-medium-emphasis mt-0.5">
-                Các đơn nháp do AI tạo đã được duyệt chuyển sang Odoo hoặc đã từ chối kèm lý do.
-              </div>
-            </div>
-            <v-chip color="info" variant="tonal" class="font-weight-bold">
-              {{ processedAiTotal }} đơn đã xử lý
-            </v-chip>
-          </div>
-
-          <v-progress-linear v-if="processedAiLoading" indeterminate color="info" />
-
-          <v-table density="comfortable" hover class="orders-table">
-            <thead>
-              <tr class="bg-surface-variant">
-                <th style="width: 120px;">Mã đơn</th>
-                <th>Khách hàng</th>
-                <th style="width: 140px;">Nhân viên</th>
-                <th style="width: 130px;">Thời gian</th>
-                <th style="width: 140px;" class="text-right">Tổng tiền</th>
-                <th style="width: 120px;" class="text-center">Trạng thái</th>
-                <th>Lý do từ chối / Ghi chú</th>
-                <th style="width: 60px;" class="text-center"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!processedAiLoading && processedAiOrders.length === 0">
-                <td colspan="8" class="text-center text-medium-emphasis py-12">
-                  <v-icon icon="lucide-inbox" size="48" color="grey" class="mb-2" />
-                  <div class="text-body-1 font-weight-medium">Chưa có đơn nháp AI nào được xử lý</div>
-                </td>
-              </tr>
-
-              <tr
-                v-for="o in processedAiOrders"
-                :key="o.id"
-                class="cursor-pointer order-row"
-                @click="openDetail(o.id)"
-              >
-                <!-- Order Code -->
-                <td>
-                  <span class="font-weight-bold font-monospace text-body-2 text-primary">
-                    {{ o.orderCode }}
-                  </span>
-                </td>
-
-                <!-- Customer -->
-                <td>
-                  <div class="font-weight-medium text-body-2 line-clamp-1">
-                    {{ o.partnerName || o.customerProfile?.name || '—' }}
-                  </div>
-                  <div v-if="o.customerProfile?.phone" class="text-caption text-medium-emphasis">
-                    {{ o.customerProfile?.phone }}
-                  </div>
-                </td>
-
-                <!-- Salesperson -->
-                <td>
-                  <span class="text-body-2 text-medium-emphasis">{{ o.salesperson || '—' }}</span>
-                </td>
-
-                <!-- Updated At / Date Order -->
-                <td>
-                  <div class="text-body-2">{{ formatDate(o.updatedAt || o.dateOrder) }}</div>
-                  <div class="text-caption text-medium-emphasis">{{ formatTime(o.updatedAt || o.dateOrder) }}</div>
-                </td>
-
-                <!-- Total Amount -->
-                <td class="text-right">
-                  <span class="font-weight-bold text-body-2 text-primary font-monospace">
-                    {{ formatVND(o.amountTotal) }}
-                  </span>
-                </td>
-
-                <!-- Order State -->
-                <td class="text-center">
-                  <v-chip size="x-small" :color="stateColor(o.state)" variant="flat" class="font-weight-medium">
-                    {{ stateLabel(o.state) }}
-                  </v-chip>
-                </td>
-
-                <!-- Rejection Reason / Note -->
-                <td>
-                  <div v-if="o.state === 'cancel' && o.note" class="text-caption text-error font-weight-medium line-clamp-2">
-                    {{ o.note }}
-                  </div>
-                  <div v-else-if="o.note" class="text-caption text-medium-emphasis line-clamp-2">
-                    {{ o.note }}
-                  </div>
-                  <span v-else class="text-caption text-medium-emphasis">—</span>
-                </td>
-
-                <!-- Action -->
-                <td class="text-center" @click.stop>
-                  <v-btn icon size="small" variant="text" color="primary" title="Xem chi tiết" @click="openDetail(o.id)">
-                    <v-icon size="18">lucide-eye</v-icon>
-                  </v-btn>
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card>
-      </v-window-item>
-
-      <!-- TAB 4: STAFF PERFORMANCE -->
+      <!-- TAB 3: STAFF PERFORMANCE -->
       <v-window-item value="staff">
         <OrderStaffTable :staff-stats="staffStats" :loading="loading" />
       </v-window-item>
@@ -604,6 +525,8 @@
       v-model="showDetail"
       :order="selectedOrder"
       :loading="detailLoading"
+      @confirm="onDetailConfirm"
+      @reject="onDetailReject"
     />
 
     <!-- Confirm Order Dialog with Zalo Preview -->
@@ -612,14 +535,16 @@
         <div class="pa-4 bg-primary text-white d-flex align-center justify-space-between">
           <div class="d-flex align-center gap-2">
             <v-icon size="22">lucide-check-circle-2</v-icon>
-            <span class="font-weight-bold text-subtitle-1">Xác nhận Đơn hàng #{{ targetOrder?.orderCode }}</span>
+            <span class="font-weight-bold text-subtitle-1">
+              Xác nhận Đơn hàng #{{ targetOrder?.orderCode }}
+            </span>
           </div>
           <v-btn icon="lucide-x" variant="text" size="small" color="white" @click="showConfirmDialog = false" />
         </div>
 
         <v-card-text class="pa-4">
           <div class="text-body-2 mb-3">
-            Hệ thống sẽ chuyển trạng thái đơn sang <strong>Đã xác nhận (Sale)</strong>, đồng bộ sang Odoo ERP và tự động gửi tin nhắn xác nhận đến Zalo của khách hàng.
+            Hệ thống sẽ chuyển trạng thái đơn sang <strong>Báo giá (Quotation)</strong>, đồng bộ sang Odoo ERP và tự động gửi tin nhắn xác nhận đến Zalo của khách hàng.
           </div>
 
           <!-- Order Summary Card -->
@@ -650,27 +575,75 @@
             class="mb-3"
           />
 
-          <!-- Zalo Preview Box -->
-          <div class="text-caption font-weight-bold text-medium-emphasis mb-1">
-            Xem trước tin nhắn Zalo gửi khách hàng:
+          <!-- Zalo Preview & Edit Box -->
+          <div class="d-flex align-center justify-space-between mb-1">
+            <span class="text-caption font-weight-bold text-medium-emphasis">
+              Xem trước & Chỉnh sửa tin nhắn Zalo gửi khách hàng:
+            </span>
+            <v-btn
+              size="x-small"
+              variant="text"
+              color="primary"
+              class="text-none"
+              prepend-icon="lucide-rotate-ccw"
+              @click="resetConfirmZaloMessage"
+            >
+              Khôi phục mẫu
+            </v-btn>
           </div>
-          <v-card variant="outlined" class="pa-3 rounded-lg bg-surface zalo-preview-bubble text-caption">
-            <div class="font-weight-bold mb-1 text-primary">🔔 [OCMS] XÁC NHẬN ĐƠN HÀNG #{{ targetOrder?.orderCode }}</div>
-            <div>Kính gửi Quý khách {{ targetOrder?.partnerName || 'Quý khách' }},</div>
-            <div class="mt-1">Đơn hàng của Quý khách đã được xác nhận thành công!</div>
-            <div class="mt-1 font-weight-medium">💰 Tổng giá trị dự kiến: {{ formatVND(targetOrder?.amountTotal) }}</div>
-            <div class="mt-1 text-medium-emphasis">Nhân viên sẽ sớm liên hệ gửi báo giá chi tiết và tiến hành giao hàng. Xin cảm ơn!</div>
-          </v-card>
+          <v-textarea
+            v-model="customConfirmZaloMessage"
+            rows="5"
+            variant="outlined"
+            density="compact"
+            placeholder="Nhập nội dung tin nhắn gửi khách hàng..."
+            class="mb-3 font-mono text-body-2"
+          />
+          <!-- In-Popup Real-time Confirm Progress -->
+          <v-expand-transition>
+            <div v-if="confirmProgress.show" class="pa-3 rounded-lg mt-3 bg-surface-variant border">
+              <div class="d-flex align-center gap-2 mb-2 font-weight-bold text-caption text-primary">
+                <v-icon size="16">lucide-layers</v-icon>
+                <span>TIẾN TRÌNH XỬ LÝ & ĐỒNG BỘ</span>
+              </div>
+              <!-- Step 1: Tạo đơn báo giá -->
+              <div class="d-flex align-center gap-3 py-1">
+                <div class="progress-step-icon">
+                  <v-icon v-if="confirmProgress.step1Done" size="18" color="success" class="scale-up-anim">
+                    lucide-check-circle-2
+                  </v-icon>
+                  <v-progress-circular v-else indeterminate size="16" width="2" color="primary" />
+                </div>
+                <div class="text-caption" :class="{ 'font-weight-bold text-success': confirmProgress.step1Done }">
+                  {{ confirmProgress.step1Done ? 'Đã tạo' : 'Đang tạo' }} đơn báo giá chi tiết cho đơn hàng <strong class="font-mono text-primary">#{{ confirmProgress.odooCode }}</strong>
+                </div>
+              </div>
+
+              <!-- Step 2: Gửi nội dung cho khách hàng -->
+              <div class="d-flex align-center gap-3 py-1">
+                <div class="progress-step-icon">
+                  <v-icon v-if="confirmProgress.step2Done" size="18" color="success" class="scale-up-anim">
+                    lucide-check-circle-2
+                  </v-icon>
+                  <v-progress-circular v-else indeterminate size="16" width="2" color="amber-darken-2" />
+                </div>
+                <div class="text-caption" :class="{ 'font-weight-bold text-success': confirmProgress.step2Done }">
+                  {{ confirmProgress.step2Done ? 'Đã gửi' : 'Đang gửi' }} nội dung cho khách hàng <strong>{{ confirmProgress.customerName }}</strong>
+                </div>
+              </div>
+            </div>
+          </v-expand-transition>
         </v-card-text>
 
         <v-divider />
         <v-card-actions class="pa-4">
           <v-spacer />
-          <v-btn variant="outlined" color="grey" @click="showConfirmDialog = false">Đóng</v-btn>
+          <v-btn variant="outlined" color="grey" :disabled="actionLoading || confirmProgress.show" @click="showConfirmDialog = false">Đóng</v-btn>
           <v-btn
             color="success"
             variant="flat"
             :loading="actionLoading"
+            :disabled="actionLoading || confirmProgress.show"
             prepend-icon="lucide-send"
             @click="executeConfirmOrder"
           >
@@ -693,66 +666,70 @@
 
         <v-card-text class="pa-4">
           <div class="text-body-2 mb-3">
-            Vui lòng chọn hoặc nhập lý do từ chối. Lý do này sẽ được lưu vào lịch sử đơn và gửi trực tiếp qua Zalo cho khách hàng.
+            Vui lòng chọn lý do từ chối từ danh sách của shop bên dưới hoặc nhập lý do cụ thể. Bạn có thể chỉnh sửa nội dung tin nhắn gửi khách hàng trước khi gửi.
           </div>
 
-          <!-- Reason Presets -->
-          <v-radio-group v-model="selectedReasonPreset" density="compact" class="mb-2">
-            <v-radio
-              label="Hết hàng tạm thời hoặc số lượng trong kho không đủ đáp ứng"
-              value="Hết hàng tạm thời hoặc số lượng trong kho không đủ đáp ứng"
-            />
-            <v-radio
-              label="Khách hàng yêu cầu hủy / Đã đổi ý"
-              value="Khách hàng yêu cầu hủy / Đã đổi ý"
-            />
-            <v-radio
-              label="Thông tin liên hệ / Địa chỉ giao hàng chưa đầy đủ hoặc không liên lạc được"
-              value="Thông tin liên hệ / Địa chỉ giao hàng chưa đầy đủ hoặc không liên lạc được"
-            />
-            <v-radio
-              label="Lý do khác (Tự nhập)"
-              value="custom"
-            />
-          </v-radio-group>
+          <!-- Reason Dropdown -->
+          <v-select
+            v-model="selectedReasonPreset"
+            :items="rejectionReasonOptions"
+            label="Lý do từ chối (Từ phía Shop) *"
+            variant="outlined"
+            density="comfortable"
+            prepend-inner-icon="lucide-store"
+            class="mb-3"
+          />
 
           <!-- Custom Reason Input -->
           <v-textarea
             v-if="selectedReasonPreset === 'custom'"
             v-model="customRejectReason"
-            label="Nhập lý do từ chối cụ thể"
+            label="Nhập lý do từ chối chi tiết *"
             rows="2"
             variant="outlined"
             density="compact"
-            placeholder="Ví dụ: Sản phẩm đã ngưng sản xuất..."
+            placeholder="Ví dụ: Sản phẩm đã ngưng sản xuất, số lượng đặt vượt quá tồn kho..."
             class="mb-3"
           />
 
-          <!-- Zalo Preview Box -->
-          <div class="text-caption font-weight-bold text-medium-emphasis mb-1">
-            Xem trước tin nhắn Zalo thông báo hủy gửi khách hàng:
+          <!-- Zalo Preview & Edit Box -->
+          <div class="d-flex align-center justify-space-between mb-1">
+            <span class="text-caption font-weight-bold text-medium-emphasis">
+              Xem trước & Chỉnh sửa tin nhắn Zalo gửi khách hàng:
+            </span>
+            <v-btn
+              size="x-small"
+              variant="text"
+              color="primary"
+              class="text-none"
+              prepend-icon="lucide-rotate-ccw"
+              @click="resetRejectZaloMessage"
+            >
+              Khôi phục mẫu
+            </v-btn>
           </div>
-          <v-card variant="outlined" class="pa-3 rounded-lg bg-surface zalo-preview-bubble zalo-preview-reject text-caption">
-            <div class="font-weight-bold mb-1 text-error">⚠️ [OCMS] THÔNG BÁO VỀ ĐƠN HÀNG #{{ targetOrder?.orderCode }}</div>
-            <div>Kính gửi Quý khách {{ targetOrder?.partnerName || 'Quý khách' }},</div>
-            <div class="mt-1">Rất tiếc, đơn hàng #{{ targetOrder?.orderCode }} tạm thời chưa thể xác nhận.</div>
-            <div class="mt-1 font-weight-medium text-error">❌ Lý do: {{ activeRejectReason }}</div>
-            <div class="mt-1 text-medium-emphasis">Quý khách vui lòng nhắn tin trực tiếp để nhân viên hỗ trợ tư vấn. Trân trọng cảm ơn!</div>
-          </v-card>
+          <v-textarea
+            v-model="customRejectZaloMessage"
+            rows="5"
+            variant="outlined"
+            density="compact"
+            placeholder="Nhập nội dung tin nhắn thông báo từ chối gửi khách hàng..."
+            class="mb-3 font-mono text-body-2"
+          />
         </v-card-text>
 
         <v-divider />
         <v-card-actions class="pa-4">
           <v-spacer />
-          <v-btn variant="outlined" color="grey" @click="showRejectDialog = false">Đóng</v-btn>
+          <v-btn variant="outlined" color="grey" @click="showRejectDialog = false">Hủy bỏ</v-btn>
           <v-btn
             color="error"
             variant="flat"
             :loading="actionLoading"
-            prepend-icon="lucide-send"
+            prepend-icon="lucide-x-circle"
             @click="executeRejectOrder"
           >
-            Từ chối & Gửi tin Zalo
+            Xác nhận Từ chối
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -768,6 +745,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { useDisplay } from 'vuetify';
 import { io, Socket } from 'socket.io-client';
 import { useOrders, ODOO_ORDER_STATES, ODOO_DELIVERY_STATUSES, type OrderItem } from '@/composables/use-orders';
 import { useAppBadges } from '@/composables/use-app-badges';
@@ -775,6 +753,27 @@ import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
 import OrderStaffTable from '@/components/orders/OrderStaffTable.vue';
 
 const router = useRouter();
+const display = useDisplay();
+const isMobile = computed(() => display.smAndDown.value);
+
+function formatCustomerName(name?: string | null): string {
+  if (!name) return '—';
+  const trimmed = name.trim();
+  if (trimmed.length > 15) {
+    return trimmed.slice(0, 12) + '...';
+  }
+  return trimmed;
+}
+
+function onDetailConfirm(order: OrderItem) {
+  showDetail.value = false;
+  openConfirmModal(order);
+}
+
+function onDetailReject(order: OrderItem) {
+  showDetail.value = false;
+  openRejectModal(order);
+}
 
 const {
   orders,
@@ -790,12 +789,8 @@ const {
   pendingOrders,
   pendingTotal,
   pendingLoading,
-  processedAiOrders,
-  processedAiTotal,
-  processedAiLoading,
   fetchOrders,
   fetchPendingOrders,
-  fetchProcessedAiOrders,
   confirmOrder,
   rejectOrder,
   fetchOrderDetail,
@@ -822,13 +817,36 @@ const showConfirmDialog = ref(false);
 const showRejectDialog = ref(false);
 const targetOrder = ref<OrderItem | null>(null);
 const confirmNote = ref('');
-const selectedReasonPreset = ref('Hết hàng tạm thời hoặc số lượng trong kho không đủ đáp ứng');
-const customRejectReason = ref('Hết hàng tạm thời hoặc số lượng trong kho không đủ đáp ứng');
+const customConfirmZaloMessage = ref('');
+const customRejectZaloMessage = ref('');
+
+const rejectionReasonOptions = [
+  { title: 'Số lượng đặt hàng không hợp lệ / Vượt quá giới hạn cho phép', value: 'Số lượng đặt hàng không hợp lệ / Vượt quá giới hạn cho phép' },
+  { title: 'Sản phẩm đã ngừng kinh doanh / Tạm thời không còn phân phối', value: 'Sản phẩm đã ngừng kinh doanh / Tạm thời không còn phân phối' },
+  { title: 'Hết hàng tồn kho / Kho thực tế không đủ số lượng để cung ứng', value: 'Hết hàng tồn kho / Kho thực tế không đủ số lượng để cung ứng' },
+  { title: 'Địa chỉ giao hàng nằm ngoài phạm vi phục vụ của shop', value: 'Địa chỉ giao hàng nằm ngoài phạm vi phục vụ của shop' },
+  { title: 'Thông tin người nhận / Số điện thoại không hợp lệ (nghi vấn đơn ảo/spam)', value: 'Thông tin người nhận / Số điện thoại không hợp lệ (nghi vấn đơn ảo/spam)' },
+  { title: 'Sai lệch thông tin bảng giá / Chính sách chiết khấu không thỏa điều kiện', value: 'Sai lệch thông tin bảng giá / Chính sách chiết khấu không thỏa điều kiện' },
+  { title: 'Đơn hàng bị trùng lặp với đơn đã tạo trước đó', value: 'Đơn hàng bị trùng lặp với đơn đã tạo trước đó' },
+  { title: 'Khách hàng yêu cầu hủy hoặc thay đổi đơn hàng', value: 'Khách hàng yêu cầu hủy hoặc thay đổi đơn hàng' },
+  { title: 'Lý do khác (Tự nhập chi tiết...)', value: 'custom' },
+];
+
+const selectedReasonPreset = ref(rejectionReasonOptions[0].value);
+const customRejectReason = ref(rejectionReasonOptions[0].value);
 const actionLoading = ref(false);
+
+const confirmProgress = reactive({
+  show: false,
+  step1Done: false,
+  step2Done: false,
+  odooCode: '',
+  customerName: '',
+});
 
 const activeRejectReason = computed(() => {
   if (selectedReasonPreset.value === 'custom') {
-    return customRejectReason.value || 'Thông tin đơn hàng chưa đầy đủ';
+    return customRejectReason.value || 'Thông tin đơn hàng chưa hợp lệ';
   }
   return selectedReasonPreset.value;
 });
@@ -836,7 +854,12 @@ const activeRejectReason = computed(() => {
 watch(selectedReasonPreset, (newVal) => {
   if (newVal !== 'custom') {
     customRejectReason.value = newVal;
+    resetRejectZaloMessage();
   }
+});
+
+watch(customRejectReason, () => {
+  resetRejectZaloMessage();
 });
 
 const snackbar = reactive({
@@ -879,6 +902,23 @@ function formatTime(d?: string | null) {
   if (!d) return '';
   return new Date(d).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
+
+function formatDateTime(d?: string | null) {
+  if (!d) return '—';
+  const date = formatDate(d);
+  const time = formatTime(d);
+  return time ? `${date} ${time}` : date;
+}
+
+const hasActiveFilters = computed(() => {
+  return !!(
+    (filters.search && filters.search.trim()) ||
+    filters.state ||
+    filters.salesperson ||
+    filters.deliveryStatus ||
+    quickDate.value
+  );
+});
 
 function getConversionRate() {
   if (!stats.value?.totalOrders) return 0;
@@ -951,12 +991,17 @@ async function loadData() {
   await Promise.all([
     fetchOrders(buildParams()),
     fetchPendingOrders(),
-    fetchProcessedAiOrders(),
     fetchStats(buildParams() as any),
   ]);
 }
 
 async function openDetail(id: string) {
+  // Populate from local cache immediately so modal opens with data instantly
+  const cached = pendingOrders.value.find(o => o.id === id || o.conversationId === id)
+    || orders.value.find(o => o.id === id || o.orderCode === id);
+  if (cached) {
+    selectedOrder.value = cached;
+  }
   showDetail.value = true;
   await fetchOrderDetail(id);
 }
@@ -966,53 +1011,120 @@ function goToChat(conversationId: string | undefined) {
   router.push({ path: '/chat', query: { id: conversationId } });
 }
 
+function resetConfirmZaloMessage() {
+  if (!targetOrder.value) return;
+  const customerName = targetOrder.value.partnerName || 'Quý khách';
+  const total = formatVND(targetOrder.value.amountTotal);
+  const odooCode = targetOrder.value.orderCode;
+  const noteStr = confirmNote.value ? `Ghi chú: ${confirmNote.value}\n` : '';
+  customConfirmZaloMessage.value = `Dạ đơn hàng ${odooCode} của ${customerName} đã được xác nhận và đang được chuyển sang bộ phận đóng gói ạ. Tổng giá trị đơn hàng là ${total}.
+${noteStr}
+Em cảm ơn ${customerName} đã ủng hộ shop ạ!`.trim();
+}
+
+function resetRejectZaloMessage() {
+  if (!targetOrder.value) return;
+  const customerName = targetOrder.value.partnerName || 'Quý khách';
+  const odooCode = targetOrder.value.orderCode;
+  customRejectZaloMessage.value = `⚠️ [OCMS] THÔNG BÁO VỀ ĐƠN HÀNG #${odooCode}
+Kính gửi Quý khách ${customerName},
+
+Rất tiếc, đơn hàng #${odooCode} của Quý khách tạm thời chưa thể xác nhận.
+❌ Lý do từ chối: ${activeRejectReason.value}
+
+Quý khách vui lòng nhắn tin trực tiếp để nhân viên hỗ trợ tư vấn sản phẩm thay thế hoặc giải đáp thêm.
+Trân trọng cảm ơn Quý khách!`;
+}
+
 // @ts-ignore
 function openConfirmModal(order: OrderItem) {
   targetOrder.value = order;
   confirmNote.value = '';
+  confirmProgress.show = false;
+  confirmProgress.step1Done = false;
+  confirmProgress.step2Done = false;
+  resetConfirmZaloMessage();
   showConfirmDialog.value = true;
 }
 
 // @ts-ignore
 function openRejectModal(order: OrderItem) {
   targetOrder.value = order;
-  selectedReasonPreset.value = 'Hết hàng tạm thời hoặc số lượng trong kho không đủ đáp ứng';
-  customRejectReason.value = 'Hết hàng tạm thời hoặc số lượng trong kho không đủ đáp ứng';
+  selectedReasonPreset.value = rejectionReasonOptions[0].value;
+  customRejectReason.value = rejectionReasonOptions[0].value;
+  resetRejectZaloMessage();
   showRejectDialog.value = true;
 }
 
+let progressDismissTimer: ReturnType<typeof setTimeout> | null = null;
+
 async function executeConfirmOrder() {
-  if (!targetOrder.value) return;
+  if (!targetOrder.value || actionLoading.value) return;
+
+  if (progressDismissTimer) {
+    clearTimeout(progressDismissTimer);
+    progressDismissTimer = null;
+  }
+
+  const initialCode = targetOrder.value.orderCode;
+  const customerName = targetOrder.value.partnerName || 'Khách hàng';
+  const targetId = targetOrder.value.id;
+  const note = confirmNote.value;
+  const customZalo = customConfirmZaloMessage.value;
+
+  confirmProgress.odooCode = initialCode;
+  confirmProgress.customerName = customerName;
+  confirmProgress.step1Done = false; // Step 1 spinning
+  confirmProgress.step2Done = false; // Step 2 spinning
+  confirmProgress.show = true;
+
   actionLoading.value = true;
   try {
-    const res = await confirmOrder(targetOrder.value.id, confirmNote.value);
-    showConfirmDialog.value = false;
-    snackbar.text = res.zaloSent
-      ? `Đã xác nhận đơn #${targetOrder.value.orderCode} & gửi tin nhắn Zalo cho khách hàng!`
-      : `Đã xác nhận đơn #${targetOrder.value.orderCode} (${res.zaloReason || 'Không có Zalo chat'})`;
-    snackbar.color = 'success';
-    snackbar.show = true;
+    // 1. Await real creation of quotation / order in DB & Odoo
+    const res = await confirmOrder(targetId, note, customZalo);
+    if (res?.order?.orderCode) {
+      confirmProgress.odooCode = res.order.orderCode;
+    }
+    confirmProgress.step1Done = true; // Step 1 is REALLY complete!
 
     await loadData();
     await fetchAllBadges();
+
+    // If step 2 already completed (via fast socket event), dismiss after 1.5s
+    if (confirmProgress.step2Done) {
+      progressDismissTimer = setTimeout(() => {
+        showConfirmDialog.value = false;
+        confirmProgress.show = false;
+        targetOrder.value = null;
+        actionLoading.value = false;
+      }, 1500);
+    }
   } catch (err: any) {
+    confirmProgress.show = false;
     snackbar.text = err.response?.data?.error || err.message || 'Lỗi khi xác nhận đơn hàng';
     snackbar.color = 'error';
     snackbar.show = true;
-  } finally {
     actionLoading.value = false;
+    await loadData();
+    await fetchAllBadges();
   }
 }
 
 async function executeRejectOrder() {
-  if (!targetOrder.value) return;
+  if (!targetOrder.value || actionLoading.value) return;
+  const orderCode = targetOrder.value.orderCode;
   actionLoading.value = true;
   try {
-    const res = await rejectOrder(targetOrder.value.id, activeRejectReason.value);
+    const res = await rejectOrder(
+      targetOrder.value.id,
+      activeRejectReason.value,
+      customRejectZaloMessage.value
+    );
     showRejectDialog.value = false;
+    targetOrder.value = null;
     snackbar.text = res.zaloSent
-      ? `Đã từ chối đơn #${targetOrder.value.orderCode} & gửi tin nhắn thông báo đến khách hàng!`
-      : `Đã từ chối đơn #${targetOrder.value.orderCode} (${res.zaloReason || 'Không có Zalo chat'})`;
+      ? `Đã từ chối đơn #${orderCode} & gửi tin nhắn thông báo đến khách hàng!`
+      : `Đã từ chối đơn #${orderCode} (${res.message || 'Đã từ chối'})`;
     snackbar.color = 'warning';
     snackbar.show = true;
 
@@ -1022,6 +1134,8 @@ async function executeRejectOrder() {
     snackbar.text = err.response?.data?.error || err.message || 'Lỗi khi từ chối đơn hàng';
     snackbar.color = 'error';
     snackbar.show = true;
+    await loadData();
+    await fetchAllBadges();
   } finally {
     actionLoading.value = false;
   }
@@ -1081,6 +1195,22 @@ onMounted(async () => {
         fetchSalespersons(),
       ]);
     });
+
+    // Real-time listener for when Zalo message and PDF delivery finishes
+    socket.on('order:delivery_complete', (_data: any) => {
+      if (confirmProgress.show) {
+        confirmProgress.step2Done = true; // Step 2 is ACTUALLY complete
+        if (confirmProgress.step1Done) {
+          if (progressDismissTimer) clearTimeout(progressDismissTimer);
+          progressDismissTimer = setTimeout(() => {
+            showConfirmDialog.value = false;
+            confirmProgress.show = false;
+            targetOrder.value = null;
+            actionLoading.value = false;
+          }, 1500);
+        }
+      }
+    });
   } catch (err) {
     console.error('Failed to setup socket listener in OrdersView:', err);
   }
@@ -1097,11 +1227,62 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.orders-table {
+  width: 100% !important;
+}
 .orders-table th {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 600;
+  white-space: nowrap;
+}
+.orders-table th,
+.orders-table td {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+  white-space: nowrap;
+}
+/* Desktop: Proportional auto-fit with evenly distributed space */
+@media (min-width: 769px) {
+  :deep(.v-table__wrapper > table) {
+    width: 100% !important;
+    table-layout: auto !important;
+  }
+  .orders-table th,
+  .orders-table td {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    white-space: nowrap !important;
+  }
+}
+/* Mobile: Fixed layout with percentage columns, no scroll */
+@media (max-width: 768px) {
+  :deep(.v-table__wrapper) {
+    overflow-x: hidden !important;
+    width: 100% !important;
+  }
+  :deep(.v-table__wrapper > table) {
+    width: 100% !important;
+    min-width: 100% !important;
+    table-layout: fixed !important;
+  }
+  .orders-table th {
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+    font-size: 11.5px !important;
+  }
+  .orders-table td {
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+    font-size: 12px !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .orders-table .v-chip {
+    font-size: 11px !important;
+    height: 20px !important;
+  }
 }
 .order-row:hover {
   background-color: rgba(var(--v-theme-primary), 0.04) !important;
@@ -1134,5 +1315,48 @@ onUnmounted(() => {
 }
 .animate-spin-slow {
   animation: spin-slow 8s linear infinite;
+}
+
+.confirm-progress-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 99999;
+  min-width: 360px;
+  max-width: 440px;
+  background: rgba(var(--v-theme-surface), 0.98);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--v-border-color), 0.2) !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22) !important;
+}
+
+.progress-step-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.scale-up-anim {
+  animation: scaleUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes scaleUp {
+  0% { transform: scale(0.4); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.slide-fade-enter-active {
+  transition: all 0.35s ease-out;
+}
+.slide-fade-leave-active {
+  transition: all 0.25s cubic-bezier(1, 0.5, 0.8, 1);
+}
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateY(-20px);
+  opacity: 0;
 }
 </style>

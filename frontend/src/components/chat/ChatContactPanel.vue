@@ -55,7 +55,7 @@
     </div>
 
     <!-- 2. Tabs Navigation (4 Tabs: Thông tin, Lịch hẹn, Đơn hàng, File & Media) -->
-    <v-tabs v-model="activeTab" color="primary" density="compact" class="border-b px-2 flex-shrink-0 panel-tabs">
+    <v-tabs v-model="activeTab" color="primary" density="compact" class="border-b px-2 flex-shrink-0 panel-tabs" :grow="$vuetify.display.smAndDown" show-arrows>
       <v-tab value="info" class="text-caption font-weight-bold">
         <v-icon start size="14">lucide-user</v-icon>
         Thông tin
@@ -75,7 +75,11 @@
     </v-tabs>
 
     <!-- 3. Tab Body Content -->
-    <div class="flex-grow-1 overflow-y-auto px-4 py-3 custom-scrollbar" style="min-height: 0;">
+    <div
+      class="flex-grow-1 custom-scrollbar"
+      :class="activeTab === 'media' ? 'overflow-hidden pa-0' : 'overflow-y-auto px-4 py-3'"
+      style="min-height: 0;"
+    >
       
       <!-- TAB 1: THÔNG TIN (2-COLUMN GRID) -->
       <div v-show="activeTab === 'info'" class="d-flex flex-column gap-3">
@@ -390,7 +394,10 @@
 
       <!-- TAB 4: FILE & MEDIA GALLERY -->
       <div v-show="activeTab === 'media'" class="h-100">
-        <ChatMediaGallery :messages="messages || []" />
+        <ChatMediaGallery
+          :conversation-id="conversation?.id || null"
+          :messages="messages || []"
+        />
       </div>
 
     </div>

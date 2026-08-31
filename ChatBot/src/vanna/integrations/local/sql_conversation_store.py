@@ -367,6 +367,8 @@ class SqlConversationStore(ConversationStore):
             finally:
                 conn.close()
 
+    save_conversation = update_conversation
+
     async def delete_conversation(self, conversation_id: str, user: User) -> bool:
         """Delete a conversation."""
         async with self._lock:

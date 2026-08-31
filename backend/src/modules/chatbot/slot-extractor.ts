@@ -42,6 +42,7 @@ export interface ExtractedSlots {
     | 'CHECK_PRODUCT_SAFETY'
     | 'HANDLE_OBJECTION'
     | 'ORDER_INTENT'
+    | 'CONFIRM_ORDER'
     | 'ASK_ORDER_STATUS'
     | 'HANDOFF_REQUEST'
     | 'COMPLAINT'
@@ -66,6 +67,8 @@ export interface ExtractedSlots {
   customerName?: string;
   phone?: string;
   address?: string;
+  paymentTerm?: string;
+  invalidPaymentTerm?: string;
   orderQuantity?: number;
   answeredPendingSlots: string[];
 }
@@ -269,8 +272,62 @@ export class SlotExtractor {
       result.answeredPendingSlots.push('phone');
     }
 
+    // 9b. Extract Delivery Address
+    const addressKeywords = /(?:giao về|giao ve|giao đến|giao den|giao tới|giao toi|ship về|ship ve|ship đến|ship den|địa chỉ|dia chi|nhận tại|nhan tai)\s*[:：]?\s*([^.,\n\r]+(?:,\s*[^.,\n\r]+)*)/i;
+    const addrMatch = raw.match(addressKeywords);
+    if (addrMatch && addrMatch[1]) {
+      const cleanAddr = addrMatch[1].replace(/(?:nha|nhé|nhe|ạ|a|sđt|sdt|\d{9,11}).*$/i, '').trim();
+      if (cleanAddr.length >= 5) {
+        result.address = cleanAddr;
+        result.answeredPendingSlots.push('address');
+      }
+    } else if (/(?:đường|duong|quận|quan|huyện|huyen|phường|phuong|xã|xa|tp\.?|thành phố|thanh pho|ấp|ap|tổ|to)\s+[a-zA-Z0-9\s,]+/i.test(raw)) {
+      const parts = raw.split(/[\n,]/).map(p => p.trim()).filter(p => /(?:đường|quận|huyện|phường|xã|tp|ấp|lê|nguyễn|trần|lý|hai bà trưng|duẩn)/i.test(p));
+      if (parts.length > 0) {
+        result.address = parts.join(', ').replace(/(?:nha|nhé|nhe|ạ|a|sđt|sdt|\d{9,11}).*$/i, '').trim();
+        if (result.address.length >= 5) {
+          result.answeredPendingSlots.push('address');
+        }
+      }
+    }
+
+    // 9c. Extract Payment Terms (Thanh toán ngay, 15 ngày, 21 ngày, 30 ngày, 45 ngày, Cuối tháng kế tiếp)
+    let paymentTerm: string | undefined;
+    if (/\b(thanh to[aá]n ngay|ngay|ti[eề]n m[aặ]t|chuy[eể]n kho[aả]n ngay|cod|tr[aả] ti[eề]n m[aặ]t|thanh to[aá]n lu[oô]n|ck ngay)\b/i.test(text)) {
+      paymentTerm = 'Thanh toán ngay';
+    } else if (/\b(15\s*ng[aà]y|c[oô]ng n[oợ]\s*15\s*ng[aà]y)\b/i.test(text)) {
+      paymentTerm = '15 ngày';
+    } else if (/\b(21\s*ng[aà]y|c[oô]ng n[oợ]\s*21\s*ng[aà]y)\b/i.test(text)) {
+      paymentTerm = '21 ngày';
+    } else if (/\b(30\s*ng[aà]y|1\s*th[aá]ng|c[oô]ng n[oợ]\s*30\s*ng[aà]y|c[oô]ng n[oợ]\s*1\s*th[aá]ng)\b/i.test(text)) {
+      paymentTerm = '30 ngày';
+    } else if (/\b(45\s*ng[aà]y|c[oô]ng n[oợ]\s*45\s*ng[aà]y)\b/i.test(text)) {
+      paymentTerm = '45 ngày';
+    } else if (/\b(cu[oố]i th[aá]ng k[eế] ti[eế]p|cu[oố]i th[aá]ng sau|cu[oố]i th[aá]ng)\b/i.test(text)) {
+      paymentTerm = 'Cuối tháng kế tiếp';
+    }
+
+    if (paymentTerm) {
+      result.paymentTerm = paymentTerm;
+      result.answeredPendingSlots.push('payment_term');
+    } else if (/\b(?:trong\s+)?(\d+)\s*(ng[aà]y|tu[aâầ]n|th[aá]ng)\b/i.test(text)) {
+      // Customer mentioned a time duration that doesn't match any supported payment term
+      const match = text.match(/\b(?:trong\s+)?(\d+)\s*(ng[aà]y|tu[aâầ]n|th[aá]ng)\b/i);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        const unit = match[2].toLowerCase();
+        let days = num;
+        if (/tu[aâầ]n/i.test(unit)) days = num * 7;
+        else if (/th[aá]ng/i.test(unit)) days = num * 30;
+
+        if (days > 0 && ![15, 21, 30, 45].includes(days)) {
+          result.invalidPaymentTerm = `${match[1]} ${match[2]}`;
+        }
+      }
+    }
+
     // 10. Extract SKUs mentioned in message (e.g. C14, DB-VP01, B03, B06, C28, E01)
-    const skuMatches = raw.match(/\b([A-Z]{1,3}(?:-[A-Z0-9]+)?|\b[BCE]\d{2,3}(?:-\d+)?)\b/g);
+    const skuMatches = raw.match(/\b([BCE]\d{1,3}(?:-\d+)?|DB-[A-Z0-9]+|OD-\d+)\b/gi);
     const uniqueSkus = skuMatches ? Array.from(new Set(skuMatches.map(s => s.toUpperCase()))) : [];
 
     // 11. Classify Customer Stage, Objection, and Intent
@@ -292,32 +349,54 @@ export class SlotExtractor {
       return result;
     }
 
-    // C. High Buying Intent: "Cho chị 2 gói", "Mua 1 gói thử", "Lấy loại này", "Ship về Q7"
-    const orderQtyMatch = text.match(/\b(?:cho chị|cho em|lấy|mua|đặt)\s*(\d+)\s*(?:gói|túi|hộp|bịch|cây)\b/i);
-    if (orderQtyMatch && orderQtyMatch[1]) {
-      result.orderQuantity = parseInt(orderQtyMatch[1], 10);
-      result.intent = 'ORDER_INTENT';
+    // B2. Customer Order Confirmation (e.g. "ok", "oke", "okie", "oki", "okay", "đồng ý", "xác nhận", "chốt", "duyệt", "đúng rồi", "giao đi", "lên đơn", "chính xác"...)
+    const isAffirmative =
+      /^(ok|oke|okie|oki|okay|k|uk|ừ|uh|uhm|dạ|da|vâng|vang|được|duoc|dc|chốt|chot|duyệt|duyet|xác nhận|xac nhan|đồng ý|dong y|đúng|dung|chuẩn|chuan)$/i.test(text.trim()) ||
+      /\b(đồng ý|dong y|xác nhận|xac nhan|ok\b|oke\b|okie\b|oki\b|okay\b|đúng rồi|dung roi|chuẩn rồi|chuan roi|chốt nha|chốt nhé|chot nhe|chốt luôn|chot luon|chốt đơn|chot don|giao nhé|gửi nhé|duyệt nhé|duyệt đi|lên đơn đi|lên đơn nhé|đặt luôn|giao luôn|gửi luôn|ship luôn|ship đi|chính xác|đúng thông tin)\b/i.test(text);
+
+    if (isAffirmative && !/\b(chưa|không|ko|thôi|hủy|khong|chua|thoi|huy|đừng)\b/i.test(text)) {
+      result.intent = 'CONFIRM_ORDER';
       result.customerStage = 'READY_TO_BUY';
       result.buyingIntentLevel = 'HIGH';
       return result;
     }
 
-    if (/\b(chốt đơn|lên đơn|tạo đơn|đặt hàng ngay|ship cho em|giao cho em|lấy cho em|chốt cho em|cho chị \d|cho em \d|mua thử \d|lấy loại này|chốt loại này|ship về)\b/i.test(text)) {
-      result.intent = 'ORDER_INTENT';
-      result.customerStage = 'READY_TO_BUY';
-      result.buyingIntentLevel = 'HIGH';
-      return result;
-    }
+    // C. High Buying Intent: "Cho chị 2 gói", "Mua 1 gói thử", "Lấy loại này", "Đóng gói cho tôi 100 C28 và 250 C14"
+    const orderKeywords = /(?:đóng gói|dong goi|chốt đơn|chot don|lên đơn|len don|tạo đơn|tao don|đặt hàng|dat hang|ship cho|giao cho|lấy cho|cho tôi|cho toi|cho mình|cho minh|cho em|cho anh|cho chị|cho shop|gói cho|lấy cho|giao về|ship về|đặt luôn|lấy luôn|lấy giúp|mua giúp|gửi cho)/i;
+    const hasOrderQty = /\b\d+\s*(?:gói|túi|hộp|bịch|cây|phần|kg|thùng|lon)?\b/i.test(text);
+    const mentionsPaymentTermTopic = /(?:điều khoản thanh toán|hình thức thanh toán|thanh toán thế nào|thanh toán như thế nào|chưa hỏi điều khoản)/i.test(text);
 
-    // D. Product Comparison: "C14 với DB-VP01 cái nào phù hợp hơn", "so sánh C14 và B03"
-    if (uniqueSkus.length >= 2 || /\b(với|va|và|hay|so sánh|cái nào tốt hơn|cái nào phù hợp hơn|loại nào hơn)\b/i.test(text) && uniqueSkus.length >= 1) {
-      if (uniqueSkus.length >= 2 || text.includes('cái nào') || text.includes('so sánh')) {
-        result.intent = 'COMPARE_PRODUCTS';
-        result.customerStage = 'COMPARING';
-        result.buyingIntentLevel = 'MEDIUM';
-        result.comparisonSkus = uniqueSkus;
-        return result;
+    if (orderKeywords.test(text) || (hasOrderQty && uniqueSkus.length > 0) || mentionsPaymentTermTopic) {
+      const orderQtyMatch = text.match(/(?:cho chị|cho em|lấy|mua|đặt|đóng gói)?\s*(\d+)\s*(?:gói|túi|hộp|bịch|cây|phần)/i);
+      if (orderQtyMatch && orderQtyMatch[1]) {
+        result.orderQuantity = parseInt(orderQtyMatch[1], 10);
       }
+      result.intent = 'ORDER_INTENT';
+      result.customerStage = 'READY_TO_BUY';
+      result.buyingIntentLevel = 'HIGH';
+      return result;
+    }
+
+    // C2. Customer providing delivery info (phone / address) for order collection
+    if ((result.phone || result.address || /(?:giao về|ship về|giao tới|địa chỉ|sđt|sdt|nhận hàng)/i.test(text)) &&
+        (pendingSlots.includes('phone') || pendingSlots.includes('address') || pendingSlots.length > 0 || /(?:giao|ship|quận|huyện|phường|xã|đường|ấp|tổ|sđt|sdt|tp\.?hcm|hà nội)/i.test(text))) {
+      result.intent = 'ORDER_INTENT';
+      result.customerStage = 'READY_TO_BUY';
+      result.buyingIntentLevel = 'HIGH';
+      return result;
+    }
+
+    // D. Product Comparison: ONLY when customer explicitly asks to compare!
+    // Never treat ordering multiple SKUs (e.g. C28 and C14) as comparison!
+    const isExplicitComparison = /(?:so sánh|so sanh|cái nào tốt hơn|cái nào hơn|cái nào phù hợp|loại nào hơn|loại nào tốt hơn|khác nhau thế nào|khác gì nhau|nên lấy cái nào|nên chọn cái nào|nên mua loại nào)/i.test(text) ||
+      (uniqueSkus.length >= 2 && /(?:cái nào|loại nào|so sánh|khác nhau)/i.test(text));
+
+    if (isExplicitComparison) {
+      result.intent = 'COMPARE_PRODUCTS';
+      result.customerStage = 'COMPARING';
+      result.buyingIntentLevel = 'MEDIUM';
+      result.comparisonSkus = uniqueSkus;
+      return result;
     }
 
     // E. Product Safety / Ingredient / Rawhide / Choking specific queries
@@ -451,6 +530,16 @@ export class SlotExtractor {
 
     if (extracted.phone) {
       customer.phone = updateFact(customer.phone, { value: extracted.phone, status: 'CONFIRMED', source: 'customer_message' }, extracted.isCorrection);
+      customerUpdated = true;
+    }
+
+    if (extracted.address) {
+      customer.address = updateFact(customer.address, { value: extracted.address, status: 'CONFIRMED', source: 'customer_message' }, extracted.isCorrection);
+      customerUpdated = true;
+    }
+
+    if (extracted.paymentTerm) {
+      customer.payment_term = updateFact(customer.payment_term, { value: extracted.paymentTerm, status: 'CONFIRMED', source: 'customer_message' }, extracted.isCorrection);
       customerUpdated = true;
     }
 

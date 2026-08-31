@@ -269,9 +269,9 @@ class ChatbotStateMachine {
       const draftPayload: any = state.draftOrder ? { ...state.draftOrder } : { items: [] };
       if (state.customerInfo) {
         draftPayload.customer = {
-          name: state.customerInfo.name?.value || null,
-          phone: state.customerInfo.phone?.value || null,
-          shippingAddress: state.customerInfo.address?.value || null,
+          name: state.customerInfo.name?.value || draftPayload.customer?.name || null,
+          phone: state.customerInfo.phone?.value || draftPayload.customer?.phone || null,
+          shippingAddress: state.customerInfo.address?.value || draftPayload.customer?.shippingAddress || null,
         };
       }
 

@@ -22,6 +22,7 @@ import { SlotExtractor } from './slot-extractor.js';
 import { NextActionEngine, type NextActionDecision } from './next-action-engine.js';
 import { ContextBuilder } from './context-builder.js';
 import { ClaimValidator } from './claim-validator.js';
+import { createConfirmedFact } from './customer-fact-model.js';
 
 export const recentAiMessages = new Map<string, number>();
 
@@ -106,6 +107,24 @@ class ChatbotService {
         return;
       }
 
+      // 3.1. Data Privacy & Internal Security Guardrail Check
+      const privacyCheck = ChatbotGuardrails.checkDataPrivacySafety(messageText);
+      if (privacyCheck.isViolating && privacyCheck.cannedResponse) {
+        await this.sendAiResponse(conversationId, zaloAccountId, privacyCheck.cannedResponse, orgId);
+        await this.logAudit({
+          orgId,
+          conversationId,
+          userMessage: messageText,
+          intentDetected: 'PRIVACY_VIOLATION_BLOCKED',
+          toolCalls: [],
+          aiResponse: privacyCheck.cannedResponse,
+          latencyMs: Date.now() - startTime,
+          modelUsed: 'privacy-guardrail',
+          isHandoff: false,
+        });
+        return;
+      }
+
       // 4. Load 3-Tier Memory Context
       const memory = await chatbotStateMachine.loadMemoryContext(conversationId, orgId);
       const toolExecutor = new ChatbotToolExecutor(orgId, conversationId, contactId);
@@ -129,6 +148,7 @@ class ChatbotService {
       }
 
       // 7. Next Action Engine Decision
+      const hasDraft = !!(memory.sessionState.draftOrder?.items && memory.sessionState.draftOrder.items.length > 0);
       const nextDecision: NextActionDecision = NextActionEngine.decide(
         memory.currentState,
         memory.sessionState.petInfo,
@@ -136,7 +156,8 @@ class ChatbotService {
         extracted,
         memory.sessionState.lastAiQuestion,
         memory.sessionState.pendingSlots,
-        !!(memory.sessionState.draftOrder?.paymentTerm)
+        !!(memory.sessionState.draftOrder?.paymentTerm),
+        hasDraft
       );
 
       let toolResultsSummary: string | undefined;
@@ -159,6 +180,14 @@ class ChatbotService {
           isHandoff: true,
         });
         return;
+      }
+
+      if (nextDecision.action === 'CONFIRM_CUSTOMER_ORDER') {
+        const confirmResult = await toolExecutor.confirmCustomerOrder();
+        executedTools.push({ name: 'confirm_customer_order', args: {} });
+        if (confirmResult?.message) {
+          toolResultsSummary = confirmResult.message;
+        }
       }
 
       if (nextDecision.action === 'COMPARE_PRODUCTS' && nextDecision.comparisonSkus) {
@@ -201,6 +230,7 @@ class ChatbotService {
         pendingSlots: memory.sessionState.pendingSlots,
         draftOrder: memory.sessionState.draftOrder,
         toolResultsSummary,
+        invalidPaymentTerm: extracted.invalidPaymentTerm,
       });
 
       const messages: any[] = [{ role: 'system', content: systemPrompt }];
@@ -216,14 +246,31 @@ class ChatbotService {
       // Append current user message
       messages.push({ role: 'user', content: messageText });
 
-      // 10. Call LLM with Tool Calling Loop
+      // 10. Determine State-Scoped Tools
+      const isCheckingOut =
+        memory.currentState === 'ORDER_COLLECTION' ||
+        memory.currentState === 'CONFIRMATION' ||
+        memory.currentState === 'ORDER_DRAFT' ||
+        nextDecision.action === 'CREATE_ORDER_DRAFT';
+
+      const wantsToExploreMore = /tìm thêm|xem thêm|sản phẩm khác|món khác|mua thêm loại|giới thiệu thêm|tư vấn thêm/i.test(messageText);
+
+      let scopedTools = CHATBOT_TOOL_DEFINITIONS;
+      if (isCheckingOut && !wantsToExploreMore) {
+        // Exclude broad product search and comparison during checkout to eliminate unnecessary latency and distraction
+        scopedTools = CHATBOT_TOOL_DEFINITIONS.filter(
+          t => t.function.name !== 'search_product' && t.function.name !== 'compare_products'
+        );
+      }
+
+      // Call LLM with Tool Calling Loop
       const apiKey = config.llm?.apiKey || config.groq?.apiKey || process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || '';
       if (!apiKey) {
         logger.warn('[chatbot-service] LLM API key (GEMINI_API_KEY/GROQ_API_KEY) is not configured in environment!');
         return;
       }
 
-      let response = await this.callGroqApi(apiKey, messages, CHATBOT_TOOL_DEFINITIONS);
+      let response = await this.callGroqApi(apiKey, messages, scopedTools);
       let assistantMsg = response?.choices?.[0]?.message;
 
       let iterations = 0;
@@ -253,19 +300,14 @@ class ChatbotService {
           if (fnName === 'extract_order_draft' && toolResult?.draft) {
             const d = toolResult.draft;
             if (d.items && d.items.length > 0) {
-              memory.sessionState.draftOrder = {
-                items: d.items.map((it: any) => ({
-                  sku: it.sku || '',
-                  name: it.matchedProductName || it.productNameRaw || '',
-                  qty: it.quantity || 1,
-                  price: it.priceUnit || 0,
-                })),
-                recipientName: d.customer?.name || memory.contact?.fullName || undefined,
-                phone: d.customer?.phone || memory.contact?.phone || undefined,
-                address: d.shippingAddress?.fullAddress || memory.contact?.address || undefined,
-                subtotal: d.totalAmount || 0,
-              };
+              memory.sessionState.draftOrder = d;
             }
+          }
+
+          if (fnName === 'lookup_odoo_customer' && toolResult?.found) {
+            if (toolResult.name) memory.sessionState.customerInfo.name = createConfirmedFact(toolResult.name, 'crm');
+            if (toolResult.phone) memory.sessionState.customerInfo.phone = createConfirmedFact(toolResult.phone, 'crm');
+            if (toolResult.address) memory.sessionState.customerInfo.address = createConfirmedFact(toolResult.address, 'crm');
           }
 
           messages.push({
@@ -275,7 +317,7 @@ class ChatbotService {
           });
         }
 
-        response = await this.callGroqApi(apiKey, messages, CHATBOT_TOOL_DEFINITIONS);
+        response = await this.callGroqApi(apiKey, messages, scopedTools);
         assistantMsg = response?.choices?.[0]?.message;
       }
 
@@ -338,11 +380,14 @@ class ChatbotService {
       await this.sendAiResponse(conversationId, zaloAccountId, generatedReply, orgId);
 
       // 14. Persist updated session state and conversation state
+      const hasConfirmedTool = executedTools.some(t => t.name === 'confirm_customer_order');
+      const resolvedNextState = hasConfirmedTool ? 'CONFIRMATION' : nextDecision.nextState;
+
       await chatbotStateMachine.updateSessionState(
         conversationId,
         orgId,
         memory.sessionState,
-        nextDecision.nextState
+        resolvedNextState
       );
 
       // 14.1 Emit real-time socket events for order draft auto-population
@@ -471,29 +516,19 @@ class ChatbotService {
         return;
       }
 
-      // Simulated typing delay (1.2s) to mimic human response and prevent Zalo spam detection
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      const isTestConversation = conv.externalThreadId.startsWith('test_');
+
+      // Simulated typing delay (1.2s for real Zalo, 300ms for test sandbox)
+      await new Promise(resolve => setTimeout(resolve, isTestConversation ? 300 : 1200));
 
       // Mark as AI outbound so listener does NOT auto-pause AI and tags isAi: true
       markAiMessageSending(conversationId, text);
 
-      const instance = zaloPool.getInstance(zaloAccountId);
-      if (instance && instance.api) {
-        // Send outbound message to real Zalo
-        try {
-          await instance.api.sendMessage(
-            { msg: text },
-            conv.externalThreadId,
-            conv.threadType === 'group' ? 1 : 0
-          );
-          logger.info(`[chatbot-service] Sent AI reply via Zalo API to conv ${conversationId}`);
-        } catch (e: any) {
-          logger.warn(`[chatbot-service] Failed to deliver via Zalo API: ${e.message}`);
-        }
-      } else {
-        logger.info(`[chatbot-service] Zalo account ${zaloAccountId} offline (saved to CRM database fallback)`);
-        await prisma.message.create({
+      if (isTestConversation) {
+        // Test conversation: save directly to DB and emit via Socket.IO
+        const message = await prisma.message.create({
           data: {
+            id: randomUUID(),
             conversationId,
             senderType: 'self',
             content: text,
@@ -508,8 +543,54 @@ class ChatbotService {
           data: {
             lastMessageAt: new Date(),
             isReplied: true,
+            unreadCount: 0,
           },
         });
+
+        // Emit Socket.IO event for real-time Test Console update
+        const io = zaloPool.getIO();
+        io?.emit('chat:message', {
+          accountId: zaloAccountId,
+          message,
+          conversationId,
+        });
+
+        logger.info(`[chatbot-service] Test Sandbox: AI reply saved to DB & emitted via Socket.IO for conv ${conversationId}`);
+      } else {
+        const instance = zaloPool.getInstance(zaloAccountId);
+        if (instance && instance.api) {
+          // Send outbound message to real Zalo
+          try {
+            await instance.api.sendMessage(
+              { msg: text },
+              conv.externalThreadId,
+              conv.threadType === 'group' ? 1 : 0
+            );
+            logger.info(`[chatbot-service] Sent AI reply via Zalo API to conv ${conversationId}`);
+          } catch (e: any) {
+            logger.warn(`[chatbot-service] Failed to deliver via Zalo API: ${e.message}`);
+          }
+        } else {
+          logger.info(`[chatbot-service] Zalo account ${zaloAccountId} offline (saved to CRM database fallback)`);
+          await prisma.message.create({
+            data: {
+              conversationId,
+              senderType: 'self',
+              content: text,
+              contentType: 'text',
+              isAi: true,
+              sentAt: new Date(),
+            } as any,
+          });
+
+          await prisma.conversation.update({
+            where: { id: conversationId },
+            data: {
+              lastMessageAt: new Date(),
+              isReplied: true,
+            },
+          });
+        }
       }
 
       logger.info(`[chatbot-service] Saved & Sent AI reply to conv ${conversationId}`);

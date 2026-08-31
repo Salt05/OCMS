@@ -27,3 +27,8 @@ backend/uploads/
 backend/prisma/migrations/
 backend/prisma/dev.db
 backend/prisma/dev.db-journal
+
+# Python & ChatBot temp
+__pycache__/
+*.py[cod]
+ChatBot/**/query_results_*.csv

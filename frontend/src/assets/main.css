@@ -755,3 +755,79 @@ a,
   color: #efeeeb !important;
 }
 
+/* ─────────────────────────────────────────────────────────────
+   MOBILE & RESPONSIVE DESIGN SYSTEM OVERRIDES
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --mobile-bottom-nav-height: 58px;
+}
+
+/* Responsive display utilities */
+@media (max-width: 767.98px) {
+  .d-desktop-only {
+    display: none !important;
+  }
+  .d-mobile-only {
+    display: flex !important;
+  }
+  
+  /* Full width container for small screens */
+  .v-dialog:not(.v-dialog--fullscreen) {
+    max-width: calc(100vw - 24px) !important;
+    margin: 12px auto !important;
+  }
+
+  /* Prevent auto zoom in mobile Safari / Chrome on form fields */
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  textarea,
+  select,
+  .v-field input {
+    font-size: 16px !important;
+  }
+
+  /* Compact typography on small screens */
+  .editorial-heading {
+    font-size: 1.35rem !important;
+  }
+  
+  /* Tables horizontally scrollable with touch momentum */
+  .v-table__wrapper,
+  .v-data-table__wrapper {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+}
+
+@media (min-width: 768px) {
+  .d-mobile-only {
+    display: none !important;
+  }
+  .d-desktop-only {
+    display: flex !important;
+  }
+}
+
+/* Smooth touch scrolling */
+.smooth-scroll {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* Hide scrollbars cleanly when needed */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+

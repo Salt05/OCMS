@@ -2,6 +2,7 @@ import { ref, computed } from 'vue';
 import { api } from '@/api/index';
 import { io, Socket } from 'socket.io-client';
 import type { Contact } from '@/composables/use-contacts';
+import { useAuthStore } from '@/stores/auth';
 
 interface ZaloAccount {
   id: string;
@@ -102,7 +103,12 @@ export function useChat() {
     }
   }
 
-  async function selectConversation(convId: string) {
+  async function selectConversation(convId: string | null) {
+    if (!convId) {
+      selectedConvId.value = null;
+      messages.value = [];
+      return;
+    }
     selectedConvId.value = convId;
     hasMoreMessages.value = true;
     await fetchMessages(convId);
@@ -244,7 +250,20 @@ export function useChat() {
       fetchConversations();
     });
 
-    socket.on('chat:message', (data: { message: Message; conversationId: string }) => {
+    socket.on('chat:message', (data: { message: Message; conversationId: string; contactId?: string; assignedUserId?: string | null }) => {
+      const authStore = useAuthStore();
+      const currentUser = authStore.user;
+      const isAdmin = authStore.isAdmin;
+
+      // Check permission:
+      // - Admins/owners have access to all customer messages
+      // - Staff (members) only have access if:
+      //   1. The contact is assigned to them (data.assignedUserId === currentUser.id)
+      //   2. Or the conversation already exists in their assigned conversation list
+      const isAssignedToMe = !!(currentUser?.id && data.assignedUserId && data.assignedUserId === currentUser.id);
+      const isKnownInMyList = conversations.value.some(c => c.id === data.conversationId);
+      const hasPermission = isAdmin || isAssignedToMe || isKnownInMyList;
+
       // Add to messages if viewing this conversation
       if (data.conversationId === selectedConvId.value) {
         // Avoid duplicates and insert in chronological order
@@ -252,11 +271,14 @@ export function useChat() {
           messages.value = sortMessagesChronologically([...messages.value, data.message]);
         }
       }
-      // Refresh conversation list to update last message / unread count
-      fetchConversations();
+
+      // Refresh conversation list to update last message / unread count only if user has permission
+      if (hasPermission) {
+        fetchConversations();
+      }
       
       const isPushEnabled = localStorage.getItem('push_enabled') === 'true';
-      if (isPushEnabled && data.message.senderType === 'contact') {
+      if (isPushEnabled && data.message.senderType === 'contact' && hasPermission) {
         // Only play sound if document is hidden or viewing another conversation
         const isCurrentlyViewing = data.conversationId === selectedConvId.value;
         const shouldNotify = document.hidden || !isCurrentlyViewing;

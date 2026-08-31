@@ -56,6 +56,7 @@ export interface OrderItem {
   validityDate: string | null;
   activitySummary: string | null;
   pickingIds: any;
+  paymentTerm?: string | null;
   note: string | null;
   createdAt: string;
   updatedAt: string;
@@ -290,9 +291,9 @@ export function useOrders() {
     }
   }
 
-  async function confirmOrder(id: string, customNote?: string) {
+  async function confirmOrder(id: string, customNote?: string, customZaloMessage?: string) {
     try {
-      const res = await api.post(`/orders/${id}/confirm`, { customNote });
+      const res = await api.post(`/orders/${id}/confirm`, { customNote, customZaloMessage });
       return res.data;
     } catch (err) {
       console.error('[useOrders] confirmOrder error:', err);
@@ -300,9 +301,9 @@ export function useOrders() {
     }
   }
 
-  async function rejectOrder(id: string, reason: string) {
+  async function rejectOrder(id: string, reason: string, customZaloMessage?: string) {
     try {
-      const res = await api.post(`/orders/${id}/reject`, { reason });
+      const res = await api.post(`/orders/${id}/reject`, { reason, customZaloMessage });
       return res.data;
     } catch (err) {
       console.error('[useOrders] rejectOrder error:', err);

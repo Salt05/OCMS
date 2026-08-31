@@ -10,7 +10,7 @@
     </div>
 
     <!-- Tabs -->
-    <v-tabs v-model="activeTab" class="mb-4">
+    <v-tabs v-model="activeTab" class="mb-4" :grow="$vuetify.display.smAndDown" show-arrows>
       <v-tab value="today">Hôm nay</v-tab>
       <v-tab value="upcoming">Sắp tới</v-tab>
       <v-tab value="all">Tất cả</v-tab>
@@ -101,7 +101,7 @@
     </v-data-table>
 
     <!-- Create appointment dialog -->
-    <v-dialog v-model="showCreateDialog" max-width="520" persistent>
+    <v-dialog v-model="showCreateDialog" max-width="520" :fullscreen="$vuetify.display.xs" persistent>
       <v-card>
         <v-card-title class="d-flex align-center">
           Tạo lịch hẹn

@@ -5,7 +5,7 @@
       Cài đặt
     </h1>
 
-    <v-tabs v-model="tab" class="mb-4">
+    <v-tabs v-model="tab" class="mb-4" :grow="$vuetify.display.smAndDown" show-arrows>
       <v-tab value="users">Nhân viên</v-tab>
       <v-tab value="teams">Đội nhóm</v-tab>
       <v-tab value="org">Tổ chức</v-tab>
@@ -13,7 +13,7 @@
       <v-tab value="quick-messages">Tin nhắn mẫu</v-tab>
     </v-tabs>
 
-    <v-window v-model="tab">
+    <v-window v-model="tab" :touch="false">
       <!-- Tab 1: User management -->
       <v-window-item value="users">
         <div class="d-flex align-center mb-4">

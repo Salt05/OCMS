@@ -21,6 +21,7 @@ export type NextActionType =
   | 'ANSWER'
   | 'HANDLE_OBJECTION'
   | 'CREATE_ORDER_DRAFT'
+  | 'CONFIRM_CUSTOMER_ORDER'
   | 'HANDOFF_HUMAN'
   | 'WAIT'
   | 'END_CONVERSATION';
@@ -78,7 +79,8 @@ export class NextActionEngine {
     extracted: ExtractedSlots,
     lastAiQuestion?: string | null,
     pendingSlots: string[] = [],
-    hasPaymentTerm: boolean = false
+    hasPaymentTerm: boolean = false,
+    hasDraftItems: boolean = false
   ): NextActionDecision {
     // 1. Check for Direct Human Handoff Request
     if (extracted.intent === 'HANDOFF_REQUEST') {
@@ -151,19 +153,39 @@ export class NextActionEngine {
       };
     }
 
-    // 6. Check for Order Draft Intent (High Buying Intent)
-    if (extracted.intent === 'ORDER_INTENT' || extracted.buyingIntentLevel === 'HIGH') {
-      const hasPhone = customer.phone.status === 'CONFIRMED';
-      const hasAddress = customer.address.status === 'CONFIRMED';
-      const missing: string[] = [];
-      if (!hasPhone) missing.push('phone');
-      if (!hasAddress) missing.push('address');
-      if (!hasPaymentTerm) missing.push('payment_term');
+    // Check missing required slots for order completion
+    const hasPhone = customer.phone.status === 'CONFIRMED' || !!extracted.phone;
+    const hasAddress = customer.address.status === 'CONFIRMED' || !!extracted.address;
+    const hasPaymentTermVal = customer.payment_term?.status === 'CONFIRMED' || !!extracted.paymentTerm;
+    const missing: string[] = [];
+    if (!hasPhone) missing.push('phone');
+    if (!hasAddress) missing.push('address');
+    if (!hasPaymentTermVal) missing.push('payment_term');
 
+    // 5b. Check for Customer Order Confirmation (e.g. "Đồng ý", "Xác nhận", "OK em", "ok", "được rồi", "ừ")
+    // ONLY allow CONFIRM_CUSTOMER_ORDER if ALL required slots (especially payment term) are already confirmed!
+    if (extracted.intent === 'CONFIRM_ORDER' && missing.length === 0 && (
+      currentState === 'ORDER_COLLECTION' ||
+      currentState === 'ORDER_DRAFT' ||
+      currentState === 'CONFIRMATION' ||
+      hasDraftItems
+    )) {
+      return {
+        action: 'CONFIRM_CUSTOMER_ORDER',
+        nextState: 'CONFIRMATION',
+        reason: 'Khách hàng đã kiểm tra thông tin và nhắn xác nhận chốt đơn. Chuyển đơn sang trạng thái CONFIRMATION và gửi thông báo tới nhân viên để duyệt sang Odoo.',
+        missingRequiredSlots: [],
+      };
+    }
+
+    // 6. Check for Order Draft Intent (High Buying Intent) or Checkout
+    if (extracted.intent === 'ORDER_INTENT' || extracted.intent === 'CONFIRM_ORDER' || extracted.buyingIntentLevel === 'HIGH' || currentState === 'ORDER_COLLECTION' || currentState === 'ORDER_DRAFT') {
       return {
         action: 'CREATE_ORDER_DRAFT',
-        nextState: missing.length > 0 ? 'ORDER_COLLECTION' : 'ORDER_DRAFT',
-        reason: 'Khách bày tỏ ý định mua rõ ràng. Xác nhận sản phẩm + số lượng, hỏi info giao hàng và hình thức thanh toán.',
+        nextState: 'ORDER_COLLECTION',
+        reason: missing.length === 0
+          ? 'Đã có đầy đủ danh sách món, số lượng, SĐT, địa chỉ nhận hàng và điều khoản thanh toán. Giữ ở ORDER_COLLECTION để nhắc lại toàn bộ đơn và yêu cầu khách nhắn xác nhận lại trước khi tạo đơn sang Odoo.'
+          : `Khách bày tỏ ý định mua rõ ràng. Còn thiếu: ${missing.join(', ')}. Tiến hành thu thập thông tin giao hàng & điều khoản thanh toán.`,
         missingRequiredSlots: missing,
       };
     }

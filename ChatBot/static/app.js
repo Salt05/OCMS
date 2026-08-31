@@ -180,17 +180,33 @@ function showOrderModeToast(isOn) {
     document.getElementById("btn-toggle-data-panel")?.addEventListener("click", toggleDataPanel);
     document.getElementById("btn-close-data-panel")?.addEventListener("click", closeDataPanel);
 
-    // Toggle Sidebar
+    // Toggle Sidebar (Floating Overlay Drawer)
     const sidebar = document.getElementById("sidebar");
-    const toggleSidebar = () => {
-        sidebar?.classList.toggle("collapsed");
-        setTimeout(() => window.dispatchEvent(new Event("resize")), 260);
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+
+    const openSidebar = () => {
+        sidebar?.classList.add("open");
+        sidebarBackdrop?.classList.add("active");
     };
+
+    const closeSidebar = () => {
+        sidebar?.classList.remove("open");
+        sidebarBackdrop?.classList.remove("active");
+    };
+
+    const toggleSidebar = () => {
+        if (sidebar?.classList.contains("open")) {
+            closeSidebar();
+        } else {
+            openSidebar();
+        }
+    };
+
     document.getElementById("btn-toggle-sidebar-collapse")?.addEventListener("click", toggleSidebar);
     document.getElementById("btn-sidebar-toggle")?.addEventListener("click", toggleSidebar);
-    document.getElementById("btn-mobile-toggle")?.addEventListener("click", () => {
-        sidebar?.classList.toggle("open");
-    });
+    document.getElementById("btn-mobile-toggle")?.addEventListener("click", toggleSidebar);
+    document.getElementById("btn-close-sidebar")?.addEventListener("click", closeSidebar);
+    document.getElementById("sidebar-backdrop")?.addEventListener("click", closeSidebar);
 
     // Toggle Light / Dark Theme
     document.getElementById("btn-theme-toggle")?.addEventListener("click", toggleTheme);
@@ -358,6 +374,10 @@ async function selectConversation(convId, title) {
     activeConversationId = convId;
     document.getElementById("active-chat-title").textContent = title || "Cuộc trò chuyện";
 
+    // Auto-close sidebar overlay
+    document.getElementById("sidebar")?.classList.remove("open");
+    document.getElementById("sidebar-backdrop")?.classList.remove("active");
+
     // Highlight sidebar
     document.querySelectorAll(".conv-item").forEach(el => {
         el.classList.toggle("active", el.dataset.id === convId);
@@ -432,6 +452,10 @@ function startNewChat() {
     document.getElementById("user-input").value = "";
     document.getElementById("user-input").style.height = "auto";
     
+    // Auto-close sidebar overlay
+    document.getElementById("sidebar")?.classList.remove("open");
+    document.getElementById("sidebar-backdrop")?.classList.remove("active");
+
     // Reset Tasks
     tasksHistory = [];
     renderTasksList();

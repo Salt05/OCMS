@@ -191,6 +191,8 @@ export function attachZaloListener(ctx: ListenerContext): void {
           accountId,
           message: result.message,
           conversationId: result.conversationId,
+          contactId: result.contactId,
+          assignedUserId: result.assignedUserId,
         });
       }
     } catch (err) {

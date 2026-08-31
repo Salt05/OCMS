@@ -39,7 +39,7 @@ class OdooService {
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(15000),
           body: JSON.stringify({
             jsonrpc: '2.0',
             method: 'call',
@@ -372,8 +372,9 @@ class OdooService {
       if (data.user_id) orderData.user_id = data.user_id;
       if (data.note) orderData.note = data.note;
 
-      const orderId = await this.executeKw<number>('sale.order', 'create', [[orderData]]);
-      if (!orderId) {
+      const res = await this.executeKw<any>('sale.order', 'create', [[orderData]]);
+      const orderId = Array.isArray(res) ? res[0] : (typeof res === 'number' ? res : parseInt(res, 10));
+      if (!orderId || isNaN(orderId)) {
         throw new Error('Tạo đơn hàng thất bại: Odoo trả về rỗng');
       }
       return orderId;
@@ -517,10 +518,11 @@ class OdooService {
     }
   }
 
-  async confirmOrder(odooOrderId: number): Promise<boolean> {
+  async confirmOrder(odooOrderId: number | number[]): Promise<boolean> {
     try {
-      await this.executeKw('sale.order', 'action_confirm', [[odooOrderId]]);
-      logger.info(`[odoo] Order ${odooOrderId} confirmed successfully`);
+      const id = Array.isArray(odooOrderId) ? odooOrderId[0] : Number(odooOrderId);
+      await this.executeKw('sale.order', 'action_confirm', [[id]]);
+      logger.info(`[odoo] Order ${id} confirmed successfully`);
       return true;
     } catch (err: any) {
       logger.warn(`[odoo] Failed to confirm order ${odooOrderId}: ${err.message}`);

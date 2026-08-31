@@ -27,13 +27,13 @@
       <v-btn color="success" prepend-icon="lucide-file-spreadsheet" class="ml-2" :loading="exporting" @click="exportExcel">Xuất Excel</v-btn>
     </div>
 
-    <v-tabs v-model="tab" class="mb-4">
+    <v-tabs v-model="tab" class="mb-4" :grow="$vuetify.display.smAndDown" show-arrows>
       <v-tab value="messages">Tin nhắn</v-tab>
       <v-tab value="contacts">Khách hàng</v-tab>
       <v-tab value="appointments">Lịch hẹn</v-tab>
     </v-tabs>
 
-    <v-window v-model="tab">
+    <v-window v-model="tab" :touch="false">
       <v-window-item value="messages">
         <v-data-table
           :headers="msgHeaders"

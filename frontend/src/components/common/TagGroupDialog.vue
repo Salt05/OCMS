@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="dialogModel" max-width="720" persistent>
+  <v-dialog v-model="dialogModel" max-width="720" :fullscreen="$vuetify.display.xs" persistent>
     <v-card class="tag-group-dialog-card rounded-lg">
       <v-card-title class="d-flex align-center justify-space-between px-4 py-3 border-b">
         <div class="d-flex align-center font-weight-bold text-body-1">

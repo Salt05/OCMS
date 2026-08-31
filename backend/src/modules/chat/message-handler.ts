@@ -47,6 +47,7 @@ export interface HandleMessageResult {
   conversationId: string;
   orgId: string;
   contactId: string | null;
+  assignedUserId: string | null;
 }
 
 export function getMessageCliMsgId(message: any): string {
@@ -268,6 +269,7 @@ export async function handleIncomingMessage(
       conversationId: conversation.id,
       orgId: account.orgId,
       contactId,
+      assignedUserId: (conversation as any).assignedUserId ?? contactData.assignedUserId ?? null,
     };
   } catch (err) {
     logger.error('[message-handler] handleIncomingMessage error:', err);
@@ -276,7 +278,7 @@ export async function handleIncomingMessage(
 }
 
 // Upsert contact — handles both user and group conversations
-async function upsertContact(msg: IncomingMessage, orgId: string): Promise<{ id: string; contactType: string } | null> {
+async function upsertContact(msg: IncomingMessage, orgId: string): Promise<{ id: string; contactType: string; assignedUserId: string | null } | null> {
   // Group messages: create/update a "contact" record representing the group
   if (msg.threadType === 'group') {
     const groupUid = msg.threadId;
@@ -297,15 +299,15 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<{ id:
           avatarUrl: msg.groupAvatarUrl || null,
           metadata: { isGroup: true },
         },
-        select: { id: true, fullName: true, contactType: true },
+        select: { id: true, fullName: true, contactType: true, assignedUserId: true },
       });
-      return { id: groupContact.id, contactType: groupContact.contactType };
+      return { id: groupContact.id, contactType: groupContact.contactType, assignedUserId: groupContact.assignedUserId };
     } catch {
       const existing = await prisma.contact.findFirst({
         where: { zaloUid: groupUid, orgId },
-        select: { id: true, contactType: true },
+        select: { id: true, contactType: true, assignedUserId: true },
       });
-      return existing ? { id: existing.id, contactType: existing.contactType } : null;
+      return existing ? { id: existing.id, contactType: existing.contactType, assignedUserId: existing.assignedUserId } : null;
     }
   }
 
@@ -328,15 +330,15 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<{ id:
         zaloName: msg.isSelf ? null : (msg.senderName || null),
         fullName: msg.isSelf ? 'Khách hàng' : (msg.senderName || 'Unknown'),
       },
-      select: { id: true, fullName: true, zaloName: true, contactType: true },
+      select: { id: true, fullName: true, zaloName: true, contactType: true, assignedUserId: true },
     });
-    return { id: contact.id, contactType: contact.contactType };
+    return { id: contact.id, contactType: contact.contactType, assignedUserId: contact.assignedUserId };
   } catch {
     const existing = await prisma.contact.findFirst({
       where: { zaloUid: targetUid, orgId },
-      select: { id: true, contactType: true },
+      select: { id: true, contactType: true, assignedUserId: true },
     });
-    return existing ? { id: existing.id, contactType: existing.contactType } : null;
+    return existing ? { id: existing.id, contactType: existing.contactType, assignedUserId: existing.assignedUserId } : null;
   }
 }
 
@@ -350,7 +352,7 @@ async function findOrCreateConversation(
 
   const existing = await prisma.conversation.findFirst({
     where: { zaloAccountId: msg.accountId, externalThreadId },
-    select: { id: true, contactId: true },
+    select: { id: true, contactId: true, contact: { select: { assignedUserId: true } } },
   });
 
   if (existing) {
@@ -360,10 +362,10 @@ async function findOrCreateConversation(
         data: { contactId },
       }).catch(() => {});
     }
-    return existing;
+    return { id: existing.id, assignedUserId: existing.contact?.assignedUserId };
   }
 
-  return prisma.conversation.create({
+  const created = await prisma.conversation.create({
     data: {
       id: randomUUID(),
       orgId,
@@ -375,8 +377,10 @@ async function findOrCreateConversation(
       unreadCount: msg.isSelf ? 0 : 1,
       isReplied: msg.isSelf,
     },
-    select: { id: true },
+    select: { id: true, contact: { select: { assignedUserId: true } } },
   });
+
+  return { id: created.id, assignedUserId: created.contact?.assignedUserId };
 }
 
 // Update conversation metadata after a new message

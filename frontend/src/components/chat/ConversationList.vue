@@ -23,12 +23,12 @@
       </div>
     </div>
 
-    <!-- 2. Zalo PC Tab Filter Row: Tất cả | Chưa đọc | Phân loại ▾ | ... -->
+    <!-- 2. Zalo PC Tab Filter Row: Tất cả | Chưa đọc | Khu vực | Phân loại ▾ | ... -->
     <div class="zalo-conv-tabs-row d-flex align-center justify-space-between px-3 pb-2 border-b">
-      <div class="d-flex align-center gap-3">
+      <div class="d-flex align-center gap-2 flex-nowrap overflow-x-auto">
         <button
           type="button"
-          class="zalo-tab-btn"
+          class="zalo-tab-btn flex-shrink-0"
           :class="{ 'is-active': activeTab === 'all' }"
           @click="activeTab = 'all'"
         >
@@ -36,12 +36,21 @@
         </button>
         <button
           type="button"
-          class="zalo-tab-btn d-flex align-center gap-1"
+          class="zalo-tab-btn d-flex align-center gap-1 flex-shrink-0"
           :class="{ 'is-active': activeTab === 'unread' }"
           @click="activeTab = 'unread'"
         >
           <span>Chưa đọc</span>
           <span v-if="unreadTotalCount > 0" class="zalo-tab-badge">{{ unreadTotalCount }}</span>
+        </button>
+        <button
+          type="button"
+          class="zalo-tab-btn d-flex align-center gap-1 flex-shrink-0"
+          :class="{ 'is-active': activeTab === 'zone' }"
+          @click="activeTab = 'zone'"
+        >
+          <span>Khu vực</span>
+          <span v-if="zoneGroups.length > 0" class="zalo-tab-badge-neutral">{{ zoneGroups.length }}</span>
         </button>
       </div>
 
@@ -387,72 +396,234 @@
     <div class="zalo-conv-items-scroll flex-grow-1 overflow-y-auto pa-0">
       <v-progress-linear v-if="loading" indeterminate color="primary" />
 
-      <div
-        v-for="conv in displayedConversations"
-        :key="conv.id"
-        class="zalo-conv-item d-flex align-center px-3 py-2 cursor-pointer position-relative"
-        :class="{
-          'is-active': conv.id === selectedId,
-          'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
-          'needs-confirmation-blink': conv.currentState === 'CONFIRMATION'
-        }"
-        @click="$emit('select', conv.id)"
-      >
-        <!-- Avatar -->
-        <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
-          <v-avatar size="44" class="zalo-conv-avatar">
-            <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl" />
-            <v-icon v-else-if="conv.threadType === 'group'" icon="lucide-users" color="white" size="22" />
-            <v-icon v-else icon="lucide-user" color="white" size="22" />
-          </v-avatar>
-          <span v-if="conv.threadType !== 'group'" class="zalo-conv-online-dot"></span>
-        </div>
-
-        <!-- Conversation Details -->
-        <div class="zalo-conv-body flex-grow-1 overflow-hidden d-flex flex-column justify-center">
-          <!-- Top Row: Name + Time -->
+      <!-- ZONE TAB VIEW: GROUPED BY ZONE (ACCORDION) -->
+      <template v-if="activeTab === 'zone'">
+        <!-- Zone Toolbar (Summary + Quick Expand/Collapse & Pills) -->
+        <div v-if="zoneGroups.length > 0" class="zone-filter-toolbar px-3 py-2 border-b">
           <div class="d-flex align-center justify-space-between mb-1">
-            <span
-              class="zalo-conv-title text-truncate"
-              :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
+            <span class="text-caption text-medium-emphasis font-weight-medium d-flex align-center gap-1" style="font-size: 0.72rem;">
+              <v-icon size="12" color="primary">lucide-map-pin</v-icon>
+              {{ zoneGroups.length }} khu vực • {{ displayedConversations.length }} khách
+            </span>
+            <button
+              type="button"
+              class="zone-toggle-all-btn text-caption text-primary"
+              @click="isAllZonesCollapsed ? expandAllZones() : collapseAllZones()"
             >
-              {{ conv.threadType === 'group' ? (conv.contact?.fullName || 'Nhóm') : (conv.contact?.fullName || 'Khách hàng') }}
-            </span>
-            <span class="zalo-conv-time text-caption text-grey ml-2 flex-shrink-0">
-              {{ formatTime(conv.lastMessageAt) }}
-            </span>
+              {{ isAllZonesCollapsed ? 'Mở tất cả' : 'Thu gọn tất cả' }}
+            </button>
           </div>
 
-          <!-- Bottom Row: Snippet + Unread Badge -->
-          <div class="d-flex align-center justify-space-between mb-0.5">
-            <span
-              class="zalo-conv-snippet text-truncate text-caption"
-              :class="{ 'text-high-emphasis font-weight-medium': conv.unreadCount > 0, 'text-grey': conv.unreadCount === 0 }"
+          <!-- Zone Pills Scrollable Bar -->
+          <div v-if="zoneGroups.length > 1" class="zone-pills-row d-flex align-center gap-1 overflow-x-auto pt-1">
+            <button
+              type="button"
+              class="zone-pill-btn flex-shrink-0"
+              :class="{ 'is-active': selectedZoneFilter === null }"
+              @click="selectedZoneFilter = null"
             >
-              {{ lastMessagePreview(conv) }}
-            </span>
-            <span v-if="conv.unreadCount > 0" class="zalo-unread-badge ml-2 flex-shrink-0">
-              {{ conv.unreadCount > 99 ? '99+' : conv.unreadCount }}
-            </span>
-          </div>
-
-          <!-- Extra row: Tags (if any) -->
-          <div v-if="getContactTags(conv).length > 0" class="conv-tags-row d-flex align-center flex-wrap mt-1">
-            <span
-              v-for="(tag, idx) in getContactTags(conv).slice(0, 3)"
-              :key="idx"
-              class="conv-tag-badge text-truncate"
-              :style="getTagStyle(tag)"
-              :title="getTagName(tag)"
+              Tất cả ({{ displayedConversations.length }})
+            </button>
+            <button
+              v-for="grp in zoneGroups"
+              :key="grp.name"
+              type="button"
+              class="zone-pill-btn flex-shrink-0"
+              :class="{ 'is-active': selectedZoneFilter === grp.name }"
+              @click="selectedZoneFilter = selectedZoneFilter === grp.name ? null : grp.name"
             >
-              {{ getTagName(tag) }}
-            </span>
-            <span v-if="getContactTags(conv).length > 3" class="conv-tag-more">
-              +{{ getContactTags(conv).length - 3 }}
-            </span>
+              {{ grp.name }} ({{ grp.conversations.length }})
+            </button>
           </div>
         </div>
-      </div>
+
+        <!-- Zone Accordion Groups List -->
+        <div
+          v-for="group in filteredZoneGroups"
+          :key="group.name"
+          class="zone-group-block"
+        >
+          <!-- Zone Accordion Header -->
+          <div
+            class="zone-group-header d-flex align-center justify-space-between px-3 py-2 cursor-pointer"
+            @click="toggleZoneCollapse(group.name)"
+          >
+            <div class="d-flex align-center gap-1.5 min-w-0 mr-2 text-truncate">
+              <v-icon size="14" :color="group.name === 'Chưa có khu vực' ? 'grey' : 'primary'" class="flex-shrink-0">
+                {{ group.name === 'Chưa có khu vực' ? 'lucide-map-pin-off' : 'lucide-map-pin' }}
+              </v-icon>
+              <span class="text-caption font-weight-bold text-truncate text-high-emphasis">
+                {{ group.name }}
+              </span>
+              <span class="zone-group-count-badge flex-shrink-0">
+                {{ group.conversations.length }}
+              </span>
+              <span v-if="group.unreadCount > 0" class="zone-unread-pill flex-shrink-0 ml-1">
+                {{ group.unreadCount }} chưa đọc
+              </span>
+            </div>
+            <v-icon size="14" class="text-medium-emphasis flex-shrink-0">
+              {{ collapsedZones.has(group.name) ? 'lucide-chevron-right' : 'lucide-chevron-down' }}
+            </v-icon>
+          </div>
+
+          <!-- Zone Conversations Items -->
+          <div v-show="!collapsedZones.has(group.name)" class="zone-group-items">
+            <div
+              v-for="conv in group.conversations"
+              :key="conv.id"
+              class="zalo-conv-item d-flex align-center px-3 py-2 cursor-pointer position-relative"
+              :class="{
+                'is-active': conv.id === selectedId,
+                'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
+                'needs-confirmation-blink': conv.currentState === 'CONFIRMATION'
+              }"
+              @click="$emit('select', conv.id)"
+            >
+              <!-- Avatar -->
+              <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
+                <v-avatar size="44" class="zalo-conv-avatar">
+                  <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl" />
+                  <v-icon v-else-if="conv.threadType === 'group'" icon="lucide-users" color="white" size="22" />
+                  <v-icon v-else icon="lucide-user" color="white" size="22" />
+                </v-avatar>
+                <span v-if="conv.threadType !== 'group'" class="zalo-conv-online-dot"></span>
+              </div>
+
+              <!-- Conversation Details -->
+              <div class="zalo-conv-body flex-grow-1 overflow-hidden d-flex flex-column justify-center">
+                <!-- Top Row: Name + Time -->
+                <div class="d-flex align-center justify-space-between mb-1">
+                  <span
+                    class="zalo-conv-title text-truncate"
+                    :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
+                  >
+                    {{ conv.threadType === 'group' ? (conv.contact?.fullName || 'Nhóm') : (conv.contact?.fullName || 'Khách hàng') }}
+                  </span>
+                  <span class="zalo-conv-time text-caption text-grey ml-2 flex-shrink-0">
+                    {{ formatTime(conv.lastMessageAt) }}
+                  </span>
+                </div>
+
+                <!-- Bottom Row: Snippet + Unread Badge -->
+                <div class="d-flex align-center justify-space-between mb-0.5">
+                  <span
+                    class="zalo-conv-snippet text-truncate text-caption"
+                    :class="{ 'text-high-emphasis font-weight-medium': conv.unreadCount > 0, 'text-grey': conv.unreadCount === 0 }"
+                  >
+                    {{ lastMessagePreview(conv) }}
+                  </span>
+                  <span v-if="conv.unreadCount > 0" class="zalo-unread-badge ml-2 flex-shrink-0">
+                    {{ conv.unreadCount > 99 ? '99+' : conv.unreadCount }}
+                  </span>
+                </div>
+
+                <!-- Extra row: Zone badge + Tags (if any) -->
+                <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+                  <span
+                    v-if="conv.contact?.zone"
+                    class="conv-zone-badge text-truncate"
+                    :title="`Khu vực: ${conv.contact.zone}`"
+                  >
+                    <v-icon size="10" class="mr-0.5">lucide-map-pin</v-icon>
+                    {{ conv.contact.zone }}
+                  </span>
+                  <span
+                    v-for="(tag, idx) in getContactTags(conv).slice(0, 3)"
+                    :key="idx"
+                    class="conv-tag-badge text-truncate"
+                    :style="getTagStyle(tag)"
+                    :title="getTagName(tag)"
+                  >
+                    {{ getTagName(tag) }}
+                  </span>
+                  <span v-if="getContactTags(conv).length > 3" class="conv-tag-more">
+                    +{{ getContactTags(conv).length - 3 }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ALL / UNREAD TAB VIEW: FLAT LIST -->
+      <template v-else>
+        <div
+          v-for="conv in displayedConversations"
+          :key="conv.id"
+          class="zalo-conv-item d-flex align-center px-3 py-2 cursor-pointer position-relative"
+          :class="{
+            'is-active': conv.id === selectedId,
+            'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
+            'needs-confirmation-blink': conv.currentState === 'CONFIRMATION'
+          }"
+          @click="$emit('select', conv.id)"
+        >
+          <!-- Avatar -->
+          <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
+            <v-avatar size="44" class="zalo-conv-avatar">
+              <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl" />
+              <v-icon v-else-if="conv.threadType === 'group'" icon="lucide-users" color="white" size="22" />
+              <v-icon v-else icon="lucide-user" color="white" size="22" />
+            </v-avatar>
+            <span v-if="conv.threadType !== 'group'" class="zalo-conv-online-dot"></span>
+          </div>
+
+          <!-- Conversation Details -->
+          <div class="zalo-conv-body flex-grow-1 overflow-hidden d-flex flex-column justify-center">
+            <!-- Top Row: Name + Time -->
+            <div class="d-flex align-center justify-space-between mb-1">
+              <span
+                class="zalo-conv-title text-truncate"
+                :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
+              >
+                {{ conv.threadType === 'group' ? (conv.contact?.fullName || 'Nhóm') : (conv.contact?.fullName || 'Khách hàng') }}
+              </span>
+              <span class="zalo-conv-time text-caption text-grey ml-2 flex-shrink-0">
+                {{ formatTime(conv.lastMessageAt) }}
+              </span>
+            </div>
+
+            <!-- Bottom Row: Snippet + Unread Badge -->
+            <div class="d-flex align-center justify-space-between mb-0.5">
+              <span
+                class="zalo-conv-snippet text-truncate text-caption"
+                :class="{ 'text-high-emphasis font-weight-medium': conv.unreadCount > 0, 'text-grey': conv.unreadCount === 0 }"
+              >
+                {{ lastMessagePreview(conv) }}
+              </span>
+              <span v-if="conv.unreadCount > 0" class="zalo-unread-badge ml-2 flex-shrink-0">
+                {{ conv.unreadCount > 99 ? '99+' : conv.unreadCount }}
+              </span>
+            </div>
+
+            <!-- Extra row: Zone badge + Tags (if any) -->
+            <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+              <span
+                v-if="conv.contact?.zone"
+                class="conv-zone-badge text-truncate"
+                :title="`Khu vực: ${conv.contact.zone}`"
+              >
+                <v-icon size="10" class="mr-0.5">lucide-map-pin</v-icon>
+                {{ conv.contact.zone }}
+              </span>
+              <span
+                v-for="(tag, idx) in getContactTags(conv).slice(0, 3)"
+                :key="idx"
+                class="conv-tag-badge text-truncate"
+                :style="getTagStyle(tag)"
+                :title="getTagName(tag)"
+              >
+                {{ getTagName(tag) }}
+              </span>
+              <span v-if="getContactTags(conv).length > 3" class="conv-tag-more">
+                +{{ getContactTags(conv).length - 3 }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </template>
 
       <!-- Empty State -->
       <div v-if="!loading && displayedConversations.length === 0" class="text-center pa-8 text-grey">
@@ -466,6 +637,10 @@
         <div v-else-if="activeTab === 'unread'">
           <v-icon size="32" class="mb-2 text-grey">lucide-check-circle</v-icon>
           <div>Không có tin nhắn chưa đọc</div>
+        </div>
+        <div v-else-if="activeTab === 'zone'">
+          <v-icon size="32" class="mb-2 text-grey">lucide-map-pin-off</v-icon>
+          <div>Chưa có dữ liệu cuộc trò chuyện theo khu vực</div>
         </div>
         <div v-else>
           Chưa có cuộc trò chuyện nào
@@ -529,7 +704,81 @@ const { tags, tagGroups, getTagStyle, getTagName, fetchTags, fetchTagGroups, del
 const accountOptions = ref<{ text: string; value: string }[]>([]);
 const selectedAccountId = ref<string | null>(null);
 
-const activeTab = ref<'all' | 'unread'>('all');
+const activeTab = ref<'all' | 'unread' | 'zone'>('all');
+const selectedZoneFilter = ref<string | null>(null);
+const collapsedZones = ref<Set<string>>(new Set());
+
+interface ZoneGroupItem {
+  name: string;
+  conversations: Conversation[];
+  unreadCount: number;
+}
+
+function getConversationZone(conv: Conversation): string {
+  const z = conv.contact?.zone?.trim();
+  if (z) return z;
+  return 'Chưa có khu vực';
+}
+
+const zoneGroups = computed<ZoneGroupItem[]>(() => {
+  const list = displayedConversations.value;
+  const map = new Map<string, Conversation[]>();
+
+  for (const conv of list) {
+    const zone = getConversationZone(conv);
+    if (!map.has(zone)) {
+      map.set(zone, []);
+    }
+    map.get(zone)!.push(conv);
+  }
+
+  const groups: ZoneGroupItem[] = [];
+  map.forEach((convs, zone) => {
+    const unread = convs.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+    groups.push({
+      name: zone,
+      conversations: convs,
+      unreadCount: unread,
+    });
+  });
+
+  // Sắp xếp các khu vực theo thứ tự bảng chữ cái tiếng Việt, 'Chưa có khu vực' ở cuối cùng
+  groups.sort((a, b) => {
+    if (a.name === 'Chưa có khu vực') return 1;
+    if (b.name === 'Chưa có khu vực') return -1;
+    return a.name.localeCompare(b.name, 'vi', { sensitivity: 'base' });
+  });
+
+  return groups;
+});
+
+const filteredZoneGroups = computed(() => {
+  if (!selectedZoneFilter.value) return zoneGroups.value;
+  return zoneGroups.value.filter((g) => g.name === selectedZoneFilter.value);
+});
+
+function toggleZoneCollapse(zoneName: string) {
+  const newSet = new Set(collapsedZones.value);
+  if (newSet.has(zoneName)) {
+    newSet.delete(zoneName);
+  } else {
+    newSet.add(zoneName);
+  }
+  collapsedZones.value = newSet;
+}
+
+function expandAllZones() {
+  collapsedZones.value = new Set();
+}
+
+function collapseAllZones() {
+  collapsedZones.value = new Set(zoneGroups.value.map((g) => g.name));
+}
+
+const isAllZonesCollapsed = computed(() => {
+  if (zoneGroups.value.length === 0) return false;
+  return zoneGroups.value.every((g) => collapsedZones.value.has(g.name));
+});
 
 const unreadTotalCount = computed(() => {
   return props.conversations.reduce((sum, conv) => sum + (conv.unreadCount || 0), 0);
@@ -758,7 +1007,7 @@ function formatTime(dateStr: string | null): string {
 <style scoped>
 .zalo-search-box { background-color: rgba(0,0,0,0.05); border-radius: 8px; height: 36px; }
 .zalo-search-input { border: none; background: transparent; outline: none; font-size: 13px; }
-.zalo-tab-btn { background: transparent; border: none; padding: 4px 8px; border-radius: 6px; }
+.zalo-tab-btn { background: transparent; border: none; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .zalo-tab-btn.is-active { background: rgba(0, 104, 255, 0.1); color: #0068ff; }
 .zalo-filter-count-dot { width: 6px; height: 6px; background: #0068ff; border-radius: 50%; display: inline-block; }
 .tag-group-filter-item { border: 1px solid rgba(0,0,0,0.1); }
@@ -789,6 +1038,144 @@ function formatTime(dateStr: string | null): string {
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
+}
+
+/* Zone Group Styling */
+.zone-filter-toolbar {
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.02);
+}
+.zone-toggle-all-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0;
+}
+.zone-toggle-all-btn:hover {
+  text-decoration: underline;
+}
+.zone-pills-row {
+  scrollbar-width: thin;
+}
+.zone-pills-row::-webkit-scrollbar {
+  height: 3px;
+}
+.zone-pill-btn {
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.06);
+  color: inherit;
+  border: 1px solid rgba(var(--v-theme-on-surface, 128, 128, 128), 0.1);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.zone-pill-btn:hover {
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.12);
+}
+.zone-pill-btn.is-active {
+  background: rgba(0, 104, 255, 0.12);
+  color: #0068ff;
+  border-color: rgba(0, 104, 255, 0.3);
+  font-weight: 700;
+}
+.zone-group-header {
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.05);
+  border-bottom: 1px solid rgba(var(--v-theme-on-surface, 128, 128, 128), 0.08);
+  border-top: 1px solid rgba(var(--v-theme-on-surface, 128, 128, 128), 0.04);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  backdrop-filter: blur(8px);
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+.zone-group-header:hover {
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.09);
+}
+.zone-group-count-badge {
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.1);
+  color: inherit;
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.zone-unread-pill {
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 999px;
+  padding: 0 5px;
+}
+.conv-zone-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.2;
+  max-width: 120px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+  border: 1px solid rgba(14, 165, 233, 0.25);
+}
+.zalo-tab-badge {
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 6px;
+  line-height: 1.2;
+}
+.zalo-tab-badge-neutral {
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.1);
+  color: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 5px;
+  line-height: 1.2;
+}
+.zalo-unread-badge {
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.zalo-conv-online-dot {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #10b981;
+  border: 2px solid var(--v-theme-surface, #ffffff);
+}
+.zalo-conv-item {
+  border-bottom: 1px solid rgba(var(--v-theme-on-surface, 128, 128, 128), 0.06);
+  transition: background-color 0.15s ease;
+}
+.zalo-conv-item:hover {
+  background-color: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.04);
+}
+.zalo-conv-item.is-active {
+  background-color: rgba(0, 104, 255, 0.1) !important;
 }
 
 .needs-confirmation-blink {

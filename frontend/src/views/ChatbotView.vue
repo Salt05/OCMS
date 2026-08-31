@@ -93,7 +93,7 @@ onMounted(() => {
 
 <style scoped>
 .chatbot-view-container {
-  height: 100vh;
+  height: 100%;
   width: 100%;
 }
 
