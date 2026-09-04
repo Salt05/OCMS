@@ -8,6 +8,8 @@ import { prisma } from '../../shared/database/prisma-client.js';
 export interface GroundedProduct {
   sku: string;
   name: string;
+  brand: string | null;
+  category: string | null;
   price: number;
   wholesale_price: number;
   formatted_price: string;
@@ -34,6 +36,8 @@ export class ProductGroundingEngine {
     const rawTarget = product.target ? product.target.trim() : null;
     const rawDesc = product.description ? product.description.trim() : null;
     const rawSpec = product.specification || product.weight || null;
+    const rawBrand = product.brand ? product.brand.trim() : null;
+    const rawCategory = product.category ? product.category.trim() : null;
 
     const wholesalePrice = product.wholesalePrice > 0 ? product.wholesalePrice : product.listPrice;
 
@@ -90,6 +94,8 @@ export class ProductGroundingEngine {
     return {
       sku: rawSku,
       name: rawName,
+      brand: rawBrand,
+      category: rawCategory,
       price: wholesalePrice,
       wholesale_price: wholesalePrice,
       formatted_price: `${wholesalePrice.toLocaleString('vi-VN')} đ`,
@@ -120,9 +126,11 @@ export class ProductGroundingEngine {
       const ageStr = p.suitable_min_age_months !== null ? `Từ ${p.suitable_min_age_months} tháng tuổi trở lên` : 'Chưa có thông tin xác nhận độ tuổi trong CSDL';
       const textureStr = p.texture_category !== 'unknown' ? p.texture_category : 'Chưa rõ';
       const rawhideStr = p.is_rawhide_free === true ? 'Công nghệ Rawhide-Free (Không da bò sống)' : (p.is_rawhide_free === false ? 'Có da bò tự nhiên' : 'Không đề cập');
+      const catStr = p.category ? `\n- Ngành hàng: ${p.category}` : '';
+      const brandStr = p.brand ? `\n- Thương hiệu (Brand): ${p.brand}` : '';
 
       return `
-📌 [Mã ${p.sku}] ${p.name}
+📌 [Mã ${p.sku}] ${p.name}${catStr}${brandStr}
 - Giá sỉ niêm yết: ${p.formatted_price} (${p.specification || p.uom})
 - Thành phần: ${ingStr}
 - Độ mềm/kết cấu: ${textureStr}

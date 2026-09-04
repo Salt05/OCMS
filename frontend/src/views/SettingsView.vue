@@ -32,19 +32,41 @@
               <v-chip :color="roleColor(item.role)" size="small" variant="flat">{{ roleLabel(item.role) }}</v-chip>
             </template>
             <template #item.isActive="{ item }">
-              <v-chip :color="item.isActive ? 'success' : 'default'" size="small" variant="flat">
-                {{ item.isActive ? 'Hoạt động' : 'Vô hiệu' }}
-              </v-chip>
+              <v-tooltip
+                :text="authStore.isAdmin && item.id !== authStore.user?.id && (authStore.isOwner || item.role !== 'owner') ? (item.isActive ? 'Nhấn để vô hiệu hóa tài khoản' : 'Nhấn để kích hoạt lại tài khoản') : ''"
+                location="top"
+              >
+                <template #activator="{ props }">
+                  <v-chip
+                    v-bind="props"
+                    :color="item.isActive ? 'success' : 'default'"
+                    size="small"
+                    variant="flat"
+                    :style="authStore.isAdmin && item.id !== authStore.user?.id && (authStore.isOwner || item.role !== 'owner') ? 'cursor: pointer;' : ''"
+                    @click="authStore.isAdmin && item.id !== authStore.user?.id && (authStore.isOwner || item.role !== 'owner') && promptToggleStatus(item)"
+                  >
+                    <v-icon start size="14">{{ item.isActive ? 'lucide-check-circle' : 'lucide-ban' }}</v-icon>
+                    {{ item.isActive ? 'Hoạt động' : 'Vô hiệu' }}
+                  </v-chip>
+                </template>
+              </v-tooltip>
             </template>
             <template #item.actions="{ item }">
               <v-btn v-if="authStore.isAdmin" icon size="small" title="Chỉnh sửa" @click="openEdit(item)">
                 <v-icon>lucide-pencil</v-icon>
               </v-btn>
-              <v-btn v-if="authStore.isAdmin" icon size="small" title="Đặt lại mật khẩu" @click="openPassword(item)">
+              <v-btn v-if="authStore.isAdmin && (authStore.isOwner || item.role !== 'owner')" icon size="small" title="Đặt lại mật khẩu" @click="openPassword(item)">
                 <v-icon>lucide-key-round</v-icon>
               </v-btn>
-              <v-btn v-if="authStore.isOwner && item.id !== authStore.user?.id" icon size="small" color="error" title="Vô hiệu hóa" @click="confirmDelete(item)">
-                <v-icon>lucide-trash-2</v-icon>
+              <v-btn
+                v-if="authStore.isAdmin && item.id !== authStore.user?.id && (authStore.isOwner || item.role !== 'owner')"
+                icon
+                size="small"
+                :color="item.isActive ? 'error' : 'success'"
+                :title="item.isActive ? 'Vô hiệu hóa tài khoản' : 'Kích hoạt lại tài khoản'"
+                @click="promptToggleStatus(item)"
+              >
+                <v-icon>{{ item.isActive ? 'lucide-user-x' : 'lucide-user-check' }}</v-icon>
               </v-btn>
             </template>
           </v-data-table>
@@ -100,7 +122,15 @@
                   </v-list-item>
                 </template>
               </v-autocomplete>
-              <v-select v-if="authStore.isOwner" v-model="form.role" :items="roleOptions" item-title="label" item-value="value" label="Vai trò" />
+              <v-select v-if="authStore.isOwner" v-model="form.role" :items="roleOptions" item-title="label" item-value="value" label="Vai trò" class="mb-2" />
+              <v-switch
+                v-if="authStore.isAdmin && (authStore.isOwner || selectedUser?.role !== 'owner') && selectedUser?.id !== authStore.user?.id"
+                v-model="form.isActive"
+                color="success"
+                :label="form.isActive ? 'Trạng thái: Đang hoạt động' : 'Trạng thái: Vô hiệu hóa'"
+                hide-details
+                class="mt-1"
+              />
               <v-alert v-if="dialogError" type="error" density="compact" class="mt-2">{{ dialogError }}</v-alert>
             </v-card-text>
             <v-card-actions>
@@ -127,15 +157,28 @@
           </v-card>
         </v-dialog>
 
-        <!-- Delete confirm dialog -->
-        <v-dialog v-model="showDelete" max-width="400">
+        <!-- Status toggle confirm dialog -->
+        <v-dialog v-model="showStatusConfirm" max-width="440">
           <v-card>
-            <v-card-title>Xác nhận vô hiệu hóa</v-card-title>
-            <v-card-text>Bạn có chắc muốn vô hiệu hóa nhân viên "{{ selectedUser?.fullName }}"?</v-card-text>
+            <v-card-title class="d-flex align-center">
+              <v-icon :color="targetStatus ? 'success' : 'error'" class="mr-2">
+                {{ targetStatus ? 'lucide-user-check' : 'lucide-user-x' }}
+              </v-icon>
+              {{ targetStatus ? 'Xác nhận kích hoạt tài khoản' : 'Xác nhận vô hiệu hóa tài khoản' }}
+            </v-card-title>
+            <v-card-text>
+              Bạn có chắc muốn {{ targetStatus ? 'kích hoạt lại' : 'vô hiệu hóa' }} tài khoản nhân viên 
+              <strong>"{{ selectedUser?.fullName || selectedUser?.email }}"</strong> không?
+              <div v-if="!targetStatus" class="text-caption text-medium-emphasis mt-2">
+                * Nhân viên bị vô hiệu hóa sẽ không thể đăng nhập hoặc thao tác trên hệ thống.
+              </div>
+            </v-card-text>
             <v-card-actions>
               <v-spacer />
-              <v-btn @click="showDelete = false">Hủy</v-btn>
-              <v-btn color="error" :loading="saving" @click="handleDelete">Vô hiệu hóa</v-btn>
+              <v-btn variant="text" @click="showStatusConfirm = false">Hủy</v-btn>
+              <v-btn :color="targetStatus ? 'success' : 'error'" :loading="saving" @click="handleToggleStatus">
+                {{ targetStatus ? 'Kích hoạt' : 'Vô hiệu hóa' }}
+              </v-btn>
             </v-card-actions>
           </v-card>
         </v-dialog>
@@ -174,14 +217,15 @@ import OrgSettings from '@/components/settings/OrgSettings.vue';
 import TagsSettingsTab from '@/components/settings/TagsSettingsTab.vue';
 import QuickMessagesTab from '@/components/settings/QuickMessagesTab.vue';
 
-const { users, loading, error, fetchUsers, createUser, updateUser, resetPassword, deleteUser } = useUsers();
+const { users, loading, error, fetchUsers, createUser, updateUser, resetPassword, toggleUserActive } = useUsers();
 const authStore = useAuthStore();
 
 const tab = ref('users');
 const showCreate = ref(false);
 const showEdit = ref(false);
 const showPassword = ref(false);
-const showDelete = ref(false);
+const showStatusConfirm = ref(false);
+const targetStatus = ref(true);
 const saving = ref(false);
 const dialogError = ref('');
 const newPassword = ref('');
@@ -190,7 +234,7 @@ const odooEmployees = ref<any[]>([]);
 const loadingOdooEmployees = ref(false);
 let searchOdooTimeout: any = null;
 
-const form = ref({ fullName: '', email: '', password: '', role: 'member', odooId: '' });
+const form = ref({ fullName: '', email: '', password: '', role: 'member', odooId: '', isActive: true });
 
 const roleOptions = [
   { label: 'Nhân viên', value: 'member' },
@@ -219,14 +263,21 @@ function roleLabel(role: string) {
 }
 
 function openCreate() {
-  form.value = { fullName: '', email: '', password: '', role: 'member', odooId: '' };
+  form.value = { fullName: '', email: '', password: '', role: 'member', odooId: '', isActive: true };
   dialogError.value = '';
   showCreate.value = true;
 }
 
 function openEdit(user: OrgUser) {
   selectedUser.value = user;
-  form.value = { fullName: user.fullName, email: user.email, password: '', role: user.role, odooId: user.odooId || '' };
+  form.value = {
+    fullName: user.fullName,
+    email: user.email,
+    password: '',
+    role: user.role,
+    odooId: user.odooId || '',
+    isActive: user.isActive,
+  };
   dialogError.value = '';
   odooEmployees.value = [];
   if (form.value.odooId) {
@@ -280,9 +331,24 @@ function openPassword(user: OrgUser) {
   showPassword.value = true;
 }
 
-function confirmDelete(user: OrgUser) {
+function promptToggleStatus(user: OrgUser) {
   selectedUser.value = user;
-  showDelete.value = true;
+  targetStatus.value = !user.isActive;
+  showStatusConfirm.value = true;
+}
+
+async function handleToggleStatus() {
+  if (!selectedUser.value) return;
+  saving.value = true;
+  dialogError.value = '';
+  const res = await toggleUserActive(selectedUser.value.id, targetStatus.value);
+  saving.value = false;
+  if (res.ok) {
+    showStatusConfirm.value = false;
+  } else {
+    error.value = res.error || 'Không thể thay đổi trạng thái nhân viên';
+    showStatusConfirm.value = false;
+  }
 }
 
 async function handleCreate() {
@@ -297,7 +363,13 @@ async function handleUpdate() {
   if (!selectedUser.value) return;
   saving.value = true;
   dialogError.value = '';
-  const res = await updateUser(selectedUser.value.id, { fullName: form.value.fullName, email: form.value.email, role: form.value.role, odooId: form.value.odooId });
+  const res = await updateUser(selectedUser.value.id, {
+    fullName: form.value.fullName,
+    email: form.value.email,
+    role: form.value.role,
+    odooId: form.value.odooId,
+    isActive: form.value.isActive,
+  });
   saving.value = false;
   if (res.ok) { showEdit.value = false; } else { dialogError.value = res.error || ''; }
 }
@@ -309,14 +381,6 @@ async function handlePassword() {
   const res = await resetPassword(selectedUser.value.id, newPassword.value);
   saving.value = false;
   if (res.ok) { showPassword.value = false; } else { dialogError.value = res.error || ''; }
-}
-
-async function handleDelete() {
-  if (!selectedUser.value) return;
-  saving.value = true;
-  const res = await deleteUser(selectedUser.value.id);
-  saving.value = false;
-  if (res.ok) { showDelete.value = false; }
 }
 
 onMounted(fetchUsers);

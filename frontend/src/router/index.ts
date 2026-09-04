@@ -40,14 +40,24 @@ const routes = [
   },
   {
     path: '/appointments',
-    name: 'Appointments',
-    component: () => import('@/views/AppointmentsView.vue'),
-    meta: { requiresAuth: true },
+    redirect: '/chat',
   },
   {
     path: '/orders',
     name: 'Orders',
     component: () => import('@/views/OrdersView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/products',
+    name: 'Products',
+    component: () => import('@/views/ProductsView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/promotions',
+    name: 'Promotions',
+    component: () => import('@/views/PromotionsView.vue'),
     meta: { requiresAuth: true },
   },
   {
@@ -61,12 +71,6 @@ const routes = [
     name: 'AIAssistant',
     component: () => import('@/views/ChatbotView.vue'),
     meta: { requiresAuth: true },
-  },
-  {
-    path: '/chatbot-test',
-    name: 'ChatbotTest',
-    component: () => import('@/views/ChatbotTestView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
     path: '/settings',

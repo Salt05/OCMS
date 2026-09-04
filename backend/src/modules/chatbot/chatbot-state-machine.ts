@@ -4,11 +4,13 @@
  */
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
 import {
   StructuredPetProfile,
   StructuredCustomerProfile,
   hydratePetProfile,
   hydrateCustomerProfile,
+  createConfirmedFact,
 } from './customer-fact-model.js';
 import type { ConversationState } from './next-action-engine.js';
 
@@ -30,6 +32,14 @@ export interface DraftOrderState {
   notes?: string;
   paymentTerm?: string | null;
   subtotal?: number;
+  isConfirmedByCustomer?: boolean;
+  unclearItems?: any[];
+  hasShownToCustomer?: boolean;
+  appliedPromotions?: any[];
+  freeItems?: any[];
+  explanations?: any[];
+  discountAmount?: number;
+  amountTotal?: number;
 }
 
 export interface SessionAiState {
@@ -124,7 +134,7 @@ class ChatbotStateMachine {
    */
   async pauseAi(conversationId: string, reason: string, durationMinutes = 60) {
     const pausedUntil = new Date(Date.now() + durationMinutes * 60 * 1000);
-    return prisma.conversation.update({
+    const updated = await prisma.conversation.update({
       where: { id: conversationId },
       data: {
         aiPaused: true,
@@ -133,13 +143,27 @@ class ChatbotStateMachine {
         currentState: 'AI_PAUSED',
       },
     });
+
+    try {
+      zaloPool.getIO()?.emit('chat:state_updated', {
+        conversationId,
+        currentState: 'AI_PAUSED',
+        aiPaused: true,
+        handoffReason: reason,
+        pausedUntil: pausedUntil.toISOString(),
+      });
+    } catch (e: any) {
+      logger.warn(`[chatbot-state-machine] Socket emit chat:state_updated failed: ${e.message}`);
+    }
+
+    return updated;
   }
 
   /**
    * Resume AI for a conversation
    */
   async resumeAi(conversationId: string) {
-    return prisma.conversation.update({
+    const updated = await prisma.conversation.update({
       where: { id: conversationId },
       data: {
         aiPaused: false,
@@ -148,19 +172,74 @@ class ChatbotStateMachine {
         currentState: 'GREETING',
       },
     });
+
+    try {
+      zaloPool.getIO()?.emit('chat:state_updated', {
+        conversationId,
+        currentState: 'GREETING',
+        aiPaused: false,
+        handoffReason: null,
+        pausedUntil: null,
+      });
+    } catch (e: any) {
+      logger.warn(`[chatbot-state-machine] Socket emit chat:state_updated failed: ${e.message}`);
+    }
+
+    return updated;
   }
 
   /**
    * Load 3-Tier Memory Context for LLM injection
    */
   async loadMemoryContext(conversationId: string, orgId: string) {
-    // Tier 1: Sliding window (10 messages)
-    const recentMessages = await prisma.message.findMany({
-      where: { conversationId, isDeleted: false },
-      orderBy: { sentAt: 'desc' },
-      take: 10,
+    // Tier 3: Long-term CRM contact & Customer profile
+    const conv = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: {
+        contact: true,
+      },
     });
-    const shortTermMessages = recentMessages.reverse();
+
+    // Check Context Boundary (Start / End markers)
+    const cAny = conv as any;
+    let sentAtGte: Date | undefined = cAny?.contextStartedAt || undefined;
+    let sentAtLte: Date | undefined = cAny?.contextEndedAt || undefined;
+
+    if (cAny?.contextStartMsgId && !sentAtGte) {
+      const startMsg = await prisma.message.findUnique({
+        where: { id: cAny.contextStartMsgId },
+        select: { sentAt: true },
+      });
+      if (startMsg) sentAtGte = startMsg.sentAt;
+    }
+    if (cAny?.contextEndMsgId && !sentAtLte) {
+      const endMsg = await prisma.message.findUnique({
+        where: { id: cAny.contextEndMsgId },
+        select: { sentAt: true },
+      });
+      if (endMsg) sentAtLte = endMsg.sentAt;
+    }
+
+    // Tier 1: Sliding window bounded by Context Boundary
+    let shortTermMessages: any[] = [];
+    if (sentAtGte) {
+      const msgWhere: any = { conversationId, isDeleted: false, sentAt: { gte: sentAtGte } };
+      if (sentAtLte) {
+        msgWhere.sentAt.lte = sentAtLte;
+      }
+      shortTermMessages = await prisma.message.findMany({
+        where: msgWhere,
+        orderBy: { sentAt: 'asc' },
+        take: 30,
+      });
+    } else {
+      const recentMessages = await prisma.message.findMany({
+        where: { conversationId, isDeleted: false },
+        orderBy: { sentAt: 'desc' },
+        take: 15,
+      });
+      shortTermMessages = recentMessages.reverse();
+    }
 
     // Tier 2: Session state
     let aiState = await prisma.conversationAiState.findUnique({
@@ -182,38 +261,6 @@ class ChatbotStateMachine {
 
     const rawPet = (aiState.petInfo as any) || {};
     const rawDraft = (aiState.draftOrder as any) || { items: [] };
-
-    // Tier 3: Long-term CRM contact & Customer profile
-    const conv = await prisma.conversation.findUnique({
-      where: { id: conversationId },
-      include: {
-        contact: true,
-      },
-    });
-
-    const structuredPet = hydratePetProfile(rawPet);
-    const structuredCustomer = hydrateCustomerProfile(rawDraft.customer || {}, conv?.contact);
-
-    // Session Expiration Check: If last message was > 3 hours ago, reset temporary draft order & pending questions
-    const lastMsgTime = recentMessages[0]?.sentAt ? new Date(recentMessages[0].sentAt).getTime() : 0;
-    const isNewSession = lastMsgTime > 0 && (Date.now() - lastMsgTime > 3 * 60 * 60 * 1000);
-
-    const activeDraft = isNewSession ? { items: [] } : (rawDraft.items ? rawDraft : { items: [] });
-    const activePendingSlots = isNewSession ? [] : (Array.isArray(rawPet._pendingSlots) ? rawPet._pendingSlots : []);
-    const activeLastQuestion = isNewSession ? null : (rawPet._lastAiQuestion || null);
-
-    const sessionState: SessionAiState = {
-      petInfo: structuredPet,
-      customerInfo: structuredCustomer,
-      customerSegment: (aiState.customerSegment as any) || 'retail',
-      draftOrder: activeDraft,
-      lastAiQuestion: activeLastQuestion,
-      expectedInformation: isNewSession ? null : (rawPet._expectedInformation || null),
-      pendingSlots: activePendingSlots,
-      contextSummary: aiState.contextSummary || undefined,
-      failedAttempts: aiState.failedAttempts || 0,
-      turnCount: isNewSession ? 0 : (rawPet._turnCount || shortTermMessages.length),
-    };
 
     let customerProfile: any = null;
     let orderHistory: any[] = [];
@@ -238,6 +285,49 @@ class ChatbotStateMachine {
         });
       }
     }
+
+    const structuredPet = hydratePetProfile(rawPet);
+    const structuredCustomer = hydrateCustomerProfile(rawDraft.customer || {}, conv?.contact);
+
+    // Persistent CRM & Customer preference preservation (Payment Term & Pronoun)
+    const persistentPaymentTerm =
+      rawPet._preferredPaymentTerm ||
+      orderHistory[0]?.paymentTerm ||
+      (customerProfile as any)?.propertyPaymentTermId ||
+      undefined;
+
+    if (persistentPaymentTerm && (!structuredCustomer.payment_term.value || structuredCustomer.payment_term.status !== 'CONFIRMED')) {
+      structuredCustomer.payment_term = createConfirmedFact(persistentPaymentTerm, 'crm');
+    }
+
+    // Session Expiration Check:
+    // Only timeout if NO explicit context boundary is pinned AND last message > 3 hours ago
+    const lastMsgTime = shortTermMessages[shortTermMessages.length - 1]?.sentAt
+      ? new Date(shortTermMessages[shortTermMessages.length - 1].sentAt).getTime()
+      : 0;
+    const isNewSession = !sentAtGte && lastMsgTime > 0 && (Date.now() - lastMsgTime > 3 * 60 * 60 * 1000);
+
+    const activeDraft = isNewSession ? { items: [] } : (rawDraft.items ? rawDraft : { items: [] });
+    // Pre-populate preferred payment term to active draft if not yet selected
+    if (persistentPaymentTerm && activeDraft && !activeDraft.paymentTerm) {
+      activeDraft.paymentTerm = persistentPaymentTerm;
+    }
+
+    const activePendingSlots = isNewSession ? [] : (Array.isArray(rawPet._pendingSlots) ? rawPet._pendingSlots : []);
+    const activeLastQuestion = isNewSession ? null : (rawPet._lastAiQuestion || null);
+
+    const sessionState: SessionAiState = {
+      petInfo: structuredPet,
+      customerInfo: structuredCustomer,
+      customerSegment: (aiState.customerSegment as any) || 'retail',
+      draftOrder: activeDraft,
+      lastAiQuestion: activeLastQuestion,
+      expectedInformation: isNewSession ? null : (rawPet._expectedInformation || null),
+      pendingSlots: activePendingSlots,
+      contextSummary: aiState.contextSummary || undefined,
+      failedAttempts: aiState.failedAttempts || 0,
+      turnCount: isNewSession ? 0 : (rawPet._turnCount || shortTermMessages.length),
+    };
 
     return {
       conversation: conv,
@@ -266,8 +356,8 @@ class ChatbotStateMachine {
       if (state.pendingSlots !== undefined) petPayload._pendingSlots = state.pendingSlots;
       if (state.turnCount !== undefined) petPayload._turnCount = state.turnCount;
 
-      const draftPayload: any = state.draftOrder ? { ...state.draftOrder } : { items: [] };
-      if (state.customerInfo) {
+      const draftPayload: any = state.draftOrder ? { ...state.draftOrder } : undefined;
+      if (draftPayload && state.customerInfo) {
         draftPayload.customer = {
           name: state.customerInfo.name?.value || draftPayload.customer?.name || null,
           phone: state.customerInfo.phone?.value || draftPayload.customer?.phone || null,
@@ -282,14 +372,14 @@ class ChatbotStateMachine {
           conversationId,
           petInfo: petPayload,
           customerSegment: state.customerSegment || 'retail',
-          draftOrder: draftPayload,
+          draftOrder: draftPayload || { items: [] },
           contextSummary: state.contextSummary || null,
           failedAttempts: state.failedAttempts || 0,
         },
         update: {
           petInfo: Object.keys(petPayload).length > 0 ? petPayload : undefined,
           customerSegment: state.customerSegment || undefined,
-          draftOrder: draftPayload,
+          draftOrder: draftPayload !== undefined ? draftPayload : undefined,
           contextSummary: state.contextSummary !== undefined ? state.contextSummary : undefined,
           failedAttempts: state.failedAttempts !== undefined ? state.failedAttempts : undefined,
         },

@@ -1,4 +1,4 @@
-# Hướng dẫn sử dụng ZaloCRM
+# Hướng dẫn sử dụng OCMS
 
 ## Mục lục
 

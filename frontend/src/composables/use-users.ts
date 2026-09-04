@@ -83,5 +83,11 @@ export function useUsers() {
     }
   }
 
-  return { users, loading, error, fetchUsers, createUser, updateUser, resetPassword, deleteUser };
+  async function toggleUserActive(id: string, isActive: boolean): Promise<{ ok: boolean; error?: string }> {
+    return updateUser(id, { isActive });
+  }
+
+  return { users, loading, error, fetchUsers, createUser, updateUser, resetPassword, deleteUser, toggleUserActive };
 }
+
+

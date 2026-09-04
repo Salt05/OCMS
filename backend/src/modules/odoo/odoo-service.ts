@@ -399,6 +399,45 @@ class OdooService {
     }
   }
 
+  async getCustomerOrderStats(partnerId: number | string): Promise<{
+    totalOrders: number;
+    totalRevenue: number;
+    lastOrderDate: string | null;
+    orders: any[];
+  }> {
+    const numericId = parseInt(String(partnerId).trim(), 10);
+    if (isNaN(numericId) || numericId <= 0) {
+      return { totalOrders: 0, totalRevenue: 0, lastOrderDate: null, orders: [] };
+    }
+    try {
+      const orders = await this.executeKw<any[]>('sale.order', 'search_read', [
+        [['partner_id', '=', numericId]]
+      ], {
+        fields: ['id', 'name', 'date_order', 'amount_total', 'state', 'invoice_status'],
+        order: 'date_order desc',
+        limit: 50,
+      });
+
+      if (!orders || orders.length === 0) {
+        return { totalOrders: 0, totalRevenue: 0, lastOrderDate: null, orders: [] };
+      }
+
+      const validOrders = orders.filter((o) => o.state !== 'cancel');
+      const totalRevenue = validOrders.reduce((sum, o) => sum + (Number(o.amount_total) || 0), 0);
+      const lastOrderDate = validOrders.length > 0 ? validOrders[0].date_order : null;
+
+      return {
+        totalOrders: validOrders.length,
+        totalRevenue,
+        lastOrderDate,
+        orders: validOrders,
+      };
+    } catch (err: any) {
+      logger.error(`[odoo] getCustomerOrderStats(${partnerId}) error:`, err.message);
+      return { totalOrders: 0, totalRevenue: 0, lastOrderDate: null, orders: [] };
+    }
+  }
+
   async getZones(): Promise<string[]> {
     try {
       const groups = await this.executeKw<any[]>('res.partner', 'read_group', [
@@ -514,6 +553,28 @@ class OdooService {
       };
     } catch (err: any) {
       logger.error(`[odoo] checkInventoryBySku error for SKU ${sku}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Search a product directly on Odoo by SKU (default_code) or name
+   */
+  async searchProductBySku(sku: string): Promise<any | null> {
+    try {
+      const trimmed = sku.trim();
+      const results = await this.executeKw<any[]>(
+        'product.product',
+        'search_read',
+        [[['default_code', '=ilike', trimmed]]],
+        {
+          fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'uom_id', 'active'],
+          limit: 1,
+        }
+      );
+      return results && results.length > 0 ? results[0] : null;
+    } catch (err: any) {
+      logger.warn(`[odoo] searchProductBySku(${sku}) error: ${err.message}`);
       return null;
     }
   }

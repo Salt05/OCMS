@@ -40,6 +40,9 @@
         @back="onMobileBack"
         @send="sendMessage"
         @send-attachment="sendAttachment"
+        @retry-message="retrySendMessage"
+        @retry-attachment="retrySendAttachment"
+        @remove-optimistic-message="removeOptimisticMessage"
         @react="sendReaction"
         @load-more="loadMoreMessages"
         @toggle-contact-panel="toggleContactPanel"
@@ -47,6 +50,7 @@
         @pause-ai="pauseAi"
         @resume-ai="resumeAi"
         @toggle-ai="toggleAi"
+        @set-context-boundary="handleSetContextBoundary"
         :show-contact-panel="showContactPanel && !showOrderPanel"
         :show-order-panel="showOrderPanel"
         style="height: 100%;"
@@ -302,12 +306,22 @@ const {
   conversations, selectedConvId, selectedConv, messages,
   loadingConvs, loadingMsgs, loadingMoreMsgs, sendingMsg, hasMoreMessages,
   searchQuery, accountFilter,
-  fetchConversations, selectConversation, sendMessage, sendAttachment,
+  fetchConversations, selectConversation, sendMessage, retrySendMessage, sendAttachment, retrySendAttachment, removeOptimisticMessage,
   sendReaction,
   loadMoreMessages,
   pauseAi, resumeAi, toggleAi,
+  setContextBoundary,
   initSocket, destroySocket,
 } = useChat();
+
+async function handleSetContextBoundary(payload: { startMessageId?: string | null; endMessageId?: string | null; resetDraft?: boolean }) {
+  if (!selectedConvId.value) return;
+  try {
+    await setContextBoundary(selectedConvId.value, payload);
+  } catch (err) {
+    console.error('Failed to set context boundary:', err);
+  }
+}
 
 function onFilterAccount(id: string | null) {
   accountFilter.value = id;

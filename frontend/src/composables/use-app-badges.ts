@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { io, Socket } from 'socket.io-client';
 import { api } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 
 export interface NewOrderNotification {
   show: boolean;
@@ -64,7 +65,20 @@ export function useAppBadges() {
     ]);
   }
 
+  let lastPopupOrderId = '';
+  let lastPopupTime = 0;
+
   function triggerNewOrderPopup(data?: any) {
+    const orderId = data?.conversationId || data?.orderId || data?.id;
+    const now = Date.now();
+    if (orderId && orderId === lastPopupOrderId && now - lastPopupTime < 5000) {
+      return;
+    }
+    if (orderId) {
+      lastPopupOrderId = orderId;
+      lastPopupTime = now;
+    }
+
     const customer = data?.draftOrder?.customer?.name || data?.draftOrder?.recipientName || data?.partnerName;
     const total = data?.draftOrder?.subtotal || data?.amountTotal;
     const totalStr = total ? ` (${Number(total).toLocaleString('vi-VN')} đ)` : '';
@@ -90,6 +104,12 @@ export function useAppBadges() {
       socket = io({ transports: ['websocket', 'polling'] });
 
       socket.on('connect', () => {
+        const authStore = useAuthStore();
+        socket?.emit('user:join', {
+          userId: authStore.user?.id,
+          orgId: authStore.user?.orgId,
+          role: authStore.user?.role,
+        });
         fetchAllBadges();
       });
 
@@ -103,19 +123,38 @@ export function useAppBadges() {
         fetchUnreadChatCount();
       });
 
-      socket.on('order:updated', () => {
-        fetchPendingOrdersCount();
+      socket.on('order:updated', (data: any) => {
+        const authStore = useAuthStore();
+        const user = authStore.user;
+        const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+        if (isAdmin || !data?.assignedUserId || data.assignedUserId === user?.id) {
+          fetchPendingOrdersCount();
+        }
       });
 
       socket.on('order:created', (data: any) => {
-        fetchPendingOrdersCount();
-        triggerNewOrderPopup(data);
+        const authStore = useAuthStore();
+        const user = authStore.user;
+        const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+        const isAssignedToMe = Boolean(user?.id && data?.assignedUserId && data.assignedUserId === user.id);
+
+        if (isAdmin || isAssignedToMe) {
+          fetchPendingOrdersCount();
+          triggerNewOrderPopup(data);
+        }
       });
 
       socket.on('chat:state_updated', (data: any) => {
-        fetchPendingOrdersCount();
-        if (data?.currentState === 'CONFIRMATION') {
-          triggerNewOrderPopup(data);
+        const authStore = useAuthStore();
+        const user = authStore.user;
+        const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+        const isAssignedToMe = Boolean(user?.id && data?.assignedUserId && data.assignedUserId === user.id);
+
+        if (isAdmin || isAssignedToMe) {
+          fetchPendingOrdersCount();
+          if (data?.currentState === 'CONFIRMATION') {
+            triggerNewOrderPopup(data);
+          }
         }
       });
 

@@ -13,6 +13,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { handleIncomingMessage } from '../chat/message-handler.js';
 import { detectContentType, extractAttachments, updateContactAvatar } from './zalo-message-helpers.js';
+import { emitScopedChatMessage } from './zalo-socket.js';
 import {
   resolveZaloName,
   resolveGroupName,
@@ -89,12 +90,28 @@ export async function markUnreadConversations(ctx: RecoveryContext): Promise<str
     // Update conversation records in database to show unread badge & update lastMessageAt
     for (const item of unreadThreadIds) {
       try {
-        const existing = await prisma.conversation.findFirst({
+        let existing = await prisma.conversation.findFirst({
           where: {
             zaloAccountId: accountId,
             externalThreadId: item.threadId,
           },
         });
+
+        if (!existing && account?.orgId) {
+          existing = await prisma.conversation.findFirst({
+            where: {
+              orgId: account.orgId,
+              externalThreadId: item.threadId,
+            },
+            orderBy: { lastMessageAt: 'desc' },
+          });
+          if (existing) {
+            await prisma.conversation.update({
+              where: { id: existing.id },
+              data: { zaloAccountId: accountId },
+            }).catch(() => {});
+          }
+        }
 
         if (existing) {
           await prisma.conversation.update({
@@ -391,8 +408,9 @@ async function processAndPersistMessage(
 
     if (result) {
       existingSet.add(msgId);
-      io?.emit('chat:message', {
+      emitScopedChatMessage(io, {
         accountId,
+        orgId: result.orgId,
         message: result.message,
         conversationId: result.conversationId,
         contactId: result.contactId,

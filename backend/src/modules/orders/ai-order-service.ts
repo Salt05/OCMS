@@ -13,6 +13,10 @@
 import { prisma } from '../../shared/database/prisma-client.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../shared/utils/logger.js';
+import { PricingPromotionEngine } from '../promotions/pricing-promotion-engine.js';
+import { extractImageUrls, convertAllToDataUris } from '../chatbot/image-helper.js';
+import { PromotionService } from '../promotions/promotion-service.js';
+import { odooService } from '../odoo/odoo-service.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,8 +27,16 @@ export interface AiExtractedItem {
   sku: string | null;
   quantity: number;
   priceUnit: number;
+  originalPrice?: number | null;
+  discountedPrice?: number | null;
   discount: number;
   confidence: number;           // 0.0 – 1.0
+}
+
+export interface UnclearOrderItem {
+  rawText: string;              // Đoạn chữ trong ảnh / tin nhắn không đọc rõ
+  reason: string;               // Lý do (chữ mờ, không khớp mã SKU, thiếu số lượng, không rõ vị)
+  suggestedProducts?: string[]; // Gợi ý sản phẩm gần đúng nhất nếu có
 }
 
 export interface AiOrderDraft {
@@ -35,9 +47,79 @@ export interface AiOrderDraft {
     shippingAddress: string | null;
   };
   items: AiExtractedItem[];
+  unclearItems?: UnclearOrderItem[];
   notes: string | null;
   paymentTerm: string | null;
   missingInfo: string[];
+  originalSubtotal?: number;
+  discountAmount?: number;
+  finalTotal?: number;
+  appliedPromotions?: any[];
+  freeItems?: any[];
+  explanations?: string[];
+  suggestions?: string[];
+}
+
+/**
+ * Helper: Run Pricing Engine on extracted items and update line item discounts.
+ */
+async function applyPricingToExtractedItems(orgId: string, items: AiExtractedItem[]) {
+  let originalSubtotal = items.reduce((sum, it) => sum + (it.quantity * it.priceUnit), 0);
+  let discountAmount = 0;
+  let finalTotal = originalSubtotal;
+  let appliedPromotions: any[] = [];
+  let freeItems: any[] = [];
+  let explanations: string[] = [];
+  let suggestions: string[] = [];
+
+  if (items.length > 0) {
+    try {
+      const evalResult = await PromotionService.evaluateOrder({
+        orgId,
+        items: items.map(it => ({
+          sku: it.sku,
+          productName: it.matchedProductName || it.productNameRaw,
+          odooProductId: it.matchedProductOdooId,
+          quantity: it.quantity,
+          priceUnit: it.priceUnit,
+        })),
+        customerType: 'DEALER',
+      });
+
+      originalSubtotal = evalResult.originalSubtotal;
+      discountAmount = evalResult.discountAmount;
+      finalTotal = evalResult.finalTotal;
+      appliedPromotions = evalResult.appliedPromotions;
+      freeItems = evalResult.freeItems;
+      explanations = evalResult.explanations;
+      suggestions = evalResult.suggestions;
+
+      for (let i = 0; i < items.length; i++) {
+        const evalLine = evalResult.lineItems[i];
+        if (evalLine) {
+          items[i].discount = evalLine.itemDiscountPercent;
+          items[i].originalPrice = evalLine.originalPriceUnit;
+          const discounted = evalLine.specialUnitPrice || evalLine.discountedPriceUnit;
+          if (discounted && discounted < evalLine.originalPriceUnit) {
+            items[i].discountedPrice = discounted;
+            items[i].priceUnit = discounted; // Use discounted price as instructed
+          }
+        }
+      }
+    } catch (evalErr: any) {
+      logger.warn(`[ai-order-service] Promotion evaluation error: ${evalErr.message}`);
+    }
+  }
+
+  return {
+    originalSubtotal,
+    discountAmount,
+    finalTotal,
+    appliedPromotions,
+    freeItems,
+    explanations,
+    suggestions,
+  };
 }
 
 // ── Vietnamese text normalization ────────────────────────────────────────────
@@ -146,9 +228,16 @@ function findBestProduct(rawText: string, products: ProductCacheRow[]): {
 }
 
 /**
- * Build a compact product catalog string with relevant items scored and prioritized at the top.
+ * Build product catalog string with all products (or prioritized if catalog is very large).
  */
 function buildProductSummaryForPrompt(productCache: ProductCacheRow[], text: string): string {
+  // If catalog is reasonable size (<= 300), include all products to guarantee 100% SKU match accuracy
+  if (productCache.length <= 300) {
+    return productCache
+      .map(p => `- Mã: ${p.sku || 'N/A'} | Tên: ${p.name} | Quy cách: ${p.specification || p.weight || 'Gốc'} | Giá sỉ: ${p.wholesalePrice}đ`)
+      .join('\n');
+  }
+
   const textNormalized = removeVietnameseTones(text);
 
   const scoredProducts = productCache.map(p => {
@@ -156,7 +245,7 @@ function buildProductSummaryForPrompt(productCache: ProductCacheRow[], text: str
     const sku = (p.sku || '').toLowerCase().trim();
     const nameNorm = removeVietnameseTones(p.name || '').trim();
 
-    // 1. Direct SKU match (e.g. "e01", "c24", "db01")
+    // 1. Direct SKU match
     if (sku && sku.length >= 2) {
       const skuRegex = new RegExp(`\\b${sku}\\b`, 'i');
       if (skuRegex.test(textNormalized)) {
@@ -166,7 +255,7 @@ function buildProductSummaryForPrompt(productCache: ProductCacheRow[], text: str
       }
     }
 
-    // 2. Full or phrase name match (e.g. "que xoan vi sua ga")
+    // 2. Full or phrase name match
     if (nameNorm.length >= 4) {
       if (textNormalized.includes(nameNorm)) {
         score += 80;
@@ -191,16 +280,16 @@ function buildProductSummaryForPrompt(productCache: ProductCacheRow[], text: str
   });
 
   scoredProducts.sort((a, b) => b.score - a.score);
-  const selectedProducts = scoredProducts.slice(0, 35).map(sp => sp.product);
+  const selectedProducts = scoredProducts.slice(0, 150).map(sp => sp.product);
 
   return selectedProducts
-    .map(p => `${p.sku || 'NA'}: ${p.name} (${p.specification || p.weight || 'Gốc'}) - ${p.wholesalePrice}đ`)
+    .map(p => `- Mã: ${p.sku || 'N/A'} | Tên: ${p.name} | Quy cách: ${p.specification || p.weight || 'Gốc'} | Giá sỉ: ${p.wholesalePrice}đ`)
     .join('\n');
 }
 
 // ── LLM API call ────────────────────────────────────────────────────────────
 
-async function callGroqChat(systemPrompt: string, userMessage: string): Promise<string> {
+async function callGroqChat(systemPrompt: string, userMessage: string | any[]): Promise<string> {
   const apiKey = config.llm?.apiKey || config.groq.apiKey;
   if (!apiKey) {
     throw new Error('Chưa cấu hình API Key cho AI (GEMINI_API_KEY hoặc GROQ_API_KEY). Vui lòng thêm vào biến môi trường.');
@@ -215,6 +304,7 @@ async function callGroqChat(systemPrompt: string, userMessage: string): Promise<
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
+    signal: AbortSignal.timeout(90000),
     body: JSON.stringify({
       model: modelName,
       messages: [
@@ -234,7 +324,13 @@ async function callGroqChat(systemPrompt: string, userMessage: string): Promise<
   }
 
   const data = await response.json() as any;
-  return data.choices?.[0]?.message?.content || '{}';
+  let content = data.choices?.[0]?.message?.content || '{}';
+  if (content.includes('```json')) {
+    content = content.replace(/```json\s*/gi, '').replace(/```\s*$/gi, '').trim();
+  } else if (content.includes('```')) {
+    content = content.replace(/```\s*/gi, '').trim();
+  }
+  return content;
 }
 
 function cleanExtractedValue(val: any): string | null {
@@ -269,13 +365,15 @@ export async function extractOrderFromConversation(
       conversationId,
       sentAt: { gte: queryStart },
       isDeleted: false,
-      contentType: { in: ['text'] },
+      contentType: { in: ['text', 'image', 'photo', 'rich'] },
     },
     orderBy: { sentAt: 'asc' },
     select: {
       senderType: true,
       senderName: true,
       content: true,
+      contentType: true,
+      attachments: true,
       sentAt: true,
     },
   });
@@ -286,7 +384,7 @@ export async function extractOrderFromConversation(
       where: {
         conversationId,
         isDeleted: false,
-        contentType: { in: ['text'] },
+        contentType: { in: ['text', 'image', 'photo', 'rich'] },
       },
       orderBy: { sentAt: 'desc' },
       take: 30,
@@ -294,6 +392,8 @@ export async function extractOrderFromConversation(
         senderType: true,
         senderName: true,
         content: true,
+        contentType: true,
+        attachments: true,
         sentAt: true,
       },
     });
@@ -345,7 +445,8 @@ export async function extractOrderFromConversation(
     },
   });
 
-  // 4. Format messages for LLM (get recent messages, prioritizing recent text)
+  // 4. Extract image URLs and format text transcript
+  const imageUrls: string[] = [];
   const chatTranscript = messages
     .slice(-30) // Take up to 30 most recent messages
     .map((m) => {
@@ -353,7 +454,16 @@ export async function extractOrderFromConversation(
       const senderRole = isStaff ? '[Nhân viên]' : `[Khách hàng - ${m.senderName || conversation?.contact?.fullName || 'Khách'}]`;
       const dateStr = new Date(m.sentAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
       const timeStr = new Date(m.sentAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-      return `${dateStr} ${timeStr} ${senderRole}: ${m.content || ''}`;
+
+      // Extract image URLs from message and attachments
+      const msgImages = extractImageUrls(m.content, m.attachments, m.contentType);
+      for (const u of msgImages) {
+        imageUrls.push(u);
+      }
+
+      const imgTag = m.contentType === 'image' || msgImages.length > 0 ? ' [Hình ảnh/Đính kèm]' : '';
+      const cleanContent = m.content && m.content.startsWith('{') ? '[Gửi hình ảnh]' : (m.content || '');
+      return `${dateStr} ${timeStr} ${senderRole}${imgTag}: ${cleanContent}`;
     })
     .join('\n');
 
@@ -361,9 +471,9 @@ export async function extractOrderFromConversation(
   const productSummary = buildProductSummaryForPrompt(productCache, chatTranscript);
 
   // 6. Build the system prompt
-  const systemPrompt = `Bạn là trợ lý AI chuyên phân tích tin nhắn Zalo để bóc tách thông tin đơn hàng cho công ty thú cưng (pet shop).
+  const systemPrompt = `Bạn là trợ lý AI chuyên phân tích tin nhắn Zalo và hình ảnh đính kèm để bóc tách thông tin đơn hàng cho công ty thú cưng (pet shop).
 
-NHIỆM VỤ: Đọc toàn bộ đoạn hội thoại chat giữa [Nhân viên] và [Khách hàng], trích xuất danh sách sản phẩm và thông tin chốt cuối cùng mà KHÁCH HÀNG yêu cầu đặt mua.
+NHIỆM VỤ: Đọc toàn bộ đoạn hội thoại chat và xem các hình ảnh (nếu có) giữa [Nhân viên] và [Khách hàng], trích xuất danh sách sản phẩm và thông tin chốt cuối cùng mà KHÁCH HÀNG yêu cầu đặt mua.
 
 DANH MỤC SẢN PHẨM CÓ SẴN TRONG KHO:
 ${productSummary}
@@ -376,20 +486,29 @@ THÔNG TIN KHÁCH HÀNG ĐÃ BIẾT:
 
 QUY TẮC PHÂN BIỆT VAI TRÒ VÀ TÍNH TOÁN ĐƠN HÀNG:
 1. PHÂN BIỆT RÕ RÀNG VAI TRÒ:
-   - "[Khách hàng - ...]": Là người mua hàng. Hãy lấy các sản phẩm, số lượng, địa chỉ giao hàng và ghi chú từ các câu nói của Khách hàng.
+   - "[Khách hàng - ...]": Là người mua hàng. Hãy lấy các sản phẩm, số lượng, địa chỉ giao hàng và ghi chú từ các câu nói hoặc hình ảnh do Khách hàng gửi.
    - "[Nhân viên]": Là người bán hàng tư vấn. Nếu nhân viên gửi tin nhắn báo giá hoặc đề xuất đơn mà khách hàng đồng ý/xác nhận sau đó thì lấy; nếu khách chưa phản hồi thì ghi chú vào missingInfo.
-2. TÍNH TOÁN SỐ LƯỢNG THỰC TẾ CUỐI CÙNG (NET FINAL QUANTITY):
+2. XỬ LÝ HÌNH ẢNH DANH SÁCH ĐƠN HÀNG (IMAGE-TO-ORDER - QUY TẮC BẮT BUỘC):
+   - ĐỌC CHÍNH XÁC MÃ SKU VÀ ĐỐI CHIẾU DANH MỤC:
+     • Nếu trong ảnh có cột Mã (như C10, C28, B03, E01, DB01...), BẮT BUỘC dùng chính xác mã SKU đó.
+     • Tuyệt đối KHÔNG nhầm lẫn giữa C10 (Thịt xiên que Single Kaboz) với C10-1 (Double Kaboz) hay C10-2.
+   - TUYỆT ĐỐI KHÔNG GỘP CÁC DÒNG (DO NOT MERGE ROWS):
+     • Mỗi dòng trong bảng ảnh có số lượng > 0 PHẢI LÀ MỘT MỤC RIÊNG BIỆT trong kết quả.
+     • Ví dụ: Trong ảnh có dòng "Xương nơ da bò trắng 3"": 70 và dòng "Xương nơ da bò vàng 3"": 70, BẮT BUỘC TÁCH THÀNH 2 DÒNG RIÊNG BIỆT (mỗi dòng số lượng 70), TUYỆT ĐỐI KHÔNG ĐƯỢC GỘP CHUNG THÀNH 1 DÒNG 140!
+   - NẾU DÒNG TRONG ẢNH KHÔNG CÓ MÃ SKU:
+     • Nếu tên sản phẩm trong ảnh khớp RÕ RÀNG và DUY NHẤT với 1 sản phẩm trong danh mục kho (ví dụ: "Xương nơ da bò trắng 3\"" khớp chính xác C42, "Xương nơ da bò vàng 3\"" khớp chính xác C41), thì ĐƯA VÀO items kèm matchedSku tương ứng.
+     • Chỉ đưa vào unclearItems khi THẬT SỰ không thể xác định sản phẩm nào trong danh mục (chữ mờ không đọc được, tên quá chung chung khớp nhiều sản phẩm, hoặc hoàn toàn không tìm thấy tên tương tự trong danh mục).
+   - Dòng nào chữ viết tay mờ, không rõ chữ hoặc thiếu số lượng: Đưa vào mảng "unclearItems" kèm lý do cụ thể và gợi ý.
+3. TÍNH TOÁN SỐ LƯỢNG THỰC TẾ CUỐI CÙNG (NET FINAL QUANTITY):
    - Đọc toàn bộ các tin nhắn từ đầu đến cuối theo thứ tự thời gian.
    - Nếu khách hàng có các câu điều chỉnh sau đó (ví dụ: "hủy món A", "bớt 20 món B", "tăng thêm 10 món C", "đổi sang món D"), bạn PHẢI áp dụng các thay đổi này tuần tự theo thời gian để đưa ra danh sách sản phẩm và số lượng chốt cuối cùng.
-   - Ví dụ: Khách nhắn "đặt 30 E01 và 100 C24" -> "thêm 50 phần que xoắn vị sữa gà" -> "Hủy món E01 đi và giảm 20 túi C24 lại" ➔ Số lượng chốt cuối cùng: C24 = 80, Que xoắn vị sữa gà = 50, E01 = Đã hủy (không đưa vào danh sách items).
    - Tuyệt đối KHÔNG đưa các món có số lượng = 0 hoặc đã bị hủy vào mảng items.
-3. KHỚP MÃ SKU VỚI DANH MỤC KHO:
+4. KHỚP MÃ SKU VỚI DANH MỤC KHO:
    - Với mỗi sản phẩm còn lại sau khi tính toán, tìm mã SKU khớp nhất từ danh mục sản phẩm ở trên.
    - Nếu khách không nói rõ số lượng của một món, mặc định là 1.
-4. Trích xuất địa chỉ giao hàng, SĐT, phương thức thanh toán và ghi chú đặc biệt nếu khách có cung cấp trong chat.
-5. Liệt kê các thông tin còn thiếu trong mảng "missingInfo".
-6. Nếu không tìm thấy yêu cầu đặt hàng nào từ Khách hàng trong đoạn chat, trả về mảng items rỗng.
-7. BẮT BUỘC có trường "thinking": Tóm tắt ngắn gọn từng bước phân tích và suy luận của bạn (Ví dụ: "1. Đã đọc lịch sử tin nhắn...\n2. Nhận diện khách đặt 30 E01, 100 C24, thêm 50 que xoắn...\n3. Áp dụng thay đổi: Hủy E01, giảm 20 C24 còn 80 C24...\n4. Khớp mã SKU và giá bán...").
+5. Trích xuất địa chỉ giao hàng, SĐT, phương thức thanh toán và ghi chú đặc biệt nếu khách có cung cấp trong chat.
+6. Liệt kê các thông tin còn thiếu trong mảng "missingInfo".
+7. BẮT BUỘC có trường "thinking": Tóm tắt ngắn gọn từng bước phân tích và suy luận của bạn.
 
 TRẢ VỀ JSON theo đúng cấu trúc sau:
 {
@@ -401,21 +520,42 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
   },
   "items": [
     {
-      "productNameRaw": "tên sản phẩm khách viết trong chat",
+      "productNameRaw": "tên sản phẩm khách viết hoặc nhận diện trong ảnh",
       "matchedSku": "SKU khớp nhất từ danh mục hoặc null",
       "matchedProductName": "tên sản phẩm chính thức hoặc null",
       "quantity": 1,
       "notes": "ghi chú riêng cho dòng này hoặc null"
     }
   ],
+  "unclearItems": [
+    {
+      "rawText": "dòng chữ trong ảnh/tin nhắn đọc không rõ hoặc không khớp SKU",
+      "reason": "lý do (chữ viết tay mờ / chưa rõ vị / không tìm thấy mã trong CSDL)",
+      "suggestedProducts": ["tên gợi ý nếu có"]
+    }
+  ],
   "notes": "ghi chú chung cho đơn hàng hoặc null",
   "paymentTerm": "phương thức thanh toán nếu khách nói hoặc null",
   "missingInfo": ["danh sách thông tin còn thiếu"]
-}`;
+}
+`;
 
-  // 7. Call Groq LLM
-  const userPrompt = `ĐÂY LÀ ĐOẠN HỘI THOẠI ZALO:\n\n${chatTranscript}${additionalInstruction && additionalInstruction.trim() ? `\n\nYÊU CẦU / GHI CHÚ BỔ SUNG:\n${additionalInstruction.trim()}` : ''}`;
-  const llmResponse = await callGroqChat(systemPrompt, userPrompt);
+  // 7. Call LLM (multimodal if images exist)
+  const promptText = `ĐÂY LÀ ĐOẠN HỘI THOẠI ZALO VÀ YÊU CẦU ĐẶT HÀNG:\n\n${chatTranscript}${additionalInstruction && additionalInstruction.trim() ? `\n\nYÊU CẦU / GHI CHÚ BỔ SUNG:\n${additionalInstruction.trim()}` : ''}`;
+  let userPayload: string | any[] = promptText;
+
+  const base64Urls = await convertAllToDataUris(imageUrls);
+  if (base64Urls.length > 0) {
+    userPayload = [
+      { type: 'text', text: promptText },
+      ...base64Urls.slice(-3).map((url) => ({
+        type: 'image_url',
+        image_url: { url },
+      })),
+    ];
+  }
+
+  const llmResponse = await callGroqChat(systemPrompt, userPayload);
 
   // 8. Parse LLM output
   let llmData: any;
@@ -428,6 +568,7 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
 
   // 9. Post-process: match each item against real ProductCache
   const extractedItems: AiExtractedItem[] = [];
+  const unclearItems: UnclearOrderItem[] = Array.isArray(llmData.unclearItems) ? [...llmData.unclearItems] : [];
   const llmItems = llmData.items || [];
   const missingInfo: string[] = Array.isArray(llmData.missingInfo) ? [...llmData.missingInfo] : [];
 
@@ -445,10 +586,10 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
 
     if (llmSku) {
       const skuProduct = productCache.find(p =>
-        (p.sku || '').toLowerCase() === llmSku.toLowerCase()
+        (p.sku || '').trim().toLowerCase() === llmSku.toLowerCase()
       );
       if (skuProduct) {
-        bestMatch = { product: skuProduct, confidence: 0.98 };
+        bestMatch = { product: skuProduct, confidence: 1.0 };
       }
     }
 
@@ -462,14 +603,68 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
       }
     }
 
-    // Fallback to fuzzy name matching
+    // Fallback to fuzzy name matching ONLY if confidence is high (>= 0.7)
     if (!bestMatch.product && rawName) {
-      bestMatch = findBestProduct(rawName, productCache);
+      const fuzzy = findBestProduct(rawName, productCache);
+      if (fuzzy.confidence >= 0.7) {
+        bestMatch = fuzzy;
+      }
     }
 
-    // Also try matching by LLM's matchedProductName
-    if (!bestMatch.product && item.matchedProductName) {
-      bestMatch = findBestProduct(item.matchedProductName, productCache);
+    // Fallback: Query Odoo directly if SKU exists but wasn't in local cache
+    if (!bestMatch.product && llmSku) {
+      try {
+        const odooProd = await odooService.searchProductBySku(llmSku);
+        if (odooProd) {
+          const cached = await prisma.productCache.upsert({
+            where: { orgId_odooId: { orgId, odooId: odooProd.id } },
+            update: {
+              sku: odooProd.default_code || llmSku,
+              name: odooProd.name || '',
+              displayName: odooProd.display_name || odooProd.name,
+              listPrice: odooProd.list_price || 0,
+              wholesalePrice: odooProd.list_price || 0,
+              isActive: odooProd.active !== false,
+            },
+            create: {
+              orgId,
+              odooId: odooProd.id,
+              sku: odooProd.default_code || llmSku,
+              name: odooProd.name || '',
+              displayName: odooProd.display_name || odooProd.name,
+              listPrice: odooProd.list_price || 0,
+              wholesalePrice: odooProd.list_price || 0,
+              isActive: odooProd.active !== false,
+            },
+          });
+          const newRow: ProductCacheRow = {
+            id: cached.id,
+            odooId: cached.odooId,
+            sku: cached.sku,
+            name: cached.name,
+            displayName: cached.displayName,
+            wholesalePrice: cached.wholesalePrice,
+            retailPrice: cached.retailPrice,
+            listPrice: cached.listPrice,
+            specification: cached.specification,
+            weight: cached.weight,
+            isActive: cached.isActive,
+          };
+          productCache.push(newRow);
+          bestMatch = { product: newRow, confidence: 1.0 };
+        }
+      } catch (e: any) {
+        logger.warn(`[ai-order] Odoo fallback search error for SKU ${llmSku}: ${e.message}`);
+      }
+    }
+
+    // If item has no SKU and was not matched with high confidence, put into unclearItems to ask customer
+    if (!bestMatch.product) {
+      unclearItems.push({
+        rawText: `${rawName} (${item.quantity || 1} gói)`,
+        reason: 'Chưa xác định được mã SKU chính xác, nhờ khách hàng xác nhận',
+      });
+      continue;
     }
 
     // STRICT VALIDATION: ONLY add product if it really exists in database and confidence >= 0.45
@@ -485,21 +680,35 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
         confidence: bestMatch.confidence,
       });
     } else if (rawName && rawName.trim().length > 1) {
-      missingInfo.push(`Sản phẩm "${rawName}" không tồn tại trong danh mục hệ thống.`);
+      unclearItems.push({
+        rawText: rawName,
+        reason: 'Sản phẩm không tìm thấy hoặc chưa khớp mã SKU trong danh mục kho',
+        suggestedProducts: bestMatch.product ? [bestMatch.product.name] : [],
+      });
+      missingInfo.push(`Sản phẩm "${rawName}" chưa khớp danh mục hệ thống.`);
     }
   }
 
+  const pricing = await applyPricingToExtractedItems(orgId, extractedItems);
+
   return {
-    thinking: llmData.thinking || 'Đã phân tích các tin nhắn trong hội thoại hôm nay, nhận diện khách hàng và đối chiếu danh mục sản phẩm.',
+    thinking: llmData.thinking || 'Đã phân tích các tin nhắn và hình ảnh trong hội thoại, nhận diện khách hàng và đối chiếu danh mục sản phẩm.',
     customer: {
       name: cleanExtractedValue(llmData.customer?.name) || conversation?.contact?.fullName || null,
       phone: cleanExtractedValue(llmData.customer?.phone) || conversation?.contact?.phone || null,
       shippingAddress: cleanExtractedValue(llmData.customer?.shippingAddress) || conversation?.contact?.address || null,
     },
     items: extractedItems,
+    unclearItems: unclearItems.length > 0 ? unclearItems : undefined,
     notes: llmData.notes || null,
     paymentTerm: cleanExtractedValue(llmData.paymentTerm) || null,
     missingInfo: Array.from(new Set(missingInfo)),
+    originalSubtotal: pricing.originalSubtotal,
+    discountAmount: pricing.discountAmount,
+    finalTotal: pricing.finalTotal,
+    appliedPromotions: pricing.appliedPromotions,
+    freeItems: pricing.freeItems,
+    explanations: pricing.explanations,
   };
 }
 
@@ -619,6 +828,8 @@ TRẢ VỀ JSON:
     }
   }
 
+  const pricing = await applyPricingToExtractedItems(orgId, extractedItems);
+
   return {
     thinking: llmData.thinking || `Đã trích xuất thông tin trực tiếp từ câu lệnh: Nhận diện ${extractedItems.length} sản phẩm hợp lệ trong danh mục.`,
     customer: {
@@ -630,6 +841,13 @@ TRẢ VỀ JSON:
     notes: llmData.notes || null,
     paymentTerm: llmData.paymentTerm || null,
     missingInfo: Array.from(new Set(missingInfo)),
+    originalSubtotal: pricing.originalSubtotal,
+    discountAmount: pricing.discountAmount,
+    finalTotal: pricing.finalTotal,
+    appliedPromotions: pricing.appliedPromotions,
+    freeItems: pricing.freeItems,
+    explanations: pricing.explanations,
+    suggestions: pricing.suggestions,
   };
 }
 
@@ -781,6 +999,8 @@ TRẢ VỀ JSON DUY NHẤT:
     }
   }
 
+  const pricing = await applyPricingToExtractedItems(orgId, extractedItems);
+
   return {
     explanation: llmData.explanation || 'Đã cập nhật phiếu đơn hàng theo yêu cầu của bạn.',
     draft: {
@@ -794,6 +1014,13 @@ TRẢ VỀ JSON DUY NHẤT:
       notes: llmData.notes !== undefined ? llmData.notes : currentDraft.notes,
       paymentTerm: llmData.paymentTerm || currentDraft.paymentTerm,
       missingInfo: Array.from(new Set(missingInfo)),
+      originalSubtotal: pricing.originalSubtotal,
+      discountAmount: pricing.discountAmount,
+      finalTotal: pricing.finalTotal,
+      appliedPromotions: pricing.appliedPromotions,
+      freeItems: pricing.freeItems,
+      explanations: pricing.explanations,
+      suggestions: pricing.suggestions,
     },
   };
 }

@@ -7,6 +7,7 @@ import type { Server } from 'socket.io';
 import { logger } from '../../shared/utils/logger.js';
 import { handleIncomingMessage, handleMessageUndo, handleMessageReaction } from '../chat/message-handler.js';
 import { detectContentType, extractAttachments, updateContactAvatar } from './zalo-message-helpers.js';
+import { emitScopedChatMessage } from './zalo-socket.js';
 
 import { prisma } from '../../shared/database/prisma-client.js';
 import { recoverMissedMessages } from './zalo-message-recovery.js';
@@ -136,6 +137,30 @@ export function attachZaloListener(ctx: ListenerContext): void {
         const userInfo = await resolveZaloName(api, senderUid, userInfoCache);
         if (userInfo.zaloName) senderName = userInfo.zaloName;
         if (userInfo.avatar) updateContactAvatar(senderUid, userInfo.avatar);
+      } else if (isSelf && !isGroup && threadId && threadId !== '0' && threadId !== ownUid && api.getUserInfo) {
+        resolveZaloName(api, threadId, userInfoCache).then(async (userInfo) => {
+          if (userInfo.avatar) updateContactAvatar(threadId, userInfo.avatar);
+          if (userInfo.zaloName) {
+            await prisma.contact.updateMany({
+              where: {
+                zaloUid: threadId,
+                OR: [
+                  { zaloName: null },
+                  { zaloName: '' },
+                  { zaloName: 'Khách hàng' },
+                  { fullName: null },
+                  { fullName: '' },
+                  { fullName: 'Khách hàng' },
+                  { fullName: 'Unknown' },
+                ],
+              },
+              data: {
+                zaloName: userInfo.zaloName,
+                fullName: userInfo.zaloName,
+              },
+            }).catch(() => {});
+          }
+        }).catch(() => {});
       }
 
       // Resolve group name and avatar for group threads
@@ -187,8 +212,9 @@ export function attachZaloListener(ctx: ListenerContext): void {
       });
 
       if (result) {
-        io?.emit('chat:message', {
+        emitScopedChatMessage(io, {
           accountId,
+          orgId: result.orgId,
           message: result.message,
           conversationId: result.conversationId,
           contactId: result.contactId,

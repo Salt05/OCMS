@@ -14,7 +14,7 @@ export function startZaloHealthCheck(): void {
   cron.schedule('*/5 * * * *', async () => {
     try {
       const accounts = await prisma.zaloAccount.findMany({
-        where: { sessionData: { not: Prisma.JsonNull } },
+        where: { sessionData: { not: Prisma.JsonNull }, deletedAt: null },
         select: { id: true, displayName: true, sessionData: true },
       });
 
@@ -40,7 +40,7 @@ export function startZaloHealthCheck(): void {
     logger.info('[ZALO HEALTH-CHECK] 🌅 Bắt đầu làm mới phiên hàng ngày (Daily session refresh)...');
     try {
       const accounts = await prisma.zaloAccount.findMany({
-        where: { sessionData: { not: Prisma.JsonNull } },
+        where: { sessionData: { not: Prisma.JsonNull }, deletedAt: null },
         select: { id: true, displayName: true, sessionData: true },
       });
 

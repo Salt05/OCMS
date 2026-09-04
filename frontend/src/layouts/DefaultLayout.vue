@@ -10,7 +10,13 @@
             <template #activator="{ props: menuProps }">
               <div v-bind="menuProps" class="zalo-user-avatar-wrap mb-4 cursor-pointer" :title="authStore.user?.fullName || 'Tài khoản'">
                 <v-avatar size="44" class="zalo-rail-avatar elevation-1" color="primary">
-                  <v-img v-if="(authStore.user as any)?.avatarUrl" :src="(authStore.user as any).avatarUrl" />
+                  <v-img v-if="(authStore.user as any)?.avatarUrl" :src="(authStore.user as any).avatarUrl">
+                    <template #error>
+                      <span class="text-subtitle-1 font-weight-bold text-white">
+                        {{ (authStore.user?.fullName || 'U').charAt(0).toUpperCase() }}
+                      </span>
+                    </template>
+                  </v-img>
                   <span v-else class="text-subtitle-1 font-weight-bold text-white">
                     {{ (authStore.user?.fullName || 'U').charAt(0).toUpperCase() }}
                   </span>
@@ -137,11 +143,6 @@
         </div>
 
         <div class="d-flex align-center gap-1">
-          <!-- Global Search trigger button on mobile -->
-          <v-btn icon size="small" variant="text" @click="showMobileSearchDialog = true" title="Tìm kiếm">
-            <v-icon size="20">lucide-search</v-icon>
-          </v-btn>
-
           <!-- Notification Bell -->
           <NotificationBell />
 
@@ -149,7 +150,13 @@
           <v-menu location="bottom end" offset="8">
             <template #activator="{ props: menuProps }">
               <v-avatar size="32" color="primary" class="ml-1 cursor-pointer" v-bind="menuProps">
-                <v-img v-if="(authStore.user as any)?.avatarUrl" :src="(authStore.user as any).avatarUrl" />
+                <v-img v-if="(authStore.user as any)?.avatarUrl" :src="(authStore.user as any).avatarUrl">
+                  <template #error>
+                    <span class="text-caption font-weight-bold text-white">
+                      {{ (authStore.user?.fullName || 'U').charAt(0).toUpperCase() }}
+                    </span>
+                  </template>
+                </v-img>
                 <span v-else class="text-caption font-weight-bold text-white">
                   {{ (authStore.user?.fullName || 'U').charAt(0).toUpperCase() }}
                 </span>
@@ -188,7 +195,7 @@
         <!-- Desktop Non-Chat Page Top Header -->
         <header v-if="!isChatPage && !isMobile" class="zalo-top-subbar d-flex align-center px-4">
           <div class="text-h6 font-weight-bold mr-4">{{ currentPageTitle }}</div>
-          <GlobalSearch class="mr-auto" style="max-width: 380px;" />
+          <v-spacer />
           <div class="d-flex align-center gap-2">
             <v-chip size="small" variant="tonal" color="primary" class="font-weight-medium">
               {{ authStore.user?.role === 'owner' ? 'Chủ sở hữu' : (authStore.user?.role === 'admin' ? 'Quản trị' : 'Nhân viên') }}
@@ -334,9 +341,9 @@
                 @click="showMobileMoreDrawer = false"
               />
               <v-list-item
-                to="/appointments"
-                prepend-icon="lucide-calendar-check"
-                title="Lịch hẹn & Lịch chăm sóc"
+                to="/products"
+                prepend-icon="lucide-package"
+                title="Sản phẩm & Phân loại"
                 rounded="lg"
                 class="mb-1"
                 @click="showMobileMoreDrawer = false"
@@ -353,15 +360,6 @@
                 to="/ai-assistant"
                 prepend-icon="lucide-bot"
                 title="Trợ lý AI (Chatbot)"
-                rounded="lg"
-                class="mb-1"
-                @click="showMobileMoreDrawer = false"
-              />
-              <v-list-item
-                v-if="authStore.isAdmin"
-                to="/chatbot-test"
-                prepend-icon="lucide-flask-conical"
-                title="AI Training Lab (Test Bot)"
                 rounded="lg"
                 class="mb-1"
                 @click="showMobileMoreDrawer = false"
@@ -413,18 +411,8 @@
         </div>
       </v-navigation-drawer>
 
-      <!-- 6. MOBILE: Global Search Dialog Modal (< 768px) -->
-      <v-dialog v-model="showMobileSearchDialog" max-width="500" class="mobile-search-dialog">
-        <v-card class="pa-3 rounded-lg">
-          <div class="d-flex align-center justify-space-between mb-2">
-            <span class="text-subtitle-2 font-weight-bold">Tìm kiếm nhanh</span>
-            <v-btn icon size="x-small" variant="text" @click="showMobileSearchDialog = false">
-              <v-icon size="16">lucide-x</v-icon>
-            </v-btn>
-          </div>
-          <GlobalSearch @selected="showMobileSearchDialog = false" />
-        </v-card>
-      </v-dialog>
+      <!-- 5. MOBILE: More Menu Side Drawer (< 768px) -->
+      <!-- Drawer contents above -->
     </div>
 
     <!-- ── Global Realtime New Order Popup Banner ──────────────────────── -->
@@ -474,7 +462,6 @@ import { useAuthStore } from '@/stores/auth';
 import { useConnectionStore } from '@/stores/connection';
 import { useAppBadges } from '@/composables/use-app-badges';
 import NotificationBell from '@/components/NotificationBell.vue';
-import GlobalSearch from '@/components/GlobalSearch.vue';
 import logoLight from '@/assets/logo-light.png';
 import logoDark from '@/assets/logo-dark.png';
 
@@ -487,7 +474,6 @@ const router = useRouter();
 
 const isMobile = computed(() => display.smAndDown.value);
 const showMobileMoreDrawer = ref(false);
-const showMobileSearchDialog = ref(false);
 
 const {
   unreadChatCount,
@@ -512,7 +498,7 @@ onMounted(() => {
   setupSocketListeners();
 });
 
-const isFullWidthPage = computed(() => route.path === '/chat' || route.path.startsWith('/ai-assistant') || route.path.startsWith('/chatbot-test'));
+const isFullWidthPage = computed(() => route.path === '/chat' || route.path.startsWith('/ai-assistant'));
 const isChatPage = computed(() => isFullWidthPage.value);
 
 // In Chat view on mobile: if an active chat thread is opened (query.id is present), hide top bar and bottom nav
@@ -537,11 +523,11 @@ const shouldShowMobileBottomNav = computed(() => {
 const primaryMenuItems = computed(() => {
   const items = [
     { title: 'Tin nhắn (Chat)', icon: 'lucide-message-square', path: '/chat' },
-    ...(authStore.isAdmin ? [{ title: 'AI Training Lab (Test Bot)', icon: 'lucide-flask-conical', path: '/chatbot-test' }] : []),
     { title: 'Khách hàng (Danh bạ)', icon: 'lucide-contact', path: '/contacts' },
     { title: 'Tài khoản Zalo (Cloud)', icon: 'lucide-cloud', path: '/zalo-accounts' },
-    { title: 'Lịch hẹn & Giao việc', icon: 'lucide-calendar-check', path: '/appointments' },
     { title: 'Đơn hàng & CRM', icon: 'lucide-shopping-bag', path: '/orders' },
+    { title: 'Sản phẩm & Phân loại', icon: 'lucide-package', path: '/products' },
+    { title: 'Ưu đãi & Chiết khấu', icon: 'lucide-percent', path: '/promotions' },
     { title: 'Báo cáo & Thống kê', icon: 'lucide-pie-chart', path: '/reports' },
     { title: 'Trợ lý AI (Chatbot)', icon: 'lucide-bot', path: '/ai-assistant' },
     { title: 'Tổng quan (Dashboard)', icon: 'lucide-layout-dashboard', path: '/' },
@@ -555,19 +541,19 @@ function isRouteActive(path: string): boolean {
 }
 
 const isMoreMenuRouteActive = computed(() => {
-  const secondaryPaths = ['/', '/zalo-accounts', '/reports', '/chatbot-test', '/ai-assistant', '/settings', '/api-settings'];
-  return secondaryPaths.some(p => isRouteActive(p) && p !== '/chat' && p !== '/orders' && p !== '/appointments' && p !== '/contacts');
+  const secondaryPaths = ['/', '/zalo-accounts', '/reports', '/ai-assistant', '/settings', '/api-settings'];
+  return secondaryPaths.some(p => isRouteActive(p) && p !== '/chat' && p !== '/orders' && p !== '/products' && p !== '/promotions' && p !== '/contacts');
 });
 
 const currentPageTitle = computed(() => {
   switch (route.name) {
     case 'Dashboard': return 'Tổng quan kinh doanh';
     case 'Chat': return 'Tin nhắn';
-    case 'ChatbotTest': return 'AI Training & Test Lab';
     case 'Contacts': return 'Quản lý khách hàng';
     case 'ZaloAccounts': return 'Tài khoản Zalo kết nối';
-    case 'Appointments': return 'Lịch hẹn & Nhắc việc';
     case 'Orders': return 'Quản lý đơn hàng';
+    case 'Products': return 'Quản lý sản phẩm & Phân loại';
+    case 'Promotions': return 'Quản lý ưu đãi & chiết khấu';
     case 'Reports': return 'Báo cáo & Thống kê';
     case 'AIAssistant': return 'Trợ lý AI Phân tích';
     case 'Settings': return 'Cài đặt hệ thống';

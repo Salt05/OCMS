@@ -1,4 +1,4 @@
-# ZaloCRM — Quản lý nhiều tài khoản Zalo cá nhân
+# OCMS — Quản lý nhiều tài khoản Zalo cá nhân
 
 Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 giao diện web. Chat real-time, quản lý khách hàng, lịch hẹn, báo cáo, API & Webhook.
 

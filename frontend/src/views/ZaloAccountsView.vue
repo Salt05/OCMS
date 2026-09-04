@@ -28,7 +28,7 @@
           </div>
         </div>
 
-        <div v-if="authStore.isAdmin" class="d-flex align-center">
+        <div class="d-flex align-center">
           <v-btn
             color="primary"
             variant="flat"
@@ -72,7 +72,7 @@
             </v-switch>
           </div>
         </template>
-        <template v-if="authStore.isAdmin" #item.actions="{ item }">
+        <template #item.actions="{ item }">
           <v-btn icon size="small" color="success" @click="syncContacts(item.id)" title="Đồng bộ danh bạ Zalo" :loading="syncing === item.id">
             <v-icon>lucide-user-round-cog</v-icon>
           </v-btn>
@@ -82,7 +82,7 @@
           <v-btn v-if="item.liveStatus === 'disconnected' && item.sessionData" icon size="small" color="info" @click="reconnectAccount(item.id)" title="Kết nối lại">
             <v-icon>lucide-refresh-cw</v-icon>
           </v-btn>
-          <v-btn icon size="small" color="error" @click="confirmDelete(item)" title="Xóa">
+          <v-btn v-if="authStore.isAdmin" icon size="small" color="error" @click="confirmDelete(item)" title="Xóa">
             <v-icon>lucide-trash-2</v-icon>
           </v-btn>
         </template>
@@ -131,14 +131,18 @@
     </v-dialog>
 
     <!-- Delete confirm dialog -->
-    <v-dialog v-model="showDeleteDialog" max-width="400">
+    <v-dialog v-model="showDeleteDialog" max-width="450">
       <v-card>
-        <v-card-title>Xác nhận xóa</v-card-title>
-        <v-card-text>Bạn có chắc muốn xóa tài khoản "{{ deleteTarget?.displayName || deleteTarget?.id }}"?</v-card-text>
+        <v-card-title>Xác nhận vô hiệu hóa</v-card-title>
+        <v-card-text>
+          Bạn có chắc muốn vô hiệu hóa tài khoản "{{ deleteTarget?.displayName || deleteTarget?.id }}"?
+          <br /><br />
+          <strong>Lưu ý:</strong> Tài khoản sẽ bị ngắt kết nối và không nhận tin nhắn mới. Toàn bộ dữ liệu hội thoại, tin nhắn và khách hàng vẫn được giữ nguyên.
+        </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn @click="showDeleteDialog = false">Hủy</v-btn>
-          <v-btn color="error" :loading="deleting" @click="handleDeleteAccount">Xóa</v-btn>
+          <v-btn color="warning" :loading="deleting" @click="handleDeleteAccount">Vô hiệu hóa</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

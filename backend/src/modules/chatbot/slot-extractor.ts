@@ -43,14 +43,18 @@ export interface ExtractedSlots {
     | 'HANDLE_OBJECTION'
     | 'ORDER_INTENT'
     | 'CONFIRM_ORDER'
+    | 'CLARIFY_ORDER_ITEM'
+    | 'CHECK_REMAINING_ITEMS'
     | 'ASK_ORDER_STATUS'
     | 'HANDOFF_REQUEST'
+    | 'UNHANDLED_SITUATION'
     | 'COMPLAINT'
     | 'GENERAL_QUERY';
   customerStage: CustomerStage;
   buyingIntentLevel: BuyingIntentLevel;
   objectionType: ObjectionType;
   comparisonSkus?: string[];
+  mentionedSkus?: string[];
   productSafetyQuery?: {
     sku?: string;
     aspect?: 'age' | 'rawhide' | 'choking' | 'general';
@@ -70,6 +74,7 @@ export interface ExtractedSlots {
   paymentTerm?: string;
   invalidPaymentTerm?: string;
   orderQuantity?: number;
+  skuInquiryQuery?: string;
   answeredPendingSlots: string[];
 }
 
@@ -121,7 +126,12 @@ export class SlotExtractor {
   /**
    * Main extractor function
    */
-  static extract(message: string, pendingSlots: string[] = []): ExtractedSlots {
+  static extract(
+    message: string,
+    pendingSlots: string[] = [],
+    attachments?: any[],
+    contentType?: string
+  ): ExtractedSlots {
     const raw = message.trim();
     const text = this.normalizeText(raw);
     const result: ExtractedSlots = {
@@ -132,6 +142,51 @@ export class SlotExtractor {
       objectionType: 'NONE',
       answeredPendingSlots: [],
     };
+
+    // 0. Image Message Detection & Re-examine Image Detection (Image-to-Order)
+    const hasImageAttachment =
+      contentType === 'image' ||
+      (Array.isArray(attachments) && attachments.length > 0) ||
+      raw.includes('zdn.vn') ||
+      raw.includes('"type":"image"') ||
+      (raw.startsWith('{') && raw.includes('"href"'));
+
+    const isReexamineImage = /(?:nhìn lại|xem lại|kiểm tra lại|coi lại|đọc lại|xem kỹ lại|nhìn kỹ lại)\s*(?:ảnh|hình|hinh|danh sách|anh|bảng|đơn)?/i.test(text);
+
+    // 0.4. Inquiring about SKU / product code (e.g. "2 món xương nơ da bò trắng vàng có mã là gì", "mã là gì", "mã SKU của...")
+    const isSkuInquiry =
+      /(?:có\s*mã\s*(?:là\s*)?gì|mã\s*(?:là\s*)?gì|mã\s*sku|mã\s*nào|mã\s*gì|tra\s*mã|tìm\s*mã|mã\s*sản\s*phẩm)/i.test(text);
+
+    if (isSkuInquiry) {
+      result.intent = 'CLARIFY_ORDER_ITEM';
+      result.customerStage = 'CONSIDERING';
+      result.buyingIntentLevel = 'MEDIUM';
+      const cleanSearch = text
+        .replace(/(?:2\s*món|món|sản phẩm|này|kia|đó|ở trên|phía trên|cho mình|cho em|cho chị|cho shop|nhé|nha|ạ|dạ|\?)/gi, '')
+        .replace(/(?:có\s*mã\s*(?:là\s*)?gì|mã\s*(?:là\s*)?gì|mã\s*sku|mã\s*nào|mã\s*gì|tra\s*mã|tìm\s*mã|mã\s*sản\s*phẩm)/gi, '')
+        .trim();
+      result.skuInquiryQuery = cleanSearch || text;
+      return result;
+    }
+
+    // 0.5. Clarification / Inquiring about a SKU or item (e.g. "C10-2 hay là C10", "là C10 hay C10-2", "mã nào vậy?")
+    const isItemClarification =
+      /(?:hay là|hay la|là .* hay|la .* hay|sao lại là|sao lai la|tại sao|tai sao|phải không|phai khong|đúng không|dung khong|\?)/i.test(text) &&
+      (/\b([BCE]\d{1,3}(?:-\d+)?|DB-[A-Z0-9]+)\b/i.test(raw) || /(?:mã|sản phẩm|loại)/i.test(text));
+
+    if (isItemClarification) {
+      result.intent = 'CLARIFY_ORDER_ITEM';
+      result.customerStage = 'CONSIDERING';
+      result.buyingIntentLevel = 'MEDIUM';
+      return result;
+    }
+
+    if (hasImageAttachment || isReexamineImage) {
+      result.intent = 'ORDER_INTENT';
+      result.customerStage = 'READY_TO_BUY';
+      result.buyingIntentLevel = 'HIGH';
+      return result;
+    }
 
     // 1. Detect Correction phrases (supports Unicode without ASCII \b pitfalls)
     const correctionRegex = /(?:^|\s|[.,!?])(à nhầm|a nham|nhầm rồi|nham roi|sửa lại|sua lai|đính chính|dinh chinh|không phải|khong phai|ý em là|y em la)(?:$|\s|[.,!?])/i;
@@ -310,6 +365,9 @@ export class SlotExtractor {
     if (paymentTerm) {
       result.paymentTerm = paymentTerm;
       result.answeredPendingSlots.push('payment_term');
+      result.intent = 'ORDER_INTENT';
+      result.customerStage = 'READY_TO_BUY';
+      result.buyingIntentLevel = 'HIGH';
     } else if (/\b(?:trong\s+)?(\d+)\s*(ng[aà]y|tu[aâầ]n|th[aá]ng)\b/i.test(text)) {
       // Customer mentioned a time duration that doesn't match any supported payment term
       const match = text.match(/\b(?:trong\s+)?(\d+)\s*(ng[aà]y|tu[aâầ]n|th[aá]ng)\b/i);
@@ -322,6 +380,9 @@ export class SlotExtractor {
 
         if (days > 0 && ![15, 21, 30, 45].includes(days)) {
           result.invalidPaymentTerm = `${match[1]} ${match[2]}`;
+          result.intent = 'ORDER_INTENT';
+          result.customerStage = 'READY_TO_BUY';
+          result.buyingIntentLevel = 'HIGH';
         }
       }
     }
@@ -329,8 +390,36 @@ export class SlotExtractor {
     // 10. Extract SKUs mentioned in message (e.g. C14, DB-VP01, B03, B06, C28, E01)
     const skuMatches = raw.match(/\b([BCE]\d{1,3}(?:-\d+)?|DB-[A-Z0-9]+|OD-\d+)\b/gi);
     const uniqueSkus = skuMatches ? Array.from(new Set(skuMatches.map(s => s.toUpperCase()))) : [];
+    result.mentionedSkus = uniqueSkus;
 
     // 11. Classify Customer Stage, Objection, and Intent
+    // Top Priority: Direct Human Handoff / Complaint Request from Customer
+    if (/\b(gặp người thật|gặp nhân viên|nhân viên đâu|tư vấn viên|khiếu nại|chửi|lừa đảo|giao sai|gọi nhân viên|gặp trực tiếp)\b/i.test(text)) {
+      result.intent = 'HANDOFF_REQUEST';
+      result.customerStage = 'POST_PURCHASE';
+      result.buyingIntentLevel = 'NO_INTENT';
+      return result;
+    }
+
+    // 0. Punctuation / Nudge (e.g. ".", "..", "?", "!")
+    const cleanText = text.trim();
+    const isPunctuationOnly = /^[\.\,\?\!\:\;\-\_\s]+$/.test(cleanText);
+    if (isPunctuationOnly) {
+      result.intent = 'GENERAL_QUERY';
+      result.customerStage = 'EXPLORING';
+      result.buyingIntentLevel = 'LOW';
+      return result;
+    }
+
+    // 0b. Greeting / Starting conversation
+    const isGreetingWord = /^(chào|hi|hello|alo|shop ơi|ad ơi|ad|shop|em ơi|bạn ơi|alo shop|chào shop|chào em|hé lô|helo|có ai không)\b/i.test(cleanText) && cleanText.length < 35;
+    if (isGreetingWord && !result.orderQuantity && uniqueSkus.length === 0 && !result.phone && !result.address) {
+      result.intent = 'GREETING';
+      result.customerStage = 'EXPLORING';
+      result.buyingIntentLevel = 'NO_INTENT';
+      return result;
+    }
+
     // A. Objection: "Thôi em chưa mua, để chị suy nghĩ"
     if (/\b(thôi em chưa mua|thoi em chua mua|để chị suy nghĩ|de chi suy nghi|để em suy nghĩ|de em suy nghi|chưa mua đâu|chua mua dau|chưa cần đâu|chua can dau|để xem lại|de xem lai|khi khác em mua|để lần sau)\b/i.test(text)) {
       result.intent = 'HANDLE_OBJECTION';
@@ -349,6 +438,16 @@ export class SlotExtractor {
       return result;
     }
 
+    // B1. Checking remaining/missing items in draft (e.g. "còn nữa không", "còn món nào nữa không", "có thiếu món nào không", "đủ chưa em", "hết chưa")
+    const isCheckingRemaining =
+      /(?:c[oò]n\s*(?:n[uữ]a\s*(?:kh[oô]ng|ko|k|h[oô]ng|hem)?|g[iì]\s*(?:n[uữ]a\s*)?(?:kh[oô]ng|ko|k)?|m[oó]n\s*n[aà]o|s[aả]n\s*ph[aẩ]m\s*n[aà]o|kh[oô]ng|ko|k)|(?:c[oó]\s*)?thi[eế]u\s*(?:m[oó]n|h[aà]ng|g[iì]|kh[oô]ng|ko|k)|[dđ][uủ]\s*(?:ch[uư]a|h[eế]t\s*ch[uư]a)|h[eế]t\s*ch[uư]a)/i.test(text);
+    if (isCheckingRemaining) {
+      result.intent = 'CHECK_REMAINING_ITEMS';
+      result.customerStage = 'READY_TO_BUY';
+      result.buyingIntentLevel = 'HIGH';
+      return result;
+    }
+
     // B2. Customer Order Confirmation (e.g. "ok", "oke", "okie", "oki", "okay", "đồng ý", "xác nhận", "chốt", "duyệt", "đúng rồi", "giao đi", "lên đơn", "chính xác"...)
     const isAffirmative =
       /^(ok|oke|okie|oki|okay|k|uk|ừ|uh|uhm|dạ|da|vâng|vang|được|duoc|dc|chốt|chot|duyệt|duyet|xác nhận|xac nhan|đồng ý|dong y|đúng|dung|chuẩn|chuan)$/i.test(text.trim()) ||
@@ -361,9 +460,36 @@ export class SlotExtractor {
       return result;
     }
 
+    // C0. Product Safety / Ingredient / Rawhide / Choking specific queries
+    // E.g. "C14 có an toàn cho bé 4 tháng không?", "C14 có phải rawhide không?", "Loại này có giúp bé không bị nghẹn không?"
+    const isSafetyQuery =
+      /(?:an toàn|an toan|ăn được|an duoc|rawhide|da bò|da bo|nghẹn|nghen|hóc|hoc|dị ứng|di ung)/i.test(text) &&
+      /(?:không|ko|khong|chưa|chua|thế nào|the nao|sao|được không|duoc khong|giúp bé|giup be|an toàn|an toan)/i.test(text);
+
+    if (isSafetyQuery) {
+      result.intent = 'CHECK_PRODUCT_SAFETY';
+      result.customerStage = 'CONSIDERING';
+      result.buyingIntentLevel = 'MEDIUM';
+
+      let aspect: 'age' | 'rawhide' | 'choking' | 'general' = 'general';
+      if (text.includes('nghẹn') || text.includes('nghen') || text.includes('hóc')) {
+        aspect = 'choking';
+      } else if (text.includes('rawhide') || text.includes('da bò') || text.includes('da bo')) {
+        aspect = 'rawhide';
+      } else if (text.includes('tháng') || text.includes('tuổi') || text.includes('an toàn')) {
+        aspect = 'age';
+      }
+
+      result.productSafetyQuery = {
+        sku: uniqueSkus.length > 0 ? uniqueSkus[0] : undefined,
+        aspect,
+      };
+      return result;
+    }
+
     // C. High Buying Intent: "Cho chị 2 gói", "Mua 1 gói thử", "Lấy loại này", "Đóng gói cho tôi 100 C28 và 250 C14"
-    const orderKeywords = /(?:đóng gói|dong goi|chốt đơn|chot don|lên đơn|len don|tạo đơn|tao don|đặt hàng|dat hang|ship cho|giao cho|lấy cho|cho tôi|cho toi|cho mình|cho minh|cho em|cho anh|cho chị|cho shop|gói cho|lấy cho|giao về|ship về|đặt luôn|lấy luôn|lấy giúp|mua giúp|gửi cho)/i;
-    const hasOrderQty = /\b\d+\s*(?:gói|túi|hộp|bịch|cây|phần|kg|thùng|lon)?\b/i.test(text);
+    const orderKeywords = /(?:đóng gói|dong goi|chốt đơn|chot don|lên đơn|len don|tạo đơn|tao don|bóc tách đơn|boc tach don|đặt đơn|dat don|tạo order|lên order|đặt hàng|dat hang|ship cho|giao cho|lấy cho|cho tôi|cho toi|cho mình|cho minh|cho em|cho anh|cho chị|cho shop|gói cho|lấy cho|giao về|ship về|đặt luôn|lấy luôn|lấy giúp|mua giúp|gửi cho)/i;
+    const hasOrderQty = /\b\d+\s*(?:gói|túi|hộp|bịch|cây|phần|kg|thùng|lon)\b/i.test(text);
     const mentionsPaymentTermTopic = /(?:điều khoản thanh toán|hình thức thanh toán|thanh toán thế nào|thanh toán như thế nào|chưa hỏi điều khoản)/i.test(text);
 
     if (orderKeywords.test(text) || (hasOrderQty && uniqueSkus.length > 0) || mentionsPaymentTermTopic) {
@@ -399,33 +525,6 @@ export class SlotExtractor {
       return result;
     }
 
-    // E. Product Safety / Ingredient / Rawhide / Choking specific queries
-    // E.g. "C14 có an toàn cho bé 4 tháng không?", "C14 có phải rawhide không?", "Loại này có giúp bé không bị nghẹn không?"
-    const isSafetyQuery =
-      /(?:an toàn|an toan|ăn được|an duoc|rawhide|da bò|da bo|nghẹn|nghen|hóc|hoc|dị ứng|di ung)/i.test(text) &&
-      /(?:không|ko|khong|chưa|chua|thế nào|the nao|sao|được không|duoc khong|giúp bé|giup be|an toàn|an toan)/i.test(text);
-
-    if (isSafetyQuery) {
-      result.intent = 'CHECK_PRODUCT_SAFETY';
-      result.customerStage = 'CONSIDERING';
-      result.buyingIntentLevel = 'MEDIUM';
-
-      let aspect: 'age' | 'rawhide' | 'choking' | 'general' = 'general';
-      if (text.includes('nghẹn') || text.includes('nghen') || text.includes('hóc')) {
-        aspect = 'choking';
-      } else if (text.includes('rawhide') || text.includes('da bò') || text.includes('da bo')) {
-        aspect = 'rawhide';
-      } else if (text.includes('tháng') || text.includes('tuổi') || text.includes('an toàn')) {
-        aspect = 'age';
-      }
-
-      result.productSafetyQuery = {
-        sku: uniqueSkus.length > 0 ? uniqueSkus[0] : undefined,
-        aspect,
-      };
-      return result;
-    }
-
     // F. Farewell / End conversation: "cảm ơn", "ok em hiểu rồi", "bye", "được rồi"
     if (/\b(cảm ơn|cám ơn|cam on|thank|thanks|bye|bai|tạm biệt|ok rồi|ok em hiểu|hiểu rồi|được rồi|vậy nhé|thôi nhé)\b/i.test(text) && text.length < 40) {
       result.intent = 'FAREWELL';
@@ -434,9 +533,9 @@ export class SlotExtractor {
       return result;
     }
 
-    // G. Pure information-seeking queries (thành phần, công dụng, mô tả sản phẩm)
+    // G. Pure information-seeking queries (thành phần, công dụng, mô tả sản phẩm, thương hiệu, ngành hàng)
     if (
-      /\b(thành phần|thanh phan|gồm những gì|gom nhung gi|có gì|co gi|bao nhiêu cây|bao nhieu cay|bao nhiêu que|nặng bao nhiêu|mấy que|may que|mô tả|mo ta|công dụng|cong dung|đặc điểm|dac diem|kích thước|kich thuoc)\b/i.test(text) &&
+      /\b(thành phần|thanh phan|thương hiệu|thuong hieu|hãng nào|hang nao|brand|ngành hàng|nganh hang|danh mục|danh muc|gồm những gì|gom nhung gi|có gì|co gi|bao nhiêu cây|bao nhieu cay|bao nhiêu que|nặng bao nhiêu|mấy que|may que|mô tả|mo ta|công dụng|cong dung|đặc điểm|dac diem|kích thước|kich thuoc)\b/i.test(text) &&
       !/\b(mua|đặt|lấy|ship|giao|chốt)\b/i.test(text)
     ) {
       result.intent = 'INFORMATION_SEEKING';
@@ -449,9 +548,18 @@ export class SlotExtractor {
     if (/\b(chào|hi|hello|alo|shop ơi|ad ơi|có ai không)\b/i.test(text) && text.length < 30) {
       result.intent = 'GREETING';
       result.customerStage = 'EXPLORING';
-    } else if (/\b(gặp người thật|gặp nhân viên|nhân viên đâu|tư vấn viên|khiếu nại|chửi|lừa đảo|giao sai)\b/i.test(text)) {
+    } else if (/\b(gặp người thật|gặp nhân viên|nhân viên đâu|cho gặp nhân viên|tư vấn viên|gặp sale|chuyển máy|nói chuyện với người)\b/i.test(text)) {
       result.intent = 'HANDOFF_REQUEST';
-    } else if (/\b(giá bao nhiêu|bao nhiêu tiền|nhiêu 1 gói|báo giá|giá sỉ|chiết khấu)\b/i.test(text)) {
+    } else if (
+      /(?:chiết\s*khấu\s*(?:thêm|cao\s*hơn|riêng|đặc\s*biệt|\d+%|nhiều\s*hơn)|bớt\s*giá|giảm\s*thêm|hoa\s*hồng|đại\s*lý\s*độc\s*quyền|hợp\s*đồng\s*(?:phân\s*phối|đại\s*lý|kinh\s*doanh)|xuất\s*hóa\s*đơn\s*(?:đặc\s*biệt|vat|đỏ)|công\s*nợ\s*(?:60|90|120)\s*ngày|gối\s*đầu|trả\s*góp|nợ\s*(?:lâu\s*hơn|(?:2|3)\s*tháng)|chính\s*sách\s*riêng|khiếu\s*nại|lừa\s*đảo|giao\s*sai|hàng\s*(?:hỏng|lỗi)|bồi\s*thường|đền\s*bù|trả\s*hàng\s*hoàn\s*tiền)/i.test(text)
+    ) {
+      result.intent = 'UNHANDLED_SITUATION';
+      result.customerStage = 'CONSIDERING';
+      result.buyingIntentLevel = 'LOW';
+      return result;
+    } else if (
+      /(?:giá\s*(?:bao\s*nhiêu|sỉ|tổng)|bao\s*nhiêu\s*tiền|nhiêu\s*1\s*gói|báo\s*giá|chiết\s*khấu|tổng\s*(?:tiền|đơn|cộng|chi phí)|hết\s*(?:bao\s*nhiêu|nhiêu)|thanh\s*toán\s*(?:bao\s*nhiêu|hết\s*nhiêu))/i.test(text)
+    ) {
       result.intent = 'ASK_PRICE';
       result.customerStage = 'CONSIDERING';
       result.buyingIntentLevel = 'MEDIUM';
@@ -463,10 +571,7 @@ export class SlotExtractor {
       result.intent = 'ASK_ORDER_STATUS';
       result.customerStage = 'POST_PURCHASE';
     } else if (
-      /\b(snack|bánh thưởng|que gặm|chọn loại nào|tư vấn|loại nào tốt|dành cho|thức ăn|đồ ăn|mua snack|mua bánh)\b/i.test(text) ||
-      result.texturePreference ||
-      result.ageMonths ||
-      result.breed
+      /\b(chọn loại nào|tư vấn loại|loại nào tốt|dành cho cún|tư vấn cho bé|tư vấn bánh|tư vấn que|nên chọn loại|nên mua loại)\b/i.test(text)
     ) {
       if (pendingSlots.length > 0 && (result.breed || result.weightKg || result.ageMonths || result.texturePreference)) {
         result.intent = 'PROVIDE_INFO';

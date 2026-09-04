@@ -9,6 +9,7 @@ import { emitWebhook } from '../api/webhook-service.js';
 import { pendingReplies } from './chat-routes.js';
 import { chatbotService, isRecentAiMessage } from '../chatbot/chatbot-service.js';
 import { chatbotStateMachine } from '../chatbot/chatbot-state-machine.js';
+import { findMatchingContact } from '../contacts/contact-merge-service.js';
 
 export interface IncomingMessage {
   accountId: string;
@@ -187,6 +188,31 @@ export async function handleIncomingMessage(
       }
     }
 
+    if (msg.isSelf) {
+      // Deduplicate: check if there is an existing self message with matching content within 30 seconds
+      const recentSelfMessage = await prisma.message.findFirst({
+        where: {
+          conversationId: conversation.id,
+          senderType: 'self',
+          content: msg.content || '',
+          sentAt: {
+            gte: new Date(Date.now() - 30000),
+          },
+        },
+      });
+
+      if (recentSelfMessage) {
+        if (!recentSelfMessage.zaloMsgId && msg.msgId) {
+          await prisma.message.update({
+            where: { id: recentSelfMessage.id },
+            data: { zaloMsgId: msg.msgId },
+          });
+        }
+        logger.info(`[message-handler] Deduplicated recent self message: ${msg.msgId}`);
+        return null;
+      }
+    }
+
     const attachments = Array.isArray(msg.attachments) ? [...msg.attachments] : [];
     if (msg.cliMsgId) {
       attachments.push({ cliMsgId: msg.cliMsgId });
@@ -253,15 +279,21 @@ export async function handleIncomingMessage(
       if (!isAi) {
         chatbotStateMachine.pauseAi(conversation.id, 'Nhân viên trực tiếp gửi tin nhắn', 60).catch(() => {});
       }
-    } else if (msg.threadType === 'user' && msg.content) {
-      // Inbound message from customer -> trigger AI Auto Chat pipeline asynchronously
-      chatbotService.processIncomingMessage(
-        conversation.id,
-        msg.content,
-        account.orgId,
-        msg.accountId,
-        contactId || undefined
-      ).catch((e) => logger.error('[message-handler] AI auto reply pipeline error:', e));
+    } else if (msg.threadType === 'user') {
+      const isImage = msg.contentType === 'image' || (Array.isArray(msg.attachments) && msg.attachments.some((a: any) => a?.type === 'image' || a?.url));
+      const hasContent = Boolean(msg.content && msg.content.trim().length > 0);
+      if (hasContent || isImage) {
+        // Inbound message or image from customer -> trigger AI Auto Chat pipeline asynchronously
+        chatbotService.processIncomingMessage(
+          conversation.id,
+          msg.content || '',
+          account.orgId,
+          msg.accountId,
+          contactId || undefined,
+          msg.attachments,
+          msg.contentType
+        ).catch((e) => logger.error('[message-handler] AI auto reply pipeline error:', e));
+      }
     }
 
     return {
@@ -317,6 +349,37 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<{ id:
   const targetUid = msg.isSelf ? msg.threadId : msg.senderUid;
   if (!targetUid) return null;
 
+  // 1. Check if an existing contact matches across any linked accounts or identifiers
+  const matchedContact = await findMatchingContact(orgId, {
+    zaloUid: targetUid,
+    fullName: !msg.isSelf ? msg.senderName : null,
+  });
+
+  if (matchedContact) {
+    if (!msg.isSelf && msg.senderName) {
+      const isInvalid = (name?: string | null) =>
+        !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
+      const updateData: Record<string, any> = {};
+      if (isInvalid(matchedContact.zaloName)) {
+        updateData.zaloName = msg.senderName;
+      }
+      if (isInvalid(matchedContact.fullName)) {
+        updateData.fullName = msg.senderName;
+      }
+      if (Object.keys(updateData).length > 0) {
+        await prisma.contact.update({
+          where: { id: matchedContact.id },
+          data: updateData,
+        });
+      }
+    }
+    return {
+      id: matchedContact.id,
+      contactType: matchedContact.contactType || 'customer',
+      assignedUserId: matchedContact.assignedUserId ?? null,
+    };
+  }
+
   try {
     const contact = await prisma.contact.upsert({
       where: { orgId_zaloUid: { orgId, zaloUid: targetUid } },
@@ -328,7 +391,8 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<{ id:
         orgId,
         zaloUid: targetUid,
         zaloName: msg.isSelf ? null : (msg.senderName || null),
-        fullName: msg.isSelf ? 'Khách hàng' : (msg.senderName || 'Unknown'),
+        fullName: msg.isSelf ? null : (msg.senderName || null),
+        metadata: { linkedZaloUids: [targetUid] },
       },
       select: { id: true, fullName: true, zaloName: true, contactType: true, assignedUserId: true },
     });
@@ -342,6 +406,59 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<{ id:
   }
 }
 
+// Deduplicate and merge any parallel conversation threads for the same threadId
+export async function mergeDuplicateConversations(
+  orgId: string,
+  externalThreadId: string,
+  primaryId: string,
+): Promise<void> {
+  try {
+    const duplicates = await prisma.conversation.findMany({
+      where: {
+        orgId,
+        externalThreadId,
+        id: { not: primaryId },
+      },
+      select: { id: true },
+    });
+
+    if (duplicates.length === 0) return;
+
+    logger.info(
+      `[message-handler] Merging ${duplicates.length} duplicate conversation(s) into primary ${primaryId} for thread ${externalThreadId}`,
+    );
+
+    for (const dup of duplicates) {
+      await prisma.message.updateMany({
+        where: { conversationId: dup.id },
+        data: { conversationId: primaryId },
+      });
+      await prisma.order.updateMany({
+        where: { conversationId: dup.id },
+        data: { conversationId: primaryId },
+      }).catch(() => {});
+      await prisma.notification.updateMany({
+        where: { conversationId: dup.id },
+        data: { conversationId: primaryId },
+      }).catch(() => {});
+      await prisma.aiAuditLog.updateMany({
+        where: { conversationId: dup.id },
+        data: { conversationId: primaryId },
+      }).catch(() => {});
+      await prisma.conversationAiState.deleteMany({
+        where: { conversationId: dup.id },
+      }).catch(() => {});
+      await prisma.conversation.delete({
+        where: { id: dup.id },
+      }).catch((e) => {
+        logger.warn(`[message-handler] Could not delete duplicate conversation ${dup.id}:`, e);
+      });
+    }
+  } catch (err) {
+    logger.warn('[message-handler] mergeDuplicateConversations error:', err);
+  }
+}
+
 // Find or create conversation — externalThreadId = threadId for both user and group
 async function findOrCreateConversation(
   msg: IncomingMessage,
@@ -350,10 +467,64 @@ async function findOrCreateConversation(
 ) {
   const externalThreadId = msg.threadId;
 
-  const existing = await prisma.conversation.findFirst({
+  // 1. Direct match: conversation already linked to this zaloAccountId and externalThreadId
+  let existing = await prisma.conversation.findFirst({
     where: { zaloAccountId: msg.accountId, externalThreadId },
-    select: { id: true, contactId: true, contact: { select: { assignedUserId: true } } },
+    select: { id: true, contactId: true, zaloAccountId: true, contact: { select: { assignedUserId: true } } },
   });
+
+  // 2. Auto-recognize existing conversation in org when reconnecting or re-adding account
+  if (!existing && externalThreadId) {
+    const existingInOrg = await prisma.conversation.findFirst({
+      where: {
+        orgId,
+        externalThreadId,
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      select: { id: true, contactId: true, zaloAccountId: true, contact: { select: { assignedUserId: true } } },
+    });
+
+    if (existingInOrg) {
+      existing = existingInOrg;
+      await prisma.conversation.update({
+        where: { id: existing.id },
+        data: {
+          zaloAccountId: msg.accountId,
+          ...(contactId && !existing.contactId ? { contactId } : {}),
+        },
+      }).catch((err) => {
+        logger.warn(`[message-handler] Failed to re-link conversation ${existing!.id} to account ${msg.accountId}:`, err);
+      });
+      logger.info(`[message-handler] Auto-recognized existing customer conversation ${existing.id} (${externalThreadId}) upon reconnect to account ${msg.accountId}`);
+    }
+  }
+
+  // 3. Contact match for 1-1 user chats: if externalThreadId differed, find by contactId
+  if (!existing && contactId && msg.threadType === 'user') {
+    const existingByContact = await prisma.conversation.findFirst({
+      where: {
+        orgId,
+        contactId,
+        threadType: 'user',
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      select: { id: true, contactId: true, zaloAccountId: true, contact: { select: { assignedUserId: true } } },
+    });
+
+    if (existingByContact) {
+      existing = existingByContact;
+      await prisma.conversation.update({
+        where: { id: existing.id },
+        data: {
+          zaloAccountId: msg.accountId,
+          externalThreadId,
+        },
+      }).catch((err) => {
+        logger.warn(`[message-handler] Failed to re-link contact conversation ${existing!.id} to account ${msg.accountId}:`, err);
+      });
+      logger.info(`[message-handler] Auto-recognized existing customer conversation ${existing.id} (contactId ${contactId}) upon reconnect to account ${msg.accountId}`);
+    }
+  }
 
   if (existing) {
     if (!existing.contactId && contactId) {
@@ -362,9 +533,16 @@ async function findOrCreateConversation(
         data: { contactId },
       }).catch(() => {});
     }
+
+    // Deduplicate any legacy parallel conversation rows for this thread
+    if (externalThreadId) {
+      mergeDuplicateConversations(orgId, externalThreadId, existing.id).catch(() => {});
+    }
+
     return { id: existing.id, assignedUserId: existing.contact?.assignedUserId };
   }
 
+  // 4. Truly new customer conversation
   const created = await prisma.conversation.create({
     data: {
       id: randomUUID(),

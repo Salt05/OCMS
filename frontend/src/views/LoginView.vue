@@ -16,6 +16,7 @@
         v-model="email"
         label="Email"
         type="email"
+        variant="outlined"
         prepend-inner-icon="lucide-mail"
         required
         class="mb-3"
@@ -24,6 +25,7 @@
         v-model="password"
         label="Mật khẩu"
         type="password"
+        variant="outlined"
         prepend-inner-icon="lucide-lock"
         required
         class="mb-5"

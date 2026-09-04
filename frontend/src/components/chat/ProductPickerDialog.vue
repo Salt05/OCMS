@@ -236,6 +236,7 @@
                       :src="prod.image_url"
                       :alt="prod.name"
                       class="product-thumb-img"
+                      @error="() => { prod.image_url = undefined; }"
                     />
                     <div v-else class="w-100 h-100 d-flex align-center justify-center text-medium-emphasis">
                       <v-icon size="24" class="opacity-50">lucide-image</v-icon>
@@ -394,6 +395,7 @@
                 :alt="detailProduct.name"
                 class="w-100 h-100"
                 style="object-fit: cover;"
+                @error="() => { if (detailProduct) detailProduct.image_url = undefined; }"
               />
               <div v-else class="w-100 h-100 d-flex align-center justify-center text-medium-emphasis">
                 <v-icon size="40" class="opacity-50">lucide-image</v-icon>

@@ -63,7 +63,7 @@ export async function webhookSettingsRoutes(app: FastifyInstance): Promise<void>
         return reply.status(400).send({ error: 'No webhook URL configured' });
       }
 
-      await emitWebhook(orgId, 'webhook.test', { message: 'Test event from Zalo CRM', orgId });
+      await emitWebhook(orgId, 'webhook.test', { message: 'Test event from OCMS', orgId });
       return { success: true, sentTo: config.valuePlain };
     } catch (err) {
       logger.error('[webhook-settings] Test error:', err);

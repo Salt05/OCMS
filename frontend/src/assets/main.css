@@ -830,4 +830,20 @@ a,
   display: none;
 }
 
+/* Tooltip styling - high contrast dark background with crisp white text */
+.v-overlay.v-tooltip .v-overlay__content,
+.v-tooltip .v-overlay__content {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+  font-size: 0.75rem !important;
+  font-weight: 550 !important;
+  line-height: 1.3 !important;
+  padding: 5px 9px !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  letter-spacing: 0.01em !important;
+  pointer-events: none;
+}
+
 

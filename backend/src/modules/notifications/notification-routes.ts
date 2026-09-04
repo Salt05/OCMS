@@ -21,12 +21,18 @@ export async function notificationRoutes(app: FastifyInstance) {
 
   app.get('/api/v1/notifications', async (request) => {
     const user = request.user!;
+    const isAdmin = ['owner', 'admin'].includes(user.role);
     const notifications: NotificationItem[] = [];
 
-    // 1. Unreplied conversations > 30 min
+    // 1. Unreplied conversations > 30 min (scoped to staff if not admin)
     const thirtyMinAgo = new Date(Date.now() - 30 * 60000);
     const unreplied = await prisma.conversation.count({
-      where: { orgId: user.orgId, isReplied: false, lastMessageAt: { lt: thirtyMinAgo } },
+      where: {
+        orgId: user.orgId,
+        isReplied: false,
+        lastMessageAt: { lt: thirtyMinAgo },
+        ...(isAdmin ? {} : { contact: { assignedUserId: user.id } }),
+      },
     });
     if (unreplied > 0) {
       notifications.push({
@@ -50,6 +56,7 @@ export async function notificationRoutes(app: FastifyInstance) {
         orgId: user.orgId,
         appointmentDate: { gte: todayStart, lt: todayEnd },
         status: 'scheduled',
+        ...(isAdmin ? {} : { assignedUserId: user.id }),
       },
       include: { contact: { select: { fullName: true } } },
       take: 5,
@@ -65,7 +72,7 @@ export async function notificationRoutes(app: FastifyInstance) {
       });
     }
 
-    // 3. Tomorrow's appointments
+    // 3. Tomorrow's appointments (scoped to staff if not admin)
     const tomorrowStart = new Date(todayEnd);
     const tomorrowEnd = new Date(tomorrowStart);
     tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
@@ -75,6 +82,7 @@ export async function notificationRoutes(app: FastifyInstance) {
         orgId: user.orgId,
         appointmentDate: { gte: tomorrowStart, lt: tomorrowEnd },
         status: 'scheduled',
+        ...(isAdmin ? {} : { assignedUserId: user.id }),
       },
     });
     if (tmrApts > 0) {
@@ -88,39 +96,56 @@ export async function notificationRoutes(app: FastifyInstance) {
       });
     }
 
-    // 4. Disconnected Zalo accounts
-    const accounts = await prisma.zaloAccount.findMany({
-      where: { orgId: user.orgId },
-      select: { id: true, displayName: true },
-    });
-    for (const acc of accounts) {
-      const status = zaloPool.getStatus(acc.id);
-      if (status !== 'connected') {
-        notifications.push({
-          id: `zalo-${acc.id}`,
-          type: 'error',
-          priority: 'high',
-          title: `Zalo "${acc.displayName}" mất kết nối`,
-          detail: `Trạng thái: ${status}`,
-          createdAt: new Date().toISOString(),
-        });
+    // 4. Disconnected Zalo accounts (only shown to admin/owner)
+    if (isAdmin) {
+      const accounts = await prisma.zaloAccount.findMany({
+        where: { orgId: user.orgId, deletedAt: null },
+        select: { id: true, displayName: true },
+      });
+      for (const acc of accounts) {
+        const status = zaloPool.getStatus(acc.id);
+        if (status !== 'connected') {
+          notifications.push({
+            id: `zalo-${acc.id}`,
+            type: 'error',
+            priority: 'high',
+            title: `Zalo "${acc.displayName}" mất kết nối`,
+            detail: `Trạng thái: ${status}`,
+            createdAt: new Date().toISOString(),
+          });
+        }
       }
     }
 
-    // 5. Database persistent notifications
+    // 5. Database persistent notifications (scoped so staff do not see other staff's customers)
     try {
       const dbNotifications = await prisma.notification.findMany({
         where: { userId: user.id, isRead: false },
+        include: {
+          conversation: {
+            select: { contact: { select: { assignedUserId: true } } },
+          },
+        },
         orderBy: { createdAt: 'desc' },
       });
-      const dbItems = dbNotifications.map(n => ({
+
+      const filteredDb = isAdmin
+        ? dbNotifications
+        : dbNotifications.filter(n => {
+            const assigned = n.conversation?.contact?.assignedUserId;
+            // If the conversation's contact is assigned to someone else, hide from this member
+            if (assigned && assigned !== user.id) return false;
+            return true;
+          });
+
+      const dbItems = filteredDb.map(n => ({
         id: 'db-' + n.id,
-        type: 'info',
+        type: n.type === 'customer_needs_human' ? 'warning' : 'info',
         priority: 'high',
         title: n.title,
         detail: n.detail,
         createdAt: n.createdAt.toISOString(),
-        conversationId: n.conversationId,
+        conversationId: n.conversationId || undefined,
       }));
       notifications.unshift(...dbItems);
     } catch (err) {

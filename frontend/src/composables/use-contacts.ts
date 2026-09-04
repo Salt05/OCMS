@@ -212,11 +212,23 @@ export function useContacts() {
     }
   }
 
+  async function mergeContacts(primaryContactId: string, sourceContactIds: string[]): Promise<boolean> {
+    try {
+      const res = await api.post('/contacts/merge', { primaryContactId, sourceContactIds });
+      await fetchContacts();
+      return res.data.success ?? true;
+    } catch (err) {
+      console.error('Failed to merge contacts:', err);
+      return false;
+    }
+  }
+
   return {
     contacts, total, loading, saving, deleting,
     filters, pagination,
     fetchContacts, fetchContact,
     createContact, updateContact, deleteContact, deleteContacts,
+    mergeContacts,
     toggleContactAi,
     resetFilters,
   };

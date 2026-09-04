@@ -9,6 +9,7 @@ import { requireRole } from '../auth/role-middleware.js';
 import { zaloPool } from './zalo-pool.js';
 import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
+import { findMatchingContact, linkZaloUidToContact } from '../contacts/contact-merge-service.js';
 
 export async function zaloSyncRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -36,19 +37,24 @@ export async function zaloSyncRoutes(app: FastifyInstance) {
           const avatar = friend.avatar || '';
           const phone = friend.phoneNumber || '';
 
-          const existing = await prisma.contact.findFirst({
-            where: { zaloUid: uid, orgId: user.orgId },
+          const existing = await findMatchingContact(user.orgId, {
+            zaloUid: uid,
+            phone: phone || null,
+            fullName: zaloName || null,
+            avatarUrl: avatar || null,
           });
 
           if (existing) {
             await prisma.contact.update({
               where: { id: existing.id },
               data: {
-                fullName: zaloName || existing.fullName,
+                fullName: (!existing.fullName || existing.fullName === 'Unknown' || existing.fullName === 'Khách hàng') ? (zaloName || existing.fullName) : existing.fullName,
+                zaloName: zaloName || existing.zaloName,
                 avatarUrl: avatar || existing.avatarUrl,
                 phone: phone || existing.phone,
               },
             });
+            await linkZaloUidToContact(existing.id, uid);
             updated++;
           } else {
             await prisma.contact.create({
@@ -57,8 +63,10 @@ export async function zaloSyncRoutes(app: FastifyInstance) {
                 orgId: user.orgId,
                 zaloUid: uid,
                 fullName: zaloName || 'Unknown',
+                zaloName: zaloName || null,
                 avatarUrl: avatar || null,
                 phone: phone || null,
+                metadata: { linkedZaloUids: [uid] },
               },
             });
             created++;
@@ -136,9 +144,25 @@ export async function zaloSyncRoutes(app: FastifyInstance) {
               }
 
               // Ensure conversation row exists
-              const existingConv = await prisma.conversation.findFirst({
+              let existingConv = await prisma.conversation.findFirst({
                 where: { zaloAccountId: id, externalThreadId: groupId },
               });
+
+              if (!existingConv) {
+                existingConv = await prisma.conversation.findFirst({
+                  where: { orgId: user.orgId, externalThreadId: groupId },
+                  orderBy: { lastMessageAt: 'desc' },
+                });
+                if (existingConv) {
+                  await prisma.conversation.update({
+                    where: { id: existingConv.id },
+                    data: {
+                      zaloAccountId: id,
+                      ...(contactId && !existingConv.contactId ? { contactId } : {}),
+                    },
+                  }).catch(() => {});
+                }
+              }
 
               if (!existingConv) {
                 await prisma.conversation.create({

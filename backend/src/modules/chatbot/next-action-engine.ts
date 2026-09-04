@@ -23,6 +23,7 @@ export type NextActionType =
   | 'CREATE_ORDER_DRAFT'
   | 'CONFIRM_CUSTOMER_ORDER'
   | 'HANDOFF_HUMAN'
+  | 'HANDOFF_HUMAN_SILENT'
   | 'WAIT'
   | 'END_CONVERSATION';
 
@@ -57,6 +58,8 @@ export interface NextActionDecision {
   suggestedQuestions?: string[];
   productSearchQuery?: {
     query: string;
+    category?: string;
+    brand?: string;
     petType?: 'dog' | 'cat' | 'all';
     excludeIngredients?: string[];
     texturePreference?: string;
@@ -82,6 +85,17 @@ export class NextActionEngine {
     hasPaymentTerm: boolean = false,
     hasDraftItems: boolean = false
   ): NextActionDecision {
+    // 0. Check for Unhandled / Out-of-scope Situation (Silent Handoff to staff)
+    if (extracted.intent === 'UNHANDLED_SITUATION') {
+      return {
+        action: 'HANDOFF_HUMAN_SILENT',
+        nextState: 'HUMAN_REQUESTED',
+        reason: 'Khách hàng có yêu cầu chưa được thiết lập hoặc ngoài quy định hệ thống (đàm phán riêng/công nợ ngoài quy định)',
+        missingRequiredSlots: [],
+        handoffReason: 'Yêu cầu chưa thiết lập trong hệ thống (đàm phán riêng/công nợ ngoài quy định)',
+      };
+    }
+
     // 1. Check for Direct Human Handoff Request
     if (extracted.intent === 'HANDOFF_REQUEST') {
       return {
@@ -99,6 +113,44 @@ export class NextActionEngine {
         action: 'END_CONVERSATION',
         nextState: 'WAIT',
         reason: 'Khách hàng chào tạm biệt / cảm ơn. Đáp lại thân thiện, ngắn gọn.',
+        missingRequiredSlots: [],
+      };
+    }
+
+    // 2b. Check for Greeting / Starting Conversation / Unclear Message
+    const isStartingSession = currentState === 'NEW' || currentState === 'GREETING';
+    if ((extracted.intent === 'GREETING' && isStartingSession) || (currentState === 'NEW' && extracted.intent === 'GENERAL_QUERY')) {
+      return {
+        action: 'ANSWER',
+        nextState: 'GREETING',
+        reason: 'Mở đầu cuộc trò chuyện. Chào khách và hỏi khách muốn đặt hàng, giải đáp thắc mắc hay cần tư vấn sản phẩm gì.',
+        missingRequiredSlots: [],
+        suggestedQuestions: [
+          'Dạ em chào anh/chị ạ! Em có thể hỗ trợ gì cho mình hôm nay ạ? Mình đang muốn đặt hàng, giải đáp thắc mắc hay cần tư vấn sản phẩm nào ạ?',
+        ],
+      };
+    }
+
+    // 2c. Check for Clarifying Question about Items/SKUs (e.g. "C10-2 hay là C10?" or "2 món xương nơ da bò trắng vàng có mã là gì")
+    if (extracted.intent === 'CLARIFY_ORDER_ITEM') {
+      const isSkuQuery = Boolean(extracted.skuInquiryQuery);
+      return {
+        action: isSkuQuery ? 'SEARCH_PRODUCT' : 'ANSWER',
+        nextState: currentState === 'ORDER_DRAFT' || currentState === 'ORDER_COLLECTION' ? currentState : 'CONSIDERATION',
+        reason: isSkuQuery
+          ? `Khách hàng đang hỏi mã SKU của sản phẩm: "${extracted.skuInquiryQuery}". Bắt buộc tra cứu sản phẩm trong kho và trả lời ngay kết quả mã SKU cụ thể, TUYỆT ĐỐI KHÔNG xin chờ!`
+          : 'Khách hàng đang hỏi để làm rõ sự khác nhau giữa các mã sản phẩm. Trả lời giải thích rõ ràng, TUYỆT ĐỐI KHÔNG tự ý coi đây là lệnh sửa đơn!',
+        missingRequiredSlots: [],
+        productSearchQuery: isSkuQuery ? { query: extracted.skuInquiryQuery! } : undefined,
+      };
+    }
+
+    // 2d. Check if customer asks about remaining items (e.g. "còn nữa không", "thiếu món nào không")
+    if (extracted.intent === 'CHECK_REMAINING_ITEMS') {
+      return {
+        action: 'ANSWER',
+        nextState: currentState === 'ORDER_DRAFT' || currentState === 'ORDER_COLLECTION' ? currentState : 'ORDER_COLLECTION',
+        reason: 'Khách hàng hỏi còn món nào nữa không hoặc kiểm tra danh sách có đủ chưa. Trình bày đầy đủ 100% tất cả các món trong đơn hàng nháp.',
         missingRequiredSlots: [],
       };
     }
@@ -141,90 +193,66 @@ export class NextActionEngine {
       };
     }
 
-    // 5. Check for Product Safety / Ingredient / Rawhide / Choking specific queries
-    if (extracted.intent === 'CHECK_PRODUCT_SAFETY') {
+    // 5. Check for Price Query (e.g. "C28 giá bao nhiêu?", "Báo giá cho anh")
+    if (extracted.intent === 'ASK_PRICE') {
+      return {
+        action: 'CHECK_PRICE',
+        nextState: 'PRICE_DISCUSSION',
+        reason: 'Khách hỏi giá sản phẩm. Báo giá đại lý / sỉ kèm chương trình khuyến mãi nếu có.',
+        missingRequiredSlots: [],
+      };
+    }
+
+    // 6. Check for Product Detail / Safety / Ingredient Query (e.g. "C14 thành phần là gì?", "C14 có phải rawhide không?")
+    if (extracted.intent === 'CHECK_PRODUCT_SAFETY' || extracted.intent === 'INFORMATION_SEEKING') {
       const targetSku = extracted.productSafetyQuery?.sku;
       return {
-        action: targetSku ? 'GET_PRODUCT_DETAIL' : 'PROVIDE_INFO',
+        action: 'GET_PRODUCT_DETAIL',
         nextState: 'INFORMATION',
-        reason: `Khách hỏi thông tin an toàn/thành phần sản phẩm ${targetSku || ''}. Trả lời dựa dữ liệu, KHÔNG CTA.`,
+        reason: `Khách tìm hiểu thông tin / tính an toàn của sản phẩm ${targetSku || 'sản phẩm'}. Cung cấp thông tin khách quan, chính xác từ CSDL.`,
         missingRequiredSlots: [],
         targetSku,
       };
     }
 
-    // Check missing required slots for order completion
-    const hasPhone = customer.phone.status === 'CONFIRMED' || !!extracted.phone;
-    const hasAddress = customer.address.status === 'CONFIRMED' || !!extracted.address;
-    const hasPaymentTermVal = customer.payment_term?.status === 'CONFIRMED' || !!extracted.paymentTerm;
-    const missing: string[] = [];
-    if (!hasPhone) missing.push('phone');
-    if (!hasAddress) missing.push('address');
-    if (!hasPaymentTermVal) missing.push('payment_term');
-
-    // 5b. Check for Customer Order Confirmation (e.g. "Đồng ý", "Xác nhận", "OK em", "ok", "được rồi", "ừ")
-    // ONLY allow CONFIRM_CUSTOMER_ORDER if ALL required slots (especially payment term) are already confirmed!
-    if (extracted.intent === 'CONFIRM_ORDER' && missing.length === 0 && (
+    // 7. Check for Buying Intent (Order Draft Extraction)
+    const isBuyingIntent =
+      extracted.intent === 'ORDER_INTENT' ||
+      extracted.buyingIntentLevel === 'HIGH' ||
+      currentState === 'BUYING_INTENT' ||
       currentState === 'ORDER_COLLECTION' ||
       currentState === 'ORDER_DRAFT' ||
-      currentState === 'CONFIRMATION' ||
-      hasDraftItems
-    )) {
-      return {
-        action: 'CONFIRM_CUSTOMER_ORDER',
-        nextState: 'CONFIRMATION',
-        reason: 'Khách hàng đã kiểm tra thông tin và nhắn xác nhận chốt đơn. Chuyển đơn sang trạng thái CONFIRMATION và gửi thông báo tới nhân viên để duyệt sang Odoo.',
-        missingRequiredSlots: [],
-      };
-    }
+      (currentState === 'CUSTOMER_INFO_RECEIVED' && hasDraftItems) ||
+      !!extracted.orderQuantity ||
+      Boolean(extracted.paymentTerm);
 
-    // 6. Check for Order Draft Intent (High Buying Intent) or Checkout
-    if (extracted.intent === 'ORDER_INTENT' || extracted.intent === 'CONFIRM_ORDER' || extracted.buyingIntentLevel === 'HIGH' || currentState === 'ORDER_COLLECTION' || currentState === 'ORDER_DRAFT') {
+    if (isBuyingIntent) {
+      const missingRequiredSlots: string[] = [];
+      const hasPhone = customer.phone.status === 'CONFIRMED' || !!extracted.phone;
+      const hasAddress = customer.address.status === 'CONFIRMED' || !!extracted.address;
+
+      if (!hasPhone) missingRequiredSlots.push('phone');
+      if (!hasAddress) missingRequiredSlots.push('address');
+      if (!hasPaymentTerm && customer.payment_term?.status !== 'CONFIRMED' && !extracted.paymentTerm) {
+        missingRequiredSlots.push('payment_term');
+      }
+
       return {
         action: 'CREATE_ORDER_DRAFT',
         nextState: 'ORDER_COLLECTION',
-        reason: missing.length === 0
-          ? 'Đã có đầy đủ danh sách món, số lượng, SĐT, địa chỉ nhận hàng và điều khoản thanh toán. Giữ ở ORDER_COLLECTION để nhắc lại toàn bộ đơn và yêu cầu khách nhắn xác nhận lại trước khi tạo đơn sang Odoo.'
-          : `Khách bày tỏ ý định mua rõ ràng. Còn thiếu: ${missing.join(', ')}. Tiến hành thu thập thông tin giao hàng & điều khoản thanh toán.`,
-        missingRequiredSlots: missing,
+        reason: missingRequiredSlots.length === 0
+          ? 'Đã có đầy đủ thông tin đơn hàng. Tiến hành tạo đơn nháp.'
+          : 'Khách hàng có ý định đặt hàng. Bóc tách sản phẩm, số lượng, điều khoản thanh toán và các thông tin liên quan.',
+        missingRequiredSlots,
       };
     }
 
-    // 7. Check for Price / Inventory Direct Queries (INFO-only, no CTA)
-    if (extracted.intent === 'ASK_PRICE') {
-      return {
-        action: 'CHECK_PRICE',
-        nextState: 'INFORMATION',
-        reason: 'Khách hỏi giá. Trả lời giá, DỪNG. KHÔNG tự mời mua.',
-        missingRequiredSlots: [],
-      };
-    }
-
-    if (extracted.intent === 'CHECK_INVENTORY') {
-      return {
-        action: 'CHECK_INVENTORY',
-        nextState: 'INFORMATION',
-        reason: 'Khách kiểm tra tồn kho. Trả lời, KHÔNG CTA.',
-        missingRequiredSlots: [],
-      };
-    }
-
-    // 7b. Pure information-seeking queries (thành phần, công dụng, đặc điểm...)
-    if (extracted.intent === 'INFORMATION_SEEKING') {
-      return {
-        action: 'PROVIDE_INFO',
-        nextState: 'INFORMATION',
-        reason: 'Khách hỏi thông tin thuần túy. Trả lời ngắn gọn 1-2 câu, DỪNG. KHÔNG CTA.',
-        missingRequiredSlots: [],
-      };
-    }
-
-    // 7. Evaluate Pet Profile Completeness for Consultation
-    const hasPetType = pet.type.status === 'CONFIRMED';
-    const hasAge = pet.age_months.status === 'CONFIRMED';
-    const hasBreed = pet.breed.status === 'CONFIRMED';
-    const hasWeight = pet.weight_kg.status === 'CONFIRMED';
-    const hasTexture = pet.texture_preference.status === 'CONFIRMED';
+    // 8. Recommendation Discovery
+    const hasBreed = pet.breed.status === 'CONFIRMED' || !!extracted.breed;
+    const hasAge = pet.age_months.status === 'CONFIRMED' || !!extracted.ageMonths;
+    const hasWeight = pet.weight_kg.status === 'CONFIRMED' || !!extracted.weightKg;
+    const hasTexture = pet.texture_preference.status === 'CONFIRMED' || !!extracted.texturePreference;
+    const hasPetType = pet.type.status === 'CONFIRMED' || !!extracted.petType;
 
     // If user was answering previous question
     const isAnsweringPrevious = pendingSlots.some(s => extracted.answeredPendingSlots.includes(s));
@@ -260,7 +288,7 @@ export class NextActionEngine {
 
     // SCENARIO B: If customer is initiating discovery, but we lack basic info
     // Ask missing info precisely WITHOUT hallucinating any facts!
-    if (extracted.intent === 'ASK_RECOMMENDATION' || currentState === 'DISCOVERY' || currentState === 'NEW') {
+    if (extracted.intent === 'ASK_RECOMMENDATION' || currentState === 'DISCOVERY') {
       const askSlots: string[] = [];
       if (!hasBreed) askSlots.push('breed');
       if (!hasWeight) askSlots.push('weight_kg');
@@ -269,21 +297,11 @@ export class NextActionEngine {
       return {
         action: 'ASK_CLARIFICATION',
         nextState: 'WAITING_FOR_CUSTOMER_INFO',
-        reason: 'Chưa đủ thông tin để chọn sản phẩm phù hợp nhất',
+        reason: 'Khách hỏi tư vấn chọn sản phẩm. Hỏi ngắn gọn để tìm sản phẩm phù hợp.',
         missingRequiredSlots: askSlots,
         suggestedQuestions: [
-          'Bé nhà mình giống gì và nặng bao nhiêu kg ạ? Bé thích dòng mềm dễ nhai hay giòn rụm để em chọn mẫu phù hợp nhé!',
+          'Dạ bé nhà mình thuộc giống cún nào và mấy tháng tuổi ạ để em tìm loại phù hợp nhất cho bé nhé!',
         ],
-      };
-    }
-
-    // SCENARIO C: Greeting
-    if (extracted.intent === 'GREETING') {
-      return {
-        action: 'ANSWER',
-        nextState: 'GREETING',
-        reason: 'Khách chào hỏi. Đáp ngắn gọn, thân thiện.',
-        missingRequiredSlots: [],
       };
     }
 

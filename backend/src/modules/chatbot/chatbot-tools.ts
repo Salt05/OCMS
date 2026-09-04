@@ -7,8 +7,10 @@ import { odooService } from '../odoo/odoo-service.js';
 import { knowledgeService } from './knowledge-service.js';
 import { extractOrderFromConversation } from '../orders/ai-order-service.js';
 import { ProductGroundingEngine } from './product-grounding.js';
+import { PromotionService } from '../promotions/promotion-service.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { logger } from '../../shared/utils/logger.js';
+import { formatDraftOrderProductList, formatDraftOrderPromotionsAndPricing } from './draft-order-formatter.js';
 
 export const CHATBOT_TOOL_DEFINITIONS = [
   {
@@ -59,6 +61,14 @@ export const CHATBOT_TOOL_DEFINITIONS = [
             type: 'array',
             items: { type: 'string' },
             description: 'Các thành phần dị ứng cần loại trừ (ví dụ: ["gà", "da bò sống"])',
+          },
+          category: {
+            type: 'string',
+            description: 'Ngành hàng sản phẩm (ví dụ: Xương gặm, Bánh thưởng, Que gặm, Pate, Thức ăn hạt...) để tra cứu chính xác theo phân loại ngành hàng',
+          },
+          brand: {
+            type: 'string',
+            description: 'Thương hiệu sản phẩm (ví dụ: Lapati, Dexinbone, INU...) nếu khách hàng hoặc nhân viên có hỏi đích danh thương hiệu',
           },
         },
         required: ['query'],
@@ -188,18 +198,22 @@ export const CHATBOT_TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'handoff_to_human',
-      description: 'Chuyển giao cuộc trò chuyện cho nhân viên Sale phụ trách và tạm khóa AI khi có khiếu nại, thương lượng giá sỉ hoặc khách đòi gặp người thật.',
+      description: 'Chuyển giao cuộc trò chuyện cho nhân viên Sale phụ trách và tạm khóa AI khi khách yêu cầu, khiếu nại, hoặc khi gặp tình huống chưa được thiết lập trong hệ thống (đàm phán giá riêng, công nợ lạ, câu hỏi ngoài CSDL).',
       parameters: {
         type: 'object',
         properties: {
           reason: {
             type: 'string',
-            description: 'Lý do chuyển giao (ví dụ: Khách khiếu nại giao sai hàng, Khách đàm phán giá sỉ, Khách yêu cầu gặp tư vấn viên trực tiếp)',
+            description: 'Lý do chuyển giao (ví dụ: Khách khiếu nại giao sai hàng, Khách đàm phán giá sỉ riêng, Tình huống chưa thiết lập trong hệ thống)',
           },
           urgency: {
             type: 'string',
             enum: ['normal', 'urgent', 'critical'],
             description: 'Mức độ khẩn cấp',
+          },
+          silent: {
+            type: 'boolean',
+            description: 'Đặt true khi gặp tình huống chưa thiết lập trong hệ thống để AI hoàn toàn im lặng với khách và chỉ báo chuông cho nhân viên',
           },
         },
         required: ['reason'],
@@ -243,6 +257,43 @@ export const CHATBOT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'get_applicable_promotions',
+      description: 'Tra cứu chính sách khuyến mãi, tính mức chiết khấu và quà tặng từ Pricing Engine cho giỏ hàng hiện tại hoặc theo nhu cầu mua sắm. Trả về số tiền giảm, quà tặng kèm, điều kiện đạt được và gợi ý mua thêm để lên bậc ưu đãi.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cart_items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                sku: { type: 'string', description: 'Mã SKU sản phẩm' },
+                quantity: { type: 'number', description: 'Số lượng mua' },
+                price: { type: 'number', description: 'Đơn giá nếu có' },
+              },
+              required: ['quantity'],
+            },
+            description: 'Danh sách sản phẩm trong giỏ cần kiểm tra ưu đãi',
+          },
+          order_value: {
+            type: 'number',
+            description: 'Tổng giá trị đơn hàng nếu khách hỏi theo mức tiền (ví dụ: 40000000)',
+          },
+          category: {
+            type: 'string',
+            description: 'Nhóm sản phẩm khách quan tâm (ví dụ: Xương gặm, Bánh thưởng)',
+          },
+          query_topic: {
+            type: 'string',
+            description: 'Chủ đề khách muốn hỏi (ví dụ: "chiết khấu xương gặm", "xương bàn chải", "mua 7 tặng 1", "thưởng doanh số")',
+          },
+        },
+      },
+    },
+  },
 ];
 
 export class ChatbotToolExecutor {
@@ -262,7 +313,9 @@ export class ChatbotToolExecutor {
             args.pet_type,
             args.exclude_ingredients,
             args.age_months,
-            args.texture_preference
+            args.texture_preference,
+            args.category,
+            args.brand
           );
 
         case 'get_product_detail':
@@ -295,6 +348,9 @@ export class ChatbotToolExecutor {
         case 'search_faq_policy':
           return this.searchFaqPolicy(args.query, args.category);
 
+        case 'get_applicable_promotions':
+          return this.getApplicablePromotions(args);
+
         default:
           return { error: `Tool ${toolName} không tồn tại.` };
       }
@@ -309,9 +365,13 @@ export class ChatbotToolExecutor {
     petType?: string,
     excludeIngredients?: string[],
     ageMonths?: number,
-    texturePreference?: string
+    texturePreference?: string,
+    category?: string,
+    brand?: string
   ) {
     const q = (query || '').trim().toLowerCase();
+    const catQuery = (category || '').trim().toLowerCase();
+    const brandQuery = (brand || '').trim().toLowerCase();
     const where: any = {
       orgId: this.orgId,
       isActive: true,
@@ -319,7 +379,7 @@ export class ChatbotToolExecutor {
 
     const allProducts = await prisma.productCache.findMany({
       where,
-      take: 50,
+      take: 500,
     });
 
     if (!allProducts || allProducts.length === 0) {
@@ -327,6 +387,31 @@ export class ChatbotToolExecutor {
     }
 
     let filtered = allProducts;
+
+    // Filter by explicit brand if provided
+    if (brandQuery) {
+      const brandFiltered = filtered.filter((p: any) => {
+        const pBrand = (p.brand || '').toLowerCase();
+        const pName = (p.name || '').toLowerCase();
+        return pBrand.includes(brandQuery) || pName.includes(brandQuery);
+      });
+      if (brandFiltered.length > 0) {
+        filtered = brandFiltered;
+      }
+    }
+
+    // Filter by explicit category (ngành hàng) if provided
+    if (catQuery) {
+      const catFiltered = filtered.filter((p: any) => {
+        const pCat = (p.category || '').toLowerCase();
+        const pName = (p.name || '').toLowerCase();
+        const pDesc = (p.description || '').toLowerCase();
+        return pCat.includes(catQuery) || pName.includes(catQuery) || pDesc.includes(catQuery);
+      });
+      if (catFiltered.length > 0) {
+        filtered = catFiltered;
+      }
+    }
 
     // Filter allergy exclusions
     if (excludeIngredients && excludeIngredients.length > 0) {
@@ -355,23 +440,66 @@ export class ChatbotToolExecutor {
     const isPuppy = (ageMonths !== undefined && ageMonths <= 6);
     const wantsSoft = texturePreference === 'soft' || isPuppy;
 
+    // Check for compound color/flavor variants in query (e.g. "trắng vàng", "trắng và vàng")
+    const hasWhiteVariant = /trắng|trang|white/i.test(q);
+    const hasYellowVariant = /vàng|vang|yellow/i.test(q);
+    const isMultiColorQuery = hasWhiteVariant && hasYellowVariant;
+
     // Fuzzy text match & smart boosting
     const words = q.split(/\s+/).filter(w => w.length > 1);
     const scored = filtered.map((p: any) => {
       let score = 0;
       const skuLower = (p.sku || '').toLowerCase();
       const nameLower = p.name.toLowerCase();
+      const dispLower = (p.displayName || '').toLowerCase();
       const descLower = (p.description || '').toLowerCase();
       const specLower = (p.specification || '').toLowerCase();
+      const catLower = (p.category || '').toLowerCase();
+      const brandLower = (p.brand || '').toLowerCase();
 
-      if (skuLower === q) score += 20;
-      if (nameLower.includes(q)) score += 10;
-      if (descLower.includes(q)) score += 5;
+      if (skuLower === q) score += 30;
+      if (nameLower.includes(q) || dispLower.includes(q)) score += 15;
+      if (descLower.includes(q)) score += 8;
+
+      // Handle "xương nơ" / "da bò" specific detection
+      if (q.includes('xương nơ') || q.includes('xuong no')) {
+        if (nameLower.includes('xương nơ') || dispLower.includes('xương nơ')) score += 20;
+        else if (descLower.includes('xương nơ') || (descLower.includes('xương') && descLower.includes('nơ'))) score += 18;
+      }
+      if (q.includes('da bò') || q.includes('da bo')) {
+        if (nameLower.includes('da bò') || dispLower.includes('da bò')) score += 12;
+        else if (descLower.includes('da bò')) score += 8;
+      }
+
+      // If multi-variant query (e.g. "trắng vàng"): boost both white and yellow variants
+      if (isMultiColorQuery) {
+        if (nameLower.includes('trắng') || dispLower.includes('trắng') || descLower.includes('trắng')) {
+          score += 25;
+        }
+        if (nameLower.includes('vàng') || dispLower.includes('vàng') || descLower.includes('vàng')) {
+          score += 25;
+        }
+      } else {
+        if (hasWhiteVariant && (nameLower.includes('trắng') || dispLower.includes('trắng'))) score += 15;
+        if (hasYellowVariant && (nameLower.includes('vàng') || dispLower.includes('vàng'))) score += 15;
+      }
+
+      // Boost matching category (ngành hàng)
+      if (catLower && (q.includes(catLower) || (catQuery && catLower.includes(catQuery)))) {
+        score += 15;
+      }
+      // Boost matching brand
+      if (brandLower && (q.includes(brandLower) || (brandQuery && brandLower.includes(brandQuery)))) {
+        score += 15;
+      }
 
       for (const w of words) {
-        if (skuLower.includes(w)) score += 5;
-        if (nameLower.includes(w)) score += 3;
-        if (descLower.includes(w)) score += 1;
+        if (w === 'trắng' || w === 'vàng' || w === 'và' || w === 'món' || w === 'loại') continue;
+        if (skuLower.includes(w)) score += 6;
+        if (nameLower.includes(w) || dispLower.includes(w)) score += 4;
+        if (catLower.includes(w)) score += 4;
+        if (brandLower.includes(w)) score += 4;
+        if (descLower.includes(w)) score += 2;
       }
 
       // Boost soft / puppy snacks
@@ -385,15 +513,19 @@ export class ChatbotToolExecutor {
     });
 
     const topMatches = scored
-      .filter((s: any) => s.score > 0 || !q)
+      .filter((s: any) => s.score > 10 || (!q && s.score >= 0))
       .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 4)
+      .slice(0, 6)
       .map((s: any) => {
         const wholesalePrice = s.p.wholesalePrice > 0 ? s.p.wholesalePrice : s.p.listPrice;
         return {
           sku: s.p.sku || `OD-${s.p.odooId}`,
           name: s.p.name,
+          displayName: s.p.displayName || s.p.name,
+          category: s.p.category || null,
+          brand: s.p.brand || null,
           price: wholesalePrice,
+          wholesale_price: wholesalePrice,
           formatted_price: `${wholesalePrice.toLocaleString('vi-VN')} đ`,
           specification: s.p.specification || s.p.weight || 'Gói',
           target: s.p.target || 'Tất cả thú cưng',
@@ -461,6 +593,8 @@ export class ChatbotToolExecutor {
       found: true,
       sku: grounded.sku,
       name: grounded.name,
+      category: grounded.category,
+      brand: grounded.brand,
       specification: grounded.specification || grounded.uom,
       ingredients: grounded.ingredients, // null if unknown in DB, DO NOT FAKE!
       nutritional_info: grounded.description,
@@ -501,6 +635,8 @@ export class ChatbotToolExecutor {
       found: true,
       sku: product.sku,
       name: product.name,
+      category: (product as any)?.category || null,
+      brand: (product as any)?.brand || null,
       price,
       uom: product.uomName || 'Gói',
       formatted_price: `${price.toLocaleString('vi-VN')} VNĐ`,
@@ -692,7 +828,25 @@ export class ChatbotToolExecutor {
     const draft = await extractOrderFromConversation(this.orgId, this.conversationId, instruction);
     
     if (draft && draft.items && draft.items.length > 0) {
-      const subtotal = draft.items.reduce((sum: number, it: any) => sum + ((it.quantity || 1) * (it.priceUnit || 0)), 0);
+      const origSubtotal = draft.originalSubtotal !== undefined
+        ? draft.originalSubtotal
+        : draft.items.reduce((sum: number, it: any) => sum + ((it.quantity || 1) * (it.priceUnit || 0)), 0);
+      const discountAmt = draft.discountAmount !== undefined ? draft.discountAmount : 0;
+      const finalAmt = draft.finalTotal !== undefined ? draft.finalTotal : Math.max(0, origSubtotal - discountAmt);
+
+      let prevHasShown = false;
+      try {
+        const prevAiState = await prisma.conversationAiState.findUnique({
+          where: { conversationId: this.conversationId },
+          select: { draftOrder: true },
+        });
+        prevHasShown = Boolean((prevAiState?.draftOrder as any)?.hasShownToCustomer);
+      } catch (e) {
+        // ignore
+      }
+
+      const hasShownToCustomer = prevHasShown;
+
       const savedDraft = {
         items: draft.items.map((it: any) => ({
           matchedProductOdooId: it.matchedProductOdooId,
@@ -701,6 +855,8 @@ export class ChatbotToolExecutor {
           productNameRaw: it.productNameRaw,
           quantity: Number(it.quantity) || 1,
           qty: Number(it.quantity) || 1,
+          originalPrice: it.originalPrice || (it.discountedPrice ? (it.originalPriceUnit || it.priceUnit) : (it.priceUnit || 0)),
+          discountedPrice: it.discountedPrice || null,
           priceUnit: it.priceUnit || 0,
           price: it.priceUnit || 0,
           discount: it.discount || 0,
@@ -713,11 +869,18 @@ export class ChatbotToolExecutor {
         recipientName: draft.customer?.name || undefined,
         phone: draft.customer?.phone || undefined,
         address: draft.customer?.shippingAddress || undefined,
-        subtotal,
-        amountTotal: subtotal,
+        subtotal: origSubtotal,
+        discountAmount: discountAmt,
+        amountTotal: finalAmt,
+        appliedPromotions: draft.appliedPromotions || [],
+        freeItems: draft.freeItems || [],
+        explanations: draft.explanations || [],
+        suggestions: draft.suggestions || [],
         paymentTerm: draft.paymentTerm || (draft as any).payment_term || null,
         notes: draft.notes || null,
         missingInfo: draft.missingInfo || [],
+        unclearItems: draft.unclearItems || [],
+        hasShownToCustomer,
       };
 
       if (!savedDraft.paymentTerm) {
@@ -732,10 +895,10 @@ export class ChatbotToolExecutor {
           create: {
             orgId: this.orgId,
             conversationId: this.conversationId,
-            draftOrder: savedDraft,
+            draftOrder: savedDraft as any,
           },
           update: {
-            draftOrder: savedDraft,
+            draftOrder: savedDraft as any,
           },
         });
 
@@ -757,16 +920,28 @@ export class ChatbotToolExecutor {
         logger.error('[chatbot-tools] Error persisting draft order:', dbErr);
       }
 
-      const paymentTermNote = savedDraft.paymentTerm
-        ? `Điều khoản thanh toán: ${savedDraft.paymentTerm}.`
-        : `CẢNH BÁO: ĐƠN HÀNG ĐANG THIẾU ĐIỀU KHOẢN THANH TOÁN! BẮT BUỘC bạn phải hỏi ngắn gọn: "Dạ cho em biết mình muốn thanh toán ngay hay trong bao lâu ạ?". TUYỆT ĐỐI KHÔNG ĐƯỢC BẢO KHÁCH XÁC NHẬN CHỐT ĐƠN KHI CHƯA CÓ ĐIỀU KHOẢN THANH TOÁN!`;
+      const { itemsListStr, unclearListStr } = formatDraftOrderProductList(savedDraft, 'anh/chị');
+      const promoAndPriceStr = formatDraftOrderPromotionsAndPricing(savedDraft, 'anh/chị');
 
       return {
         success: true,
         draft: savedDraft,
-        subtotal,
-        formatted_total: `${subtotal.toLocaleString('vi-VN')} đ`,
-        summary: `Đã bóc tách đơn hàng thành công gồm ${savedDraft.items.length} sản phẩm, tổng tiền: ${subtotal.toLocaleString('vi-VN')} đ. ${paymentTermNote} Khách nhận: ${savedDraft.recipientName || 'Chưa rõ'}, SĐT: ${savedDraft.phone || 'Chưa rõ'}, Địa chỉ: ${savedDraft.address || 'Chưa rõ'}.`,
+        unclear_items: savedDraft.unclearItems,
+        subtotal: origSubtotal,
+        discount_amount: discountAmt,
+        final_total: finalAmt,
+        formatted_total: `${finalAmt.toLocaleString('vi-VN')} đ`,
+        applied_promotions: savedDraft.appliedPromotions,
+        free_items: savedDraft.freeItems,
+        explanations: savedDraft.explanations,
+        summary: savedDraft.hasShownToCustomer
+          ? `Đơn hàng nháp hiện có ${savedDraft.items.length} món. TUYỆT ĐỐI KHÔNG LIỆT KÊ LẠI TOÀN BỘ DANH SÁCH 20 SẢN PHẨM NÀY (khách đã xem ở tin nhắn trước rồi, không được nhắc lại gây phiền toái, CHỈ ĐƯỢC NHẮC LẠI KHI HỎI XÁC NHẬN CHỐT ĐƠN HÀNG). Trả lời trực tiếp câu hỏi hoặc hỏi thông tin còn thiếu.`
+          : `Đã bóc tách thành công đầy đủ toàn bộ ${savedDraft.items.length} món từ hình ảnh/tin nhắn.
+BẮT BUỘC BẠN PHẢI LIỆT KÊ ĐỦ TẤT CẢ ${savedDraft.items.length} MÓN SAU ĐÂY CHO KHÁCH KIỂM TRA (TUYỆT ĐỐI KHÔNG ĐƯỢC CẮT BỚT, TÓM TẮT HAY DỪNG GIỮA CHỪNG):
+
+${itemsListStr}${unclearListStr}${promoAndPriceStr}
+
+BẮT BUỘC THÔNG BÁO RÕ CÁC ƯU ĐÃI THỎA MÃN (NÊU RÕ LÝ DO VÀ TIẾT KIỆM ĐƯỢC BAO NHIÊU TIỀN, QUÀ TẶNG KÈM) VÀ GIÁ TRƯỚC VÀ SAU KHI ÁP DỤNG ƯU ĐÃI (NHƯ TRÊN) ĐỂ KHÁCH HÀNG KHÔNG PHẢI HỎI LẠI! Sau đó nhờ khách kiểm tra và hỏi điều khoản thanh toán.`,
       };
     }
 
@@ -804,21 +979,29 @@ export class ChatbotToolExecutor {
         data: { currentState: 'CONFIRMATION' },
       });
 
+      const assignedUserId = conv.contact?.assignedUserId || null;
+
       // Realtime notification to staff
       zaloPool.getIO()?.emit('chat:order_draft_updated', {
         conversationId: this.conversationId,
         draftOrder: draft,
+        assignedUserId,
       });
       zaloPool.getIO()?.emit('chat:state_updated', {
         conversationId: this.conversationId,
         currentState: 'CONFIRMATION',
+        assignedUserId,
       });
       zaloPool.getIO()?.emit('order:created', {
         conversationId: this.conversationId,
         partnerName: draft.customer?.name || conv.contact?.fullName || 'Khách hàng',
         amountTotal: draft.amountTotal || draft.subtotal || 0,
+        assignedUserId,
       });
-      zaloPool.getIO()?.emit('order:updated');
+      zaloPool.getIO()?.emit('order:updated', {
+        conversationId: this.conversationId,
+        assignedUserId,
+      });
 
       return {
         success: true,
@@ -928,5 +1111,144 @@ export class ChatbotToolExecutor {
         content: i.content,
       })),
     };
+  }
+
+  private async getApplicablePromotions(args: any) {
+    try {
+      // Scenario 1: Evaluation by Cart Items
+      if (Array.isArray(args.cart_items) && args.cart_items.length > 0) {
+        const productSkus = args.cart_items.map((c: any) => c.sku).filter(Boolean);
+        const products = await prisma.productCache.findMany({
+          where: { orgId: this.orgId, sku: { in: productSkus, mode: 'insensitive' } },
+        });
+
+        const items = args.cart_items.map((c: any) => {
+          const matched = products.find((p) => p.sku?.toUpperCase() === c.sku?.toUpperCase());
+          return {
+            sku: c.sku,
+            productName: matched?.name || c.sku,
+            odooProductId: matched?.odooId,
+            brand: (matched as any)?.brand || null,
+            category: (matched as any)?.category || null,
+            quantity: Number(c.quantity) || 1,
+            priceUnit: Number(c.price) || matched?.wholesalePrice || matched?.listPrice || 0,
+          };
+        });
+
+        const evalResult = await PromotionService.evaluateOrder({
+          orgId: this.orgId,
+          items,
+          customerType: 'DEALER',
+        });
+
+        return {
+          has_applicable_promotions: evalResult.appliedPromotions.length > 0,
+          original_subtotal: evalResult.originalSubtotal,
+          discount_amount: evalResult.discountAmount,
+          final_total: evalResult.finalTotal,
+          applied_promotions: evalResult.appliedPromotions.map((p) => ({
+            name: p.promotionName,
+            code: p.promotionCode,
+            discount: p.discountAmount,
+            explanation: p.explanation,
+          })),
+          free_gifts: evalResult.freeItems,
+          explanations: evalResult.explanations,
+          suggestions: evalResult.suggestions,
+          missed_promotions: evalResult.missedPromotions,
+        };
+      }
+
+      // Scenario 2: Evaluation by Order Value (e.g. Hỏi về bậc chiết khấu 40 triệu)
+      if (args.order_value && Number(args.order_value) > 0) {
+        const val = Number(args.order_value);
+        const evalResult = await PromotionService.evaluateOrder({
+          orgId: this.orgId,
+          items: [
+            {
+              sku: 'SIMULATED_ITEM',
+              productName: args.category || 'Xương gặm',
+              category: args.category || 'Xương gặm',
+              quantity: 1,
+              priceUnit: val,
+            },
+          ],
+          customerType: 'DEALER',
+        });
+
+        const tierPromo = evalResult.appliedPromotions.find((p) => p.type === 'TIER_DISCOUNT');
+        const effectiveDiscount = tierPromo ? tierPromo.discountAmount : evalResult.discountAmount;
+        const effectiveFinal = tierPromo ? (val - tierPromo.discountAmount) : evalResult.finalTotal;
+
+        return {
+          order_value: val,
+          category: args.category || 'Xương gặm',
+          has_applicable_promotions: evalResult.appliedPromotions.length > 0,
+          discount_amount: effectiveDiscount,
+          final_total: effectiveFinal,
+          applied_promotions: evalResult.appliedPromotions.map((p) => ({
+            name: p.promotionName,
+            code: p.promotionCode,
+            discount: p.discountAmount,
+            explanation: p.explanation,
+          })),
+          suggestions: evalResult.suggestions,
+        };
+      }
+
+      // Scenario 3: Check conversation draft order if available
+      const aiState = await prisma.conversationAiState.findUnique({
+        where: { conversationId: this.conversationId },
+      });
+      const draft = aiState?.draftOrder as any;
+
+      if (draft && draft.items && draft.items.length > 0) {
+        const evalResult = await PromotionService.evaluateOrder({
+          orgId: this.orgId,
+          items: draft.items.map((it: any) => ({
+            sku: it.sku,
+            productName: it.name || it.sku,
+            quantity: Number(it.quantity || it.qty || 1),
+            priceUnit: Number(it.priceUnit || it.price || 0),
+          })),
+          customerType: 'DEALER',
+        });
+
+        return {
+          from_draft_order: true,
+          original_subtotal: evalResult.originalSubtotal,
+          discount_amount: evalResult.discountAmount,
+          final_total: evalResult.finalTotal,
+          applied_promotions: evalResult.appliedPromotions.map((p) => ({
+            name: p.promotionName,
+            discount: p.discountAmount,
+            explanation: p.explanation,
+          })),
+          free_gifts: evalResult.freeItems,
+          suggestions: evalResult.suggestions,
+        };
+      }
+
+      // Scenario 4: General list of active policies
+      const policies = await (prisma as any).promotionPolicy.findMany({
+        where: { orgId: this.orgId, isActive: true, deletedAt: null },
+        orderBy: { priority: 'desc' },
+      });
+
+      return {
+        active_promotions: policies.map((p: any) => ({
+          code: p.code,
+          name: p.name,
+          type: p.type,
+          description: p.description,
+          content: p.actions?.textContent || p.description || '',
+          scope: p.targetScope,
+        })),
+        general_note: 'Khách hàng có thể cung cấp danh sách sản phẩm hoặc giá trị dự kiến để hệ thống tính mức chiết khấu chính xác nhất.',
+      };
+    } catch (err: any) {
+      logger.error('[chatbot-tools] getApplicablePromotions error:', err);
+      return { error: err.message };
+    }
   }
 }

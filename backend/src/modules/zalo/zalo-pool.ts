@@ -120,28 +120,109 @@ class ZaloAccountPool {
       const ownId = await api.getOwnId();
       instance.zaloUid = ownId;
 
-      // Fetch own profile info for avatar
+      // Fetch own profile info for avatar & display name
+      let profileAvatar: string | undefined;
+      let profileDisplayName: string | undefined;
       try {
         const userInfo = await api.getUserInfo(ownId);
         const profiles = userInfo?.changed_profiles || {};
         const profile = profiles[ownId] || profiles[`${ownId}_0`];
         if (profile?.avatar) {
-          await prisma.zaloAccount.update({
-            where: { id: accountId },
-            data: { avatarUrl: profile.avatar, displayName: profile.zaloName || profile.zalo_name || profile.displayName || instance.displayName },
-          });
+          profileAvatar = profile.avatar;
+        }
+        if (profile?.zaloName || profile?.zalo_name || profile?.displayName) {
+          profileDisplayName = profile.zaloName || profile.zalo_name || profile.displayName;
         }
       } catch {}
 
-      this.disconnectHistory.delete(`dc_${accountId}`);
-      this.attachListener(accountId, api);
-      this.io?.emit('zalo:connected', { accountId, zaloUid: ownId });
-      await this.updateAccountDB(accountId, 'connected', ownId);
+      // Check if this Zalo user was previously connected in this organization
+      const currentAccount = await prisma.zaloAccount.findUnique({
+        where: { id: accountId },
+        select: { orgId: true, sessionData: true },
+      });
+
+      const existingAccount = currentAccount?.orgId
+        ? await prisma.zaloAccount.findFirst({
+            where: {
+              orgId: currentAccount.orgId,
+              zaloUid: ownId,
+            },
+          })
+        : null;
+
+      let activeAccountId = accountId;
+
+      if (existingAccount && existingAccount.id !== accountId) {
+        logger.info(
+          `[zalo-pool] Zalo UID ${ownId} already exists in org (account ${existingAccount.id}). Merging & reactivating existing account instead of creating duplicate.`,
+        );
+        activeAccountId = existingAccount.id;
+
+        const session = (currentAccount?.sessionData as any) || existingAccount.sessionData;
+        await prisma.zaloAccount.update({
+          where: { id: existingAccount.id },
+          data: {
+            status: 'connected',
+            deletedAt: null,
+            lastConnectedAt: new Date(),
+            ...(session ? { sessionData: session as any } : {}),
+            ...(profileAvatar ? { avatarUrl: profileAvatar } : {}),
+            ...(profileDisplayName ? { displayName: profileDisplayName } : {}),
+          },
+        });
+
+        // Re-link any conversations or references that were tied to the placeholder accountId
+        await prisma.conversation.updateMany({
+          where: { zaloAccountId: accountId },
+          data: { zaloAccountId: existingAccount.id },
+        }).catch(() => {});
+
+        // Remove the temporary placeholder account row
+        await prisma.zaloAccount.delete({ where: { id: accountId } }).catch((e) => {
+          logger.warn(`[zalo-pool] Could not remove placeholder account ${accountId}:`, e);
+        });
+
+        // Migrate in-memory instance
+        this.instances.delete(accountId);
+        this.instances.set(activeAccountId, instance);
+      } else {
+        if (profileAvatar || profileDisplayName) {
+          await prisma.zaloAccount.update({
+            where: { id: accountId },
+            data: {
+              ...(profileAvatar ? { avatarUrl: profileAvatar } : {}),
+              ...(profileDisplayName ? { displayName: profileDisplayName } : {}),
+            },
+          }).catch(() => {});
+        }
+        await this.updateAccountDB(accountId, 'connected', ownId);
+      }
+
+      this.disconnectHistory.delete(`dc_${activeAccountId}`);
+      this.attachListener(activeAccountId, api);
+
+      this.io?.emit('zalo:connected', {
+        accountId: activeAccountId,
+        replacedAccountId: accountId !== activeAccountId ? accountId : undefined,
+        zaloUid: ownId,
+      });
+      if (activeAccountId !== accountId) {
+        this.io?.to(`account:${accountId}`).emit('zalo:connected', {
+          accountId: activeAccountId,
+          replacedAccountId: accountId,
+          zaloUid: ownId,
+        });
+      }
+      this.io?.to(`account:${activeAccountId}`).emit('zalo:connected', {
+        accountId: activeAccountId,
+        zaloUid: ownId,
+      });
 
       // Emit webhook (orgId lookup is async, fire-and-forget)
-      prisma.zaloAccount.findUnique({ where: { id: accountId }, select: { orgId: true } })
-        .then((rec) => rec && emitWebhook(rec.orgId, 'zalo.connected', { accountId }))
-        .catch(() => {});
+      const orgId = currentAccount?.orgId;
+      if (orgId) {
+        emitWebhook(orgId, 'zalo.connected', { accountId: activeAccountId });
+      }
     } catch (err) {
       const instance = this.instances.get(accountId);
       if (instance) instance.status = 'disconnected';
@@ -331,8 +412,8 @@ class ZaloAccountPool {
         where: { id: accountId },
         data: {
           status,
+          ...(status === 'connected' ? { lastConnectedAt: new Date(), deletedAt: null } : {}),
           ...(zaloUid !== null ? { zaloUid } : {}),
-          ...(status === 'connected' ? { lastConnectedAt: new Date() } : {}),
         },
       });
     } catch (err) {

@@ -26,14 +26,18 @@
           </v-btn>
 
           <v-avatar size="40" class="mr-2 mr-md-3 flex-shrink-0 zalo-header-avatar">
-            <v-img v-if="conversation.contact?.avatarUrl" :src="conversation.contact.avatarUrl" />
+            <v-img v-if="conversation.contact?.avatarUrl" :src="conversation.contact.avatarUrl">
+              <template #error>
+                <v-icon :icon="conversation.threadType === 'group' ? 'lucide-users' : 'lucide-user'" color="white" size="20" />
+              </template>
+            </v-img>
             <v-icon v-else-if="conversation.threadType === 'group'" icon="lucide-users" color="white" size="20" />
             <v-icon v-else icon="lucide-user" color="white" size="20" />
           </v-avatar>
           <div class="overflow-hidden d-flex flex-column justify-center">
             <div class="d-flex align-center gap-1 mb-0.5">
               <span class="text-subtitle-1 font-weight-bold text-truncate" style="font-size: 15px !important; line-height: 1.2;">
-                {{ conversation.threadType === 'group' ? (conversation.contact?.fullName || 'Nhóm') : (conversation.contact?.fullName || 'Khách hàng') }}
+                {{ getContactDisplayName(conversation) }}
               </span>
             </div>
             <div class="text-caption text-grey d-flex align-center gap-1 text-truncate" style="font-size: 11.5px !important; line-height: 1.2;">
@@ -99,6 +103,21 @@
                 title="Bật AI cho Khách hàng này"
                 @click="$emit('toggle-ai', conversation.id, true)"
               />
+              <v-divider class="my-1" />
+              <v-list-item
+                v-if="conversation.contextStartMsgId || conversation.contextEndMsgId"
+                prepend-icon="lucide-rotate-cw"
+                title="Xóa mốc ngữ cảnh (Tự động)"
+                subtitle="Đưa về cơ chế đọc tự động"
+                @click="$emit('set-context-boundary', { startMessageId: null, endMessageId: null })"
+              />
+              <v-list-item
+                v-if="messages.length > 0"
+                prepend-icon="lucide-sparkles"
+                title="Bắt đầu phiên AI từ tin nhắn mới nhất"
+                subtitle="Ghim mốc tại tin cuối & làm mới giỏ hàng"
+                @click="$emit('set-context-boundary', { startMessageId: messages[messages.length - 1].id, resetDraft: true })"
+              />
             </v-list>
           </v-menu>
 
@@ -115,71 +134,148 @@
       </div>
 
       <!-- Messages -->
-      <div ref="messagesContainer" class="flex-grow-1 overflow-y-auto pa-3 chat-messages-area" @scroll="onScroll">
+      <div ref="messagesContainer" class="flex-grow-1 overflow-y-auto pa-3 chat-messages-area position-relative" @scroll="onScroll">
+        <!-- Centered loading spinner when loading conversation messages -->
+        <div v-if="loading && messages.length === 0" class="d-flex flex-column align-center justify-center h-100 py-12" style="min-height: 260px;">
+          <v-progress-circular indeterminate size="42" width="3" color="primary" />
+          <span class="text-caption text-medium-emphasis mt-3 font-weight-medium">Đang tải cuộc trò chuyện...</span>
+        </div>
+
         <div v-if="loadingMore" class="text-center py-2">
           <v-progress-circular indeterminate size="20" width="2" color="primary" />
           <span class="text-caption text-grey ml-2">Đang tải tin cũ hơn...</span>
         </div>
-        <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-2" />
-        <div v-for="msg in messages.filter(m => !isUndoSyncMessage(m))" :key="msg.id" class="mb-3 d-flex message-row-wrapper" :class="msg.senderType === 'self' ? 'justify-end' : 'justify-start'">
-          <div class="message-container position-relative" style="max-width: 70%;">
-            <!-- Floating Reaction Bar on hover -->
-            <div class="message-action-bar" :class="msg.senderType === 'self' ? 'message-action-bar-self' : 'message-action-bar-contact'">
-              <div class="floating-reaction-bar elevation-2">
-                <button
-                  v-for="r in quickReactions"
-                  :key="r.icon"
-                  class="reaction-btn"
-                  :class="{ 'active-reaction': getUserReaction(msg)?.icon === r.icon }"
-                  :title="r.label"
-                  @click.stop="onToggleReaction(msg, r.icon)"
-                >
-                  <span class="reaction-emoji">{{ r.emoji }}</span>
-                </button>
-
-                <!-- Plus button for extra emojis -->
-                <v-menu location="top center" :close-on-content-click="true">
-                  <template v-slot:activator="{ props: menuProps }">
-                    <button class="reaction-btn reaction-btn-more" v-bind="menuProps" title="Thêm biểu tượng">
-                      <v-icon size="16">lucide-plus</v-icon>
-                    </button>
-                  </template>
-                  <v-card width="300" class="pa-2 emoji-picker-popover rounded-lg">
-                    <div class="d-flex flex-wrap" style="max-height: 220px; overflow-y: auto;">
-                      <div
-                        v-for="extra in extraReactionEmojis"
-                        :key="extra.icon"
-                        class="pa-1 text-center cursor-pointer emoji-item-mini"
-                        :title="extra.label"
-                        @click="onToggleReaction(msg, extra.icon)"
-                      >
-                        {{ extra.emoji }}
-                      </div>
-                    </div>
-                  </v-card>
-                </v-menu>
-
-                <!-- Remove reaction button if already reacted -->
-                <button
-                  v-if="getUserReaction(msg)"
-                  class="reaction-btn reaction-btn-remove"
-                  title="Gỡ cảm xúc"
-                  @click.stop="onToggleReaction(msg, '')"
-                >
-                  <v-icon size="16" color="grey-darken-1">lucide-heart-off</v-icon>
-                </button>
-
-                <!-- Reply Button -->
-                <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
-                <button
-                  class="reaction-btn"
-                  title="Trả lời"
-                  @click.stop="replyingToMessage = msg"
-                >
-                  <v-icon size="16" color="grey-darken-2">lucide-reply</v-icon>
-                </button>
-              </div>
+        <v-progress-linear v-if="loading && messages.length > 0" indeterminate color="primary" class="mb-2" />
+        <template v-for="msg in messages.filter(m => !isUndoSyncMessage(m))" :key="msg.id">
+          <!-- AI Context Start Marker Divider -->
+          <div
+            v-if="isContextStart(msg)"
+            class="w-100 d-flex justify-center my-3 ai-context-boundary-divider ai-context-start"
+          >
+            <div class="ai-context-pill ai-context-start-pill elevation-2 d-flex align-center gap-2 px-3 py-1.5 rounded-pill">
+              <v-icon size="15" color="white">lucide-sparkles</v-icon>
+              <span class="ai-context-pill-title">Bắt đầu ngữ cảnh AI</span>
+              <span class="ai-context-pill-sub d-none d-sm-inline">(AI ghi nhớ từ tin nhắn này)</span>
+              <button
+                type="button"
+                class="ai-context-close-btn ml-1.5"
+                title="Xóa mốc bắt đầu"
+                @click.stop="$emit('set-context-boundary', { startMessageId: null })"
+              >
+                <v-icon size="13" color="white">lucide-x</v-icon>
+              </button>
             </div>
+          </div>
+
+          <div class="mb-3 d-flex message-row-wrapper" :class="msg.senderType === 'self' ? 'justify-end' : 'justify-start'">
+            <div class="message-container position-relative" style="max-width: 70%;">
+              <!-- Floating Reaction Bar on hover -->
+              <div class="message-action-bar" :class="msg.senderType === 'self' ? 'message-action-bar-self' : 'message-action-bar-contact'">
+                <div class="floating-reaction-bar elevation-2">
+                  <button
+                    v-for="r in quickReactions"
+                    :key="r.icon"
+                    class="reaction-btn"
+                    :class="{ 'active-reaction': getUserReaction(msg)?.icon === r.icon }"
+                    :title="r.label"
+                    @click.stop="onToggleReaction(msg, r.icon)"
+                  >
+                    <span class="reaction-emoji">{{ r.emoji }}</span>
+                  </button>
+
+                  <!-- Plus button for extra emojis -->
+                  <v-menu location="top center" :close-on-content-click="true">
+                    <template v-slot:activator="{ props: menuProps }">
+                      <button class="reaction-btn reaction-btn-more" v-bind="menuProps" title="Thêm biểu tượng">
+                        <v-icon size="16">lucide-plus</v-icon>
+                      </button>
+                    </template>
+                    <v-card width="300" class="pa-2 emoji-picker-popover rounded-lg">
+                      <div class="d-flex flex-wrap" style="max-height: 220px; overflow-y: auto;">
+                        <div
+                          v-for="extra in extraReactionEmojis"
+                          :key="extra.icon"
+                          class="pa-1 text-center cursor-pointer emoji-item-mini"
+                          :title="extra.label"
+                          @click="onToggleReaction(msg, extra.icon)"
+                        >
+                          {{ extra.emoji }}
+                        </div>
+                      </div>
+                    </v-card>
+                  </v-menu>
+
+                  <!-- Remove reaction button if already reacted -->
+                  <button
+                    v-if="getUserReaction(msg)"
+                    class="reaction-btn reaction-btn-remove"
+                    title="Gỡ cảm xúc"
+                    @click.stop="onToggleReaction(msg, '')"
+                  >
+                    <v-icon size="16" color="grey-darken-1">lucide-heart-off</v-icon>
+                  </button>
+
+                  <!-- Reply Button -->
+                  <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
+                  <button
+                    class="reaction-btn"
+                    title="Trả lời"
+                    @click.stop="replyingToMessage = msg"
+                  >
+                    <v-icon size="16" color="grey-darken-2">lucide-reply</v-icon>
+                  </button>
+
+                  <!-- AI Context Marker Button -->
+                  <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
+                  <v-menu location="top center" :close-on-content-click="true">
+                    <template v-slot:activator="{ props: ctxMenuProps }">
+                      <button
+                        class="reaction-btn"
+                        v-bind="ctxMenuProps"
+                        :class="{ 'active-context-marker text-primary font-weight-bold': isContextStart(msg) || isContextEnd(msg) }"
+                        title="Ngữ cảnh AI"
+                      >
+                        <v-icon size="15" :color="isContextStart(msg) ? 'primary' : 'grey-darken-2'">lucide-sparkles</v-icon>
+                      </button>
+                    </template>
+                    <v-list density="compact" class="py-1 elevation-4 rounded-lg" min-width="240">
+                      <v-list-item
+                        prepend-icon="lucide-play"
+                        title="Đặt làm BẮT ĐẦU ngữ cảnh AI"
+                        subtitle="AI chỉ đọc từ tin nhắn này trở đi"
+                        @click="$emit('set-context-boundary', { startMessageId: msg.id })"
+                      />
+                      <v-list-item
+                        prepend-icon="lucide-rotate-ccw"
+                        title="Bắt đầu phiên AI mới từ đây"
+                        subtitle="Ghim mốc & làm mới giỏ hàng"
+                        @click="$emit('set-context-boundary', { startMessageId: msg.id, resetDraft: true })"
+                      />
+                      <v-list-item
+                        prepend-icon="lucide-flag"
+                        title="Đặt làm KẾT THÚC ngữ cảnh AI"
+                        subtitle="Chặn AI không đọc sau tin nhắn này"
+                        @click="$emit('set-context-boundary', { endMessageId: msg.id })"
+                      />
+                      <v-divider v-if="isContextStart(msg) || isContextEnd(msg)" class="my-1" />
+                      <v-list-item
+                        v-if="isContextStart(msg)"
+                        prepend-icon="lucide-trash-2"
+                        title="Xóa mốc Bắt đầu"
+                        class="text-error"
+                        @click="$emit('set-context-boundary', { startMessageId: null })"
+                      />
+                      <v-list-item
+                        v-if="isContextEnd(msg)"
+                        prepend-icon="lucide-trash-2"
+                        title="Xóa mốc Kết thúc"
+                        class="text-error"
+                        @click="$emit('set-context-boundary', { endMessageId: null })"
+                      />
+                    </v-list>
+                  </v-menu>
+                </div>
+              </div>
 
             <div v-if="(conversation.threadType === 'group' && msg.senderType !== 'self') || (msg.isNote && msg.senderName)" class="text-caption mb-1 sender-name-label font-weight-medium">
               {{ msg.senderName || 'Unknown' }}
@@ -192,7 +288,8 @@
                     msg.senderType === 'self' ? 'bubble-outbound' : 'bubble-inbound'
                   )
                 ),
-                getImageCaption(msg) ? 'bubble-with-image-caption' : ''
+                getImageCaption(msg) ? 'bubble-with-image-caption' : '',
+                msg.status === 'failed' ? 'bubble-failed-border' : ''
               ]"
               style="word-wrap: break-word;">
               <!-- Quote Block -->
@@ -206,8 +303,29 @@
               </div>
 
               <!-- Image -->
-              <div v-if="getImageUrl(msg)">
-                <img :src="getImageUrl(msg)!" alt="Hình ảnh" class="chat-image" :class="{'chat-image-with-caption': !!getImageCaption(msg)}" @click="previewImageUrl = getImageUrl(msg)!" />
+              <div v-if="getImageUrl(msg)" class="chat-image-container">
+                <div v-if="failedImages[msg.id]" class="chat-image-error-box pa-3 rounded-lg d-flex align-center gap-2">
+                  <v-icon size="20" color="grey">lucide-image-off</v-icon>
+                  <div class="text-caption text-grey-darken-1">
+                    <div class="font-weight-medium" style="font-size: 12px; line-height: 1.3;">Ảnh không khả dụng</div>
+                    <div style="font-size: 11px; opacity: 0.8; line-height: 1.2;">Liên kết ảnh Zalo đã hết hạn</div>
+                  </div>
+                </div>
+                <div v-else class="chat-image-wrapper position-relative">
+                  <img
+                    :src="getImageUrl(msg)!"
+                    alt="Hình ảnh"
+                    class="chat-image"
+                    :class="{'chat-image-with-caption': !!getImageCaption(msg)}"
+                    loading="lazy"
+                    @error="onMessageImageError(msg.id)"
+                    @click="openMessageImage(msg)"
+                  />
+                  <!-- Optimistic uploading overlay for images -->
+                  <div v-if="msg.status === 'sending'" class="chat-image-uploading-overlay d-flex align-center justify-center">
+                    <v-progress-circular indeterminate size="28" width="3" color="white" />
+                  </div>
+                </div>
                 <div v-if="getImageCaption(msg)" class="message-text-content image-caption-text" v-html="parseDisplayContentHtml(getImageCaption(msg))"></div>
               </div>
               <!-- Video (rendered with video player) -->
@@ -242,7 +360,21 @@
               </div>
               <div v-else-if="msg.contentType === 'voice'">🎤 Tin nhắn thoại</div>
               <div v-else-if="msg.contentType === 'gif'">
-                <img :src="getParsedContent(msg)?.href" alt="GIF" style="max-width: 200px; border-radius: 8px;" />
+                <div v-if="failedImages[msg.id]" class="chat-image-error-box pa-3 rounded-lg d-flex align-center gap-2">
+                  <v-icon size="20" color="grey">lucide-image-off</v-icon>
+                  <div class="text-caption text-grey-darken-1">
+                    <div class="font-weight-medium" style="font-size: 12px; line-height: 1.3;">GIF không khả dụng</div>
+                    <div style="font-size: 11px; opacity: 0.8; line-height: 1.2;">Liên kết ảnh đã hết hạn</div>
+                  </div>
+                </div>
+                <img
+                  v-else
+                  :src="getParsedContent(msg)?.href"
+                  alt="GIF"
+                  style="max-width: 200px; border-radius: 8px; cursor: pointer;"
+                  @error="onMessageImageError(msg.id)"
+                  @click="openMessageImage(msg)"
+                />
               </div>
               <!-- Reminder/Calendar -->
               <div v-else-if="isReminderMessage(msg)" class="reminder-card">
@@ -260,7 +392,7 @@
               </div>
               <!-- Default text -->
               <div v-else class="message-text-content" v-html="parseDisplayContentHtml(msg.content)"></div>
-              <!-- Timestamp -->
+              <!-- Timestamp & Sending Status -->
               <div class="text-caption msg-time d-flex align-center" :class="[
                 isTransparentBubble(msg) ? 'text-grey justify-end' : (
                   msg.isNote ? 'msg-time-note' : (
@@ -269,7 +401,51 @@
                 )
               ]">
                 <span v-if="msg.isAi" class="mr-1 font-weight-bold" style="font-size: 10px; color: #10b981; background: rgba(16, 185, 129, 0.15); padding: 1px 4px; border-radius: 4px;">AI</span>
-                {{ formatMessageTime(msg.sentAt) }}
+                <span>{{ formatMessageTime(msg.sentAt) }}</span>
+                <!-- Status icon for self messages -->
+                <span v-if="msg.senderType === 'self' && msg.status === 'sending'" class="ml-1 d-inline-flex align-center" title="Đang gửi...">
+                  <v-progress-circular indeterminate size="10" width="1.5" color="grey" />
+                </span>
+                <span v-else-if="msg.senderType === 'self' && msg.status === 'failed'" class="ml-1 d-inline-flex align-center text-error" title="Gửi thất bại">
+                  <v-icon size="13" color="error">lucide-alert-circle</v-icon>
+                </span>
+                <span v-else-if="msg.senderType === 'self' && msg.status === 'sent'" class="ml-1 d-inline-flex align-center text-primary" title="Đã gửi">
+                  <v-icon size="12">lucide-check</v-icon>
+                </span>
+              </div>
+
+              <!-- Error & Retry toolbar for failed message -->
+              <div v-if="msg.senderType === 'self' && msg.status === 'failed'" class="msg-failed-actions mt-1 pt-1 border-t d-flex align-center justify-space-between gap-1">
+                <span class="text-caption text-error font-weight-medium d-flex align-center" style="font-size: 11px;">
+                  <v-icon size="12" color="error" class="mr-1">lucide-alert-triangle</v-icon>
+                  Chưa gửi được
+                </span>
+                <div class="d-flex align-center gap-1">
+                  <v-btn
+                    size="x-small"
+                    variant="tonal"
+                    color="primary"
+                    density="compact"
+                    class="text-none font-weight-bold px-1.5"
+                    style="height: 22px; font-size: 11px;"
+                    title="Thử gửi lại tin nhắn này"
+                    @click.stop="handleRetry(msg)"
+                  >
+                    <v-icon size="11" class="mr-0.5">lucide-rotate-cw</v-icon> Thử lại
+                  </v-btn>
+                  <v-btn
+                    size="x-small"
+                    variant="tonal"
+                    color="warning"
+                    density="compact"
+                    class="text-none font-weight-bold px-1.5"
+                    style="height: 22px; font-size: 11px;"
+                    title="Đưa nội dung trở lại ô nhập để không bị mất"
+                    @click.stop="handleRestore(msg)"
+                  >
+                    <v-icon size="11" class="mr-0.5">lucide-edit-3</v-icon> Khôi phục
+                  </v-btn>
+                </div>
               </div>
 
               <!-- Reaction Summary Pill on message -->
@@ -288,6 +464,27 @@
             </div>
           </div>
         </div>
+
+          <!-- AI Context End Marker Divider -->
+          <div
+            v-if="isContextEnd(msg)"
+            class="w-100 d-flex justify-center my-3 ai-context-boundary-divider ai-context-end"
+          >
+            <div class="ai-context-pill ai-context-end-pill elevation-2 d-flex align-center gap-2 px-3 py-1.5 rounded-pill">
+              <v-icon size="15" color="white">lucide-flag</v-icon>
+              <span class="ai-context-pill-title">Kết thúc ngữ cảnh AI</span>
+              <span class="ai-context-pill-sub d-none d-sm-inline">(AI dừng đọc tại đây)</span>
+              <button
+                type="button"
+                class="ai-context-close-btn ml-1.5"
+                title="Xóa mốc kết thúc"
+                @click.stop="$emit('set-context-boundary', { endMessageId: null })"
+              >
+                <v-icon size="13" color="white">lucide-x</v-icon>
+              </button>
+            </div>
+          </div>
+        </template>
         <div v-if="!loading && messages.filter(m => !isUndoSyncMessage(m)).length === 0" class="text-center pa-8 text-grey">Chưa có tin nhắn</div>
       </div>
 
@@ -492,7 +689,7 @@
                 width="72"
                 height="72"
               >
-                <v-img :src="att.preview" width="72" height="72" cover />
+                <v-img :src="att.preview" width="72" height="72" cover style="cursor: pointer;" @click="openSingleImagePreview(att.preview, att.name)" />
                 <div v-if="att.type === 'video'" class="d-flex align-center justify-center" style="position: absolute; inset: 0; background: rgba(0,0,0,0.3);">
                   <v-icon color="white" size="24">lucide-play</v-icon>
                 </div>
@@ -673,13 +870,12 @@
       </div>
     </template>
 
-    <!-- Image preview dialog -->
-    <v-dialog v-model="showImagePreview" max-width="900" content-class="elevation-0">
-      <div class="text-center" @click="showImagePreview = false" style="cursor: pointer;">
-        <img :src="previewImageUrl" alt="Preview" style="max-width: 100%; max-height: 85vh; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);" />
-        <div class="text-caption mt-2 text-ashen">Nhấn để đóng</div>
-      </div>
-    </v-dialog>
+    <!-- Modern Image Viewer Modal with Zoom, Pan, Rotate, and Gallery Navigation -->
+    <ImageViewerModal
+      v-model="showImageViewer"
+      :images="standaloneViewerImages.length > 0 ? standaloneViewerImages : conversationImages"
+      :initial-index="activeViewerIndex"
+    />
 
     <!-- Reaction Detail Dialog (Zalo Style Modal) -->
     <v-dialog v-model="showReactionModal" max-width="420" scrollable>
@@ -777,6 +973,7 @@ import { ref, watch, nextTick, computed, onMounted } from 'vue';
 import type { Conversation, Message, MessageReactionItem } from '@/composables/use-chat';
 import { api } from '@/api/index';
 import logoLight from '@/assets/logo-light.png';
+import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
 
 const props = defineProps<{
   conversation: Conversation | null;
@@ -793,15 +990,49 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [content: string, contentType?: string, isNote?: boolean, replyToId?: string];
   'send-attachment': [file: File];
+  'retry-message': [tempId: string];
+  'retry-attachment': [tempId: string];
+  'remove-optimistic-message': [tempId: string];
   'toggle-contact-panel': [];
   'open-order-panel': [];
   'load-more': [];
   'pause-ai': [convId: string];
   'resume-ai': [convId: string];
   'toggle-ai': [convId: string, aiActive: boolean];
+  'set-context-boundary': [payload: { startMessageId?: string | null; endMessageId?: string | null; resetDraft?: boolean }];
   react: [messageId: string, icon: string];
   back: [];
 }>();
+
+function getContactDisplayName(conv?: Conversation | null): string {
+  if (!conv) return 'Khách hàng';
+  if (conv.threadType === 'group') {
+    return conv.contact?.fullName || 'Nhóm';
+  }
+  const zaloName = conv.contact?.zaloName?.trim();
+  const fullName = conv.contact?.fullName?.trim();
+
+  const isInvalid = (name?: string | null) =>
+    !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
+
+  if (!isInvalid(zaloName)) {
+    return zaloName!;
+  }
+  if (!isInvalid(fullName)) {
+    return fullName!;
+  }
+  return zaloName || fullName || 'Khách hàng';
+}
+
+function isContextStart(msg: Message): boolean {
+  if (!props.conversation?.contextStartMsgId) return false;
+  return props.conversation.contextStartMsgId === msg.id || props.conversation.contextStartMsgId === msg.zaloMsgId;
+}
+
+function isContextEnd(msg: Message): boolean {
+  if (!props.conversation?.contextEndMsgId) return false;
+  return props.conversation.contextEndMsgId === msg.id || props.conversation.contextEndMsgId === msg.zaloMsgId;
+}
 
 const isNoteMode = ref(false);
 const showSwitchModeDialog = ref(false);
@@ -917,7 +1148,7 @@ const groupedReactionUsers = computed(() => {
     const key = r.uid || (r.isSelf ? 'self' : 'unknown');
     if (!usersMap[key]) {
       const fallbackAvatar = r.isSelf ? props.conversation?.zaloAccount?.avatarUrl : props.conversation?.contact?.avatarUrl;
-      const fallbackName = r.isSelf ? (props.conversation?.zaloAccount?.displayName || 'Bạn') : (props.conversation?.contact?.fullName || 'Người dùng');
+      const fallbackName = r.isSelf ? (props.conversation?.zaloAccount?.displayName || 'Bạn') : getContactDisplayName(props.conversation);
       usersMap[key] = {
         uid: r.uid || key,
         userName: r.userName || fallbackName,
@@ -1009,9 +1240,9 @@ onMounted(() => {
 });
 
 watch(() => props.conversation?.id, () => {
-  fetchQuickMessages();
-  fetchUsers();
   replyingToMessage.value = null; // Clear reply state when conversation changes
+  if (quickMessages.value.length === 0) fetchQuickMessages();
+  if (usersList.value.length === 0) fetchUsers();
 });
 
 const filteredQuickMessages = computed(() => {
@@ -1221,8 +1452,88 @@ function handleQuickMsgKeyEnter() {
 }
 const messagesContainer = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
-const previewImageUrl = ref('');
-const showImagePreview = computed({ get: () => !!previewImageUrl.value, set: (v) => { if (!v) previewImageUrl.value = ''; } });
+
+// ── Image Viewer & Gallery State ───────────────────────────────────────────
+const showImageViewer = ref(false);
+const activeViewerIndex = ref(0);
+const standaloneViewerImages = ref<any[]>([]);
+const failedImages = ref<Record<string, boolean>>({});
+
+function onMessageImageError(msgId: string) {
+  if (msgId) {
+    failedImages.value[msgId] = true;
+  }
+}
+
+const conversationImages = computed(() => {
+  const list: any[] = [];
+  if (!props.messages) return list;
+  for (const m of props.messages) {
+    if (isUndoSyncMessage(m)) continue;
+    const url = getImageUrl(m);
+    if (url) {
+      list.push({
+        id: m.id,
+        url,
+        caption: getImageCaption(m) || '',
+        sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
+        date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+        title: getImageCaption(m) || `Ảnh ${list.length + 1}`,
+        name: `image_${m.id || list.length + 1}.jpg`,
+        rawUrl: url,
+      });
+    } else if (m.contentType === 'gif') {
+      const parsed = getParsedContent(m);
+      if (parsed?.href) {
+        list.push({
+          id: m.id,
+          url: parsed.href,
+          caption: 'Ảnh động (GIF)',
+          sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
+          date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+          title: 'Ảnh GIF',
+          name: `gif_${m.id || list.length + 1}.gif`,
+          rawUrl: parsed.href,
+        });
+      }
+    }
+  }
+  return list;
+});
+
+function openMessageImage(msg: Message) {
+  const url = getImageUrl(msg) || (msg.contentType === 'gif' ? getParsedContent(msg)?.href : null);
+  if (!url) return;
+
+  const allImgs = conversationImages.value;
+  const idx = allImgs.findIndex((img) => img.url === url || img.id === msg.id);
+  if (idx !== -1) {
+    standaloneViewerImages.value = [];
+    activeViewerIndex.value = idx;
+  } else {
+    const isGif = msg.contentType === 'gif';
+    standaloneViewerImages.value = [{
+      url,
+      caption: getImageCaption(msg) || '',
+      sender: msg.senderName || (msg.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
+      date: msg.sentAt ? new Date(msg.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+      title: getImageCaption(msg) || 'Xem ảnh',
+      name: `image_${msg.id}.${isGif ? 'gif' : 'jpg'}`,
+      rawUrl: url,
+    }];
+    activeViewerIndex.value = 0;
+  }
+  showImageViewer.value = true;
+}
+
+function openSingleImagePreview(url: string, title = 'Xem ảnh') {
+  const cleanExt = url.startsWith('blob:') ? 'jpg' : (url.split('?')[0].split('.').pop()?.toLowerCase() || 'jpg');
+  const validExt = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(cleanExt) ? cleanExt : 'jpg';
+  const name = title.includes('.') ? title : `${title}.${validExt}`;
+  standaloneViewerImages.value = [{ url, title, name, rawUrl: url }];
+  activeViewerIndex.value = 0;
+  showImageViewer.value = true;
+}
 const syncSnack = ref({ show: false, text: '', color: 'success' });
 
 // ── Pending Attachments Queue ────────────────────────────────────────────────
@@ -1337,19 +1648,37 @@ function sendLikeEmoji() {
   replyingToMessage.value = null;
 }
 
+function handleRetry(msg: Message) {
+  if (msg.contentType === 'image' || msg.pendingFile) {
+    emit('retry-attachment', msg.id);
+  } else {
+    emit('retry-message', msg.id);
+  }
+}
+
+function handleRestore(msg: Message) {
+  if (msg.content) {
+    inputText.value = msg.content;
+  }
+  emit('remove-optimistic-message', msg.id);
+  syncSnack.value = { show: true, text: 'Đã khôi phục nội dung vào ô soạn thảo', color: 'info' };
+}
+
 async function handleSend() {
   if (!canSend.value) return;
 
   const isNoteReply = replyingToMessage.value?.isNote === true;
   const finalIsNote = isNoteMode.value || isNoteReply;
-
-  // 1. Send text message if present
-  if (inputText.value.trim()) {
-    emit('send', inputText.value, 'text', finalIsNote, replyingToMessage.value?.id);
-  }
+  const textToSend = inputText.value;
+  const quoteReplyId = replyingToMessage.value?.id;
 
   // Reset quote reply state
   replyingToMessage.value = null;
+
+  // 1. Send text message if present
+  if (textToSend.trim()) {
+    emit('send', textToSend, 'text', finalIsNote, quoteReplyId);
+  }
 
   // 2. Send all pending attachments (but ONLY if not in note mode)
   const attachmentsToSend = finalIsNote ? [] : [...pendingAttachments.value];
@@ -1379,10 +1708,9 @@ async function handleSend() {
       }
 
       if (fileToSend) {
-        syncSnack.value = { show: true, text: `Đang gửi ${att.name}...`, color: 'info' };
         emit('send-attachment', fileToSend);
         // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
     } catch (err) {
       console.error('Failed to send attachment:', att.name, err);
@@ -1483,16 +1811,41 @@ function isVideoMessage(msg: Message): boolean {
 /** Extract file info from JSON content (PDF, docs, etc.) */
 function getFileInfo(msg: Message): { name: string; size: string; href: string } | null {
   if (isVideoMessage(msg)) return null;
-  if (!msg.content?.startsWith('{')) return null;
-  try {
-    const p = JSON.parse(msg.content);
-    const params = typeof p.params === 'string' ? JSON.parse(p.params) : p.params;
-    if (params?.fileExt || params?.fType === 1) {
-      const bytes = parseInt(params.fileSize || '0');
-      const size = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
-      return { name: p.title || `file.${params.fileExt || 'unknown'}`, size, href: p.href || '' };
-    }
-  } catch {}
+  if (getImageUrl(msg)) return null;
+
+  if (msg.content?.startsWith('{')) {
+    try {
+      const p = JSON.parse(msg.content);
+      const params = typeof p.params === 'string' ? JSON.parse(p.params) : p.params;
+      const paramExt = (params?.fileExt || '').toLowerCase();
+      const title = p.title || p.name || '';
+      const titleExt = title.split('.').pop()?.toLowerCase() || '';
+      const href = p.href || p.url || p.downloadUrl || '';
+      const hrefExt = href.split('?')[0].split('.').pop()?.toLowerCase() || '';
+
+      const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'zip', 'rar', '7z', 'tar', 'gz', 'txt', 'pptx', 'ppt'];
+      const isDoc =
+        params?.fType === 1 ||
+        docExts.includes(paramExt) ||
+        docExts.includes(titleExt) ||
+        docExts.includes(hrefExt) ||
+        msg.contentType === 'file' ||
+        msg.contentType === 'document' ||
+        (href && (href.includes('dlf1.vn') || href.includes('zfcloud.zdn.vn')));
+
+      if (isDoc && (href || title)) {
+        const bytes = parseInt(params?.fileSize || p.size || p.fileSize || '0');
+        const size = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : (bytes > 0 ? `${Math.round(bytes / 1024)} KB` : 'Tài liệu');
+        const ext = paramExt || titleExt || (hrefExt.length <= 4 ? hrefExt : '') || 'pdf';
+        const finalName = title ? (title.includes('.') ? title : `${title}.${ext}`) : `Tài liệu.${ext}`;
+        return { name: finalName, size, href };
+      }
+    } catch {}
+  } else if ((msg as any).mediaUrl && (msg.contentType === 'file' || msg.contentType === 'document')) {
+    const mediaUrl = (msg as any).mediaUrl as string;
+    const ext = mediaUrl.split('?')[0].split('.').pop() || 'pdf';
+    return { name: mediaUrl.split('/').pop()?.split('?')[0] || `Tài liệu.${ext}`, size: 'Tài liệu', href: mediaUrl };
+  }
   return null;
 }
 
@@ -1744,8 +2097,48 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   background: var(--color-soft-stone);
   border: 1px solid var(--color-chalk);
 }
-.chat-image { max-width: 100%; max-height: 300px; border-radius: var(--radius-cards); cursor: pointer; transition: transform 0.2s var(--ease-claude); }
+.chat-image-container {
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+}
+.chat-image-wrapper {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-cards, 10px);
+}
+.chat-image {
+  max-width: min(100%, 360px);
+  max-height: 320px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--radius-cards, 10px);
+  cursor: pointer;
+  transition: transform 0.2s var(--ease-claude, ease);
+  display: block;
+}
 .chat-image:hover { transform: scale(1.02); }
+.chat-image-uploading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(1.5px);
+  border-radius: var(--radius-cards, 10px);
+}
+.chat-image-error-box {
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px dashed rgba(0, 0, 0, 0.18);
+  max-width: 240px;
+  cursor: default;
+  user-select: none;
+}
+:deep(.v-theme--dark) .chat-image-error-box {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+}
 .chat-video { max-width: 100%; max-height: 300px; border-radius: var(--radius-cards); }
 .emoji-item {
   width: 44px;
@@ -2212,6 +2605,7 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 .bubble-with-image-caption {
   padding: 0 !important;
   overflow: hidden;
+  max-width: 360px !important;
 }
 
 .chat-image-with-caption {
@@ -2220,10 +2614,24 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   display: block;
   margin: 0;
   width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  object-position: center;
 }
 
 .image-caption-text {
   padding: 8px 12px 6px 12px;
+  word-break: break-word;
+}
+
+/* ── Failed Message Style Overrides ── */
+.bubble-failed-border {
+  border: 1.5px solid #ef4444 !important;
+  background-color: rgba(239, 68, 68, 0.05) !important;
+}
+
+.msg-failed-actions {
+  border-top: 1px solid rgba(239, 68, 68, 0.25) !important;
 }
 
 /* ── Mentions Highlight ── */
@@ -2393,6 +2801,67 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 
 .zalo-like-btn:hover {
   transform: scale(1.18);
+}
+
+/* ── AI Context Boundary Badges & Dividers ── */
+.ai-context-boundary-divider {
+  position: relative;
+  z-index: 2;
+  user-select: none;
+}
+
+.ai-context-pill {
+  background: linear-gradient(135deg, #0068ff 0%, #0052cc 100%);
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(0, 104, 255, 0.35);
+  font-size: 12px;
+  line-height: 1.2;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  transition: all 0.2s ease;
+}
+
+.ai-context-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 104, 255, 0.45);
+}
+
+.ai-context-end-pill {
+  background: linear-gradient(135deg, #495057 0%, #343a40 100%) !important;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25) !important;
+}
+
+.ai-context-pill-title {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.ai-context-pill-subtitle,
+.ai-context-pill-sub {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.ai-context-close-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ai-context-close-btn:hover {
+  background: rgba(255, 255, 255, 0.4);
+  transform: scale(1.1);
+}
+
+.active-context-marker {
+  color: #0068ff !important;
+  background-color: rgba(0, 104, 255, 0.1) !important;
 }
 </style>
 

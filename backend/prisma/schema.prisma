@@ -34,6 +34,9 @@ model Organization {
   syncStates           OdooSyncState[]
   conversationAiStates ConversationAiState[]
   aiAuditLogs          AiAuditLog[]
+  promotionPolicies    PromotionPolicy[]
+  promotionAuditLogs   PromotionAuditLog[]
+  orderAppliedPromotions OrderAppliedPromotion[]
 
   @@map("organizations")
 }
@@ -94,6 +97,7 @@ model ZaloAccount {
   lastConnectedAt    DateTime? @map("last_connected_at")
   aiAutoReply        Boolean   @default(false) @map("ai_auto_reply")
   aiWorkingHoursOnly Boolean   @default(false) @map("ai_working_hours_only")
+  deletedAt          DateTime? @map("deleted_at")
   createdAt          DateTime  @default(now()) @map("created_at")
 
   org           Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -172,6 +176,10 @@ model Conversation {
   pausedUntil      DateTime? @map("paused_until")
   handoffReason    String?   @map("handoff_reason")
   currentState     String    @default("NEW") @map("current_state")
+  contextStartMsgId String?  @map("context_start_msg_id")
+  contextEndMsgId   String?  @map("context_end_msg_id")
+  contextStartedAt  DateTime? @map("context_started_at")
+  contextEndedAt    DateTime? @map("context_ended_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
   org           Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -299,15 +307,17 @@ model Order {
   conversationId  String?  @map("conversation_id")
   orderCode       String   @map("order_code")
   totalAmount     Float    @map("total_amount")
+  discountAmount  Float    @default(0) @map("discount_amount")
   status          String   @default("new") // new, confirmed, paid, shipped, completed, cancelled
   notes           String?
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  createdBy    User          @relation("CreatedOrders", fields: [createdByUserId], references: [id])
-  conversation Conversation? @relation(fields: [conversationId], references: [id])
+  org               Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact           Contact                 @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  createdBy         User                    @relation("CreatedOrders", fields: [createdByUserId], references: [id])
+  conversation      Conversation?           @relation(fields: [conversationId], references: [id])
+  appliedPromotions OrderAppliedPromotion[]
 
   @@map("orders")
 }
@@ -417,6 +427,8 @@ model ProductCache {
   ingredients    String?  @db.Text
   target         String?  // target audience (e.g. "Chó con 3-6 tháng")
   preservation   String?  // storage instructions
+  brand          String?  // brand e.g. Lapati, Dexinbone, INU
+  category       String?  // category e.g. Xương gặm, Bánh thưởng
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -473,6 +485,7 @@ model OrderHistory {
   amountTax          Float    @default(0) @map("amount_tax")
   amountTotal        Float    @default(0) @map("amount_total")
   amountUndiscounted Float    @default(0) @map("amount_undiscounted")
+  discountAmount     Float    @default(0) @map("discount_amount")
   margin             Float    @default(0)
   marginPercent      Float    @default(0) @map("margin_percent")
   invoiceStatus      String?  @map("invoice_status")
@@ -490,9 +503,10 @@ model OrderHistory {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id])
+  org             Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile?        @relation(fields: [customerProfileId], references: [id])
   lines           OrderLineHistory[]
+  appliedPromotions OrderAppliedPromotion[]
 
   @@unique([orgId, odooOrderId])
   @@map("order_histories")
@@ -598,4 +612,89 @@ model AiAuditLog {
   @@index([conversationId])
   @@index([createdAt])
   @@map("ai_audit_logs")
+}
+
+// ── Promotion & Pricing Data-Driven Schema ────────────────────────────────────
+
+// Data-driven Promotion & Discount Policy definition
+model PromotionPolicy {
+  id              String    @id @default(uuid())
+  orgId           String    @map("org_id")
+  code            String    // unique code within org e.g. LA_PET_BASIC_22, LA_PET_CHEW_TIER
+  name            String
+  description     String?   @db.Text
+  type            String    // BASIC_DISCOUNT, TIER_DISCOUNT, SPECIAL_PRICE, BUY_X_GET_Y, COMBO, PERCENT_DISCOUNT, FIXED_AMOUNT, SALES_REWARD_QUARTER, SALES_REWARD_YEAR, CUSTOM_TEXT
+  targetScope     String    @default("ALL_PRODUCTS") @map("target_scope") // ALL_PRODUCTS, CATEGORY, BRAND, SPECIFIC_SKUS, ORDER_TOTAL
+  priority        Int       @default(10)
+  isStackable     Boolean   @default(true) @map("is_stackable")
+  isActive        Boolean   @default(true) @map("is_active")
+  startDate       DateTime? @map("start_date")
+  endDate         DateTime? @map("end_date")
+  version         Int       @default(1)
+  parentPolicyId  String?   @map("parent_policy_id") // lineage to previous version if cloned/superseded
+  conditions      Json      @default("{}") // minOrderValue, minQuantity, customerTypes, applicableCategories, applicableBrands, applicableSkus, requiredAllSkus, rewardRequirements
+  actions         Json      @default("{}") // actionType, discountPercent, discountAmount, specialUnitPrice, buyQuantity, getQuantity, giftType, giftSku, tiers, rewardTiers
+  createdByUserId String?   @map("created_by_user_id")
+  updatedByUserId String?   @map("updated_by_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  org               Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  auditLogs         PromotionAuditLog[]
+  appliedPromotions OrderAppliedPromotion[]
+
+  @@unique([orgId, code, version])
+  @@index([orgId, isActive])
+  @@index([orgId, code])
+  @@map("promotion_policies")
+}
+
+// Audit log for Promotion changes & version transitions
+model PromotionAuditLog {
+  id              String   @id @default(uuid())
+  orgId           String   @map("org_id")
+  promotionId     String   @map("promotion_id")
+  version         Int
+  changedByUserId String?  @map("changed_by_user_id")
+  changeType      String   @map("change_type") // CREATE, UPDATE, ACTIVATE, DEACTIVATE, NEW_VERSION
+  snapshotBefore  Json?    @map("snapshot_before")
+  snapshotAfter   Json     @map("snapshot_after")
+  diff            Json?    @default("{}")
+  comment         String?  @db.Text
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  org       Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  promotion PromotionPolicy @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  @@index([promotionId])
+  @@index([createdAt])
+  @@map("promotion_audit_logs")
+}
+
+// Immutable snapshot of promotion applied to an order
+model OrderAppliedPromotion {
+  id                  String   @id @default(uuid())
+  orgId               String   @map("org_id")
+  orderHistoryId      String?  @map("order_history_id")
+  orderId             String?  @map("order_id")
+  promotionId         String   @map("promotion_id")
+  promotionCode       String   @map("promotion_code")
+  promotionName       String   @map("promotion_name")
+  policyVersion       Int      @default(1) @map("policy_version")
+  discountAmount      Float    @default(0) @map("discount_amount")
+  freeItems           Json     @default("[]") @map("free_items")
+  appliedRuleSnapshot Json     @default("{}") @map("applied_rule_snapshot")
+  explanation         String?  @db.Text
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  org          Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orderHistory OrderHistory?    @relation(fields: [orderHistoryId], references: [id], onDelete: Cascade)
+  order        Order?           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  promotion    PromotionPolicy? @relation(fields: [promotionId], references: [id], onDelete: SetNull)
+
+  @@index([orderHistoryId])
+  @@index([orderId])
+  @@index([promotionCode])
+  @@map("order_applied_promotions")
 }

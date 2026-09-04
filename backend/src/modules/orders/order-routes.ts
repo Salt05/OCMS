@@ -12,6 +12,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { odooSyncService } from '../sync/odoo-sync-service.js';
+import { checkConversationContactAccess } from '../chat/chat-routes.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,6 +38,10 @@ export async function orderRoutes(app: FastifyInstance) {
       let draft;
 
       if (body.conversationId) {
+        const hasAccess = await checkConversationContactAccess(body.conversationId, user);
+        if (!hasAccess) {
+          return reply.status(403).send({ error: 'Bạn không có quyền thao tác trên cuộc trò chuyện này' });
+        }
         // Extract from customer's conversation messages in chat history (with optional staff instruction)
         draft = await extractOrderFromConversation(user.orgId, body.conversationId, body.text);
       } else if (body.text) {
@@ -66,6 +71,11 @@ export async function orderRoutes(app: FastifyInstance) {
   app.get('/api/v1/orders/draft/:conversationId', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { conversationId } = request.params as { conversationId: string };
+
+    const hasAccess = await checkConversationContactAccess(conversationId, user);
+    if (!hasAccess) {
+      return reply.status(403).send({ error: 'Bạn không có quyền xem đơn hàng nháp của cuộc trò chuyện này' });
+    }
 
     try {
       const aiState = await prisma.conversationAiState.findUnique({
@@ -99,6 +109,7 @@ export async function orderRoutes(app: FastifyInstance) {
         where: {
           orgId: user.orgId,
           currentState: 'CONFIRMATION',
+          ...(user.role === 'member' ? { contact: { assignedUserId: user.id } } : {}),
         },
         include: {
           contact: {
@@ -122,7 +133,79 @@ export async function orderRoutes(app: FastifyInstance) {
         .map(c => {
           const draft = (c.aiState?.draftOrder as any) || { items: [] };
           const items = draft.items || [];
-          const amountTotal = items.reduce((sum: number, item: any) => sum + ((item.quantity || item.qty || 1) * (item.priceUnit || item.price || 0)), 0);
+
+          const lines = items.map((it: any, idx: number) => {
+            const qty = Number(it.quantity) || Number(it.qty) || 1;
+            const origPrice = it.originalPrice || (it.discountedPrice ? (it.originalPriceUnit || 19500) : (it.priceUnit || it.price || 0));
+            const effectivePrice = it.discountedPrice || it.priceUnit || it.price || 0;
+            const discount = typeof it.discount === 'number' ? it.discount : 0;
+            const lineSubtotal = Math.round(qty * effectivePrice * (1 - discount / 100));
+
+            return {
+              id: it.matchedProductOdooId || it.sku || `line_${idx}`,
+              odooProductId: it.matchedProductOdooId || null,
+              productName: it.matchedProductName || it.productNameRaw || it.name || it.sku,
+              productSku: it.sku || it.productSku || null,
+              uomName: it.unit || it.uom || 'Gói',
+              qty,
+              quantity: qty,
+              originalPrice: origPrice > effectivePrice ? origPrice : null,
+              discountedPrice: it.discountedPrice || null,
+              priceUnit: effectivePrice,
+              discount,
+              priceSubtotal: lineSubtotal,
+            };
+          });
+
+          // Include promotional free gift items in lines with 100% discount
+          const allGifts: any[] = [];
+          if (Array.isArray(draft.freeItems)) {
+            for (const g of draft.freeItems) {
+              if (g && (g.sku || g.name) && (Number(g.quantity) > 0 || Number(g.qty) > 0)) {
+                allGifts.push(g);
+              }
+            }
+          }
+          if (Array.isArray(draft.appliedPromotions)) {
+            for (const ap of draft.appliedPromotions) {
+              const promoGifts = ap.freeItems || ap.freeGifts;
+              if (Array.isArray(promoGifts)) {
+                for (const g of promoGifts) {
+                  if (g && (g.sku || g.name) && (Number(g.quantity) > 0 || Number(g.qty) > 0)) {
+                    const exists = allGifts.some(
+                      ag => (ag.sku && g.sku && ag.sku.toLowerCase() === g.sku.toLowerCase()) ||
+                            (ag.name && g.name && ag.name.toLowerCase() === g.name.toLowerCase())
+                    );
+                    if (!exists) allGifts.push(g);
+                  }
+                }
+              }
+            }
+          }
+
+          for (const gift of allGifts) {
+            const giftQty = Number(gift.quantity) || Number(gift.qty) || 1;
+            const giftPrice = Number(gift.unitPrice) || Number(gift.price) || 15000;
+            lines.push({
+              id: gift.sku || `gift_${lines.length}`,
+              odooProductId: gift.odooProductId || null,
+              productName: `[Tặng] ${gift.name || gift.sku || ''}`.trim(),
+              productSku: gift.sku || null,
+              uomName: gift.unit || gift.uom || 'Gói',
+              qty: giftQty,
+              quantity: giftQty,
+              originalPrice: giftPrice,
+              discountedPrice: giftPrice,
+              priceUnit: giftPrice,
+              discount: 100, // Chiết khấu 100% cho quà tặng
+              priceSubtotal: 0,
+              isFreeGift: true,
+              giftReason: gift.reason || 'Quà tặng khuyến mãi',
+            });
+          }
+
+          const computedUntaxed = lines.reduce((sum: number, l: any) => sum + l.priceSubtotal, 0);
+          const amountTotal = draft.amountTotal || computedUntaxed;
 
           return {
             id: c.id,
@@ -134,18 +217,15 @@ export async function orderRoutes(app: FastifyInstance) {
               city: draft.customer?.shippingAddress || draft.address || c.contact?.address || null,
             },
             dateOrder: c.aiState?.updatedAt || c.lastMessageAt || c.createdAt,
-            lines: items.map((it: any) => ({
-              id: it.matchedProductOdooId || it.sku,
-              productName: it.matchedProductName || it.productNameRaw || it.name || it.sku,
-              qty: it.quantity || it.qty || 1,
-              priceUnit: it.priceUnit || it.price || 0,
-            })),
+            lines,
             amountTotal,
             state: 'draft',
             paymentTerm: draft.paymentTerm || draft.payment_term || 'Thanh toán ngay',
             isAiDraft: true,
             conversationId: c.id,
             note: draft.notes || null,
+            appliedPromotions: draft.appliedPromotions || [],
+            freeItems: draft.freeItems || [],
           };
         })
         .filter(o => o.lines.length > 0);
@@ -287,6 +367,7 @@ export async function orderRoutes(app: FastifyInstance) {
         lines: {
           orderBy: { odooLineId: 'asc' },
         },
+        ...({ appliedPromotions: true } as any),
       },
     });
 
@@ -311,10 +392,41 @@ export async function orderRoutes(app: FastifyInstance) {
       if (conv && conv.aiState?.draftOrder) {
         const draft = conv.aiState.draftOrder as any;
         const items = draft.items || [];
-        const amountTotal = items.reduce(
-          (sum: number, item: any) => sum + ((item.quantity || item.qty || 1) * (item.priceUnit || item.price || 0)),
+
+        const lines = items.map((it: any, idx: number) => {
+          const qty = Number(it.quantity) || Number(it.qty) || 1;
+          const origPrice = it.originalPrice || (it.discountedPrice ? (it.originalPriceUnit || 19500) : (it.priceUnit || it.price || 0));
+          const effectivePrice = it.discountedPrice || it.priceUnit || it.price || 0;
+          const discount = typeof it.discount === 'number' ? it.discount : 0;
+          const lineSubtotal = Math.round(qty * effectivePrice * (1 - discount / 100));
+
+          return {
+            id: `${conv.id}_line_${idx}`,
+            odooLineId: idx + 1,
+            productName: it.matchedProductName || it.productNameRaw || it.name || it.sku,
+            productSku: it.sku || it.productSku || null,
+            odooProductId: it.matchedProductOdooId || it.odooProductId || null,
+            uomName: it.unit || it.uom || 'Gói',
+            quantity: qty,
+            originalPrice: origPrice > effectivePrice ? origPrice : null,
+            discountedPrice: it.discountedPrice || null,
+            priceUnit: effectivePrice,
+            discount: discount,
+            priceSubtotal: lineSubtotal,
+          };
+        });
+
+        const computedUndiscounted = draft.subtotal || draft.originalSubtotal || items.reduce(
+          (sum: number, it: any) => {
+            const qty = Number(it.quantity) || Number(it.qty) || 1;
+            const orig = it.originalPrice || (it.discountedPrice ? 19500 : (it.priceUnit || it.price || 0));
+            return sum + (qty * orig);
+          },
           0
         );
+
+        const computedUntaxed = lines.reduce((sum: number, l: any) => sum + l.priceSubtotal, 0);
+        const finalAmountTotal = draft.amountTotal || computedUntaxed;
 
         const aiDraftOrder = {
           id: conv.id,
@@ -333,10 +445,10 @@ export async function orderRoutes(app: FastifyInstance) {
           state: 'draft',
           salesperson: conv.contact?.salesperson || 'Võ Tấn Dũng',
           warehouseName: 'Kho TPHCM',
-          amountUntaxed: amountTotal,
+          amountUntaxed: computedUntaxed,
           amountTax: 0,
-          amountTotal: amountTotal,
-          amountUndiscounted: amountTotal,
+          amountTotal: finalAmountTotal,
+          amountUndiscounted: computedUndiscounted,
           margin: 0,
           marginPercent: 0,
           deliveryStatus: 'pending',
@@ -346,21 +458,10 @@ export async function orderRoutes(app: FastifyInstance) {
           note: draft.notes || 'Đơn hàng nháp tạo tự động từ Chatbot AI qua Zalo',
           isAiDraft: true,
           conversationId: conv.id,
-          lines: items.map((it: any, idx: number) => {
-            const qty = it.quantity || it.qty || 1;
-            const price = it.priceUnit || it.price || 0;
-            return {
-              id: `${conv.id}_line_${idx}`,
-              odooLineId: idx + 1,
-              productName: it.matchedProductName || it.productNameRaw || it.name || it.sku,
-              productSku: it.sku || it.productSku || null,
-              uomName: it.unit || it.uom || 'Gói',
-              quantity: qty,
-              priceUnit: price,
-              discount: it.discount || 0,
-              priceSubtotal: qty * price,
-            };
-          }),
+          lines: lines,
+          appliedPromotions: draft.appliedPromotions || [],
+          freeItems: draft.freeItems || [],
+          explanations: draft.explanations || [],
         };
 
         return { order: aiDraftOrder };
@@ -509,22 +610,77 @@ export async function orderRoutes(app: FastifyInstance) {
     const user = request.user!;
     const { id } = request.params as { id: string };
 
-    const orders = await prisma.orderHistory.findMany({
-      where: {
-        orgId: user.orgId,
-        OR: [
-          { customerProfileId: id },
-          { customerProfile: { id } },
-        ],
-      },
-      include: {
-        lines: true,
-      },
-      orderBy: { dateOrder: 'desc' },
-      take: 20,
+    const contact = await prisma.contact.findFirst({
+      where: { id, orgId: user.orgId },
+      select: { id: true, customerId: true, assignedUserId: true },
     });
+    if (!contact) return { orders: [] };
 
-    return { orders };
+    if (user.role === 'member' && contact.assignedUserId !== user.id) {
+      return { orders: [] };
+    }
+
+    const numericOdooId = contact.customerId ? parseInt(contact.customerId, 10) : NaN;
+    const historyWhere: any = {
+      orgId: user.orgId,
+      OR: [
+        { customerProfileId: id },
+        { customerProfile: { id } },
+      ],
+    };
+
+    if (!isNaN(numericOdooId) && numericOdooId > 0) {
+      historyWhere.OR.push({ odooPartnerId: numericOdooId });
+    }
+
+    const [odooOrders, internalOrders] = await Promise.all([
+      prisma.orderHistory.findMany({
+        where: historyWhere,
+        include: {
+          lines: true,
+        },
+        orderBy: { dateOrder: 'desc' },
+        take: 20,
+      }),
+      prisma.order.findMany({
+        where: { orgId: user.orgId, contactId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
+    ]);
+
+    let finalOdooOrders: any[] = odooOrders;
+    if (odooOrders.length === 0 && !isNaN(numericOdooId) && numericOdooId > 0) {
+      try {
+        const odooStats = await odooService.getCustomerOrderStats(numericOdooId);
+        if (odooStats.orders && odooStats.orders.length > 0) {
+          finalOdooOrders = odooStats.orders.map((o) => ({
+            id: String(o.id),
+            odooOrderId: o.id,
+            orderCode: o.name,
+            amountTotal: Number(o.amount_total) || 0,
+            dateOrder: o.date_order,
+            state: o.state,
+          }));
+        }
+      } catch (err: any) {
+        logger.error('[orders] Live odoo order stats fetch error:', err.message);
+      }
+    }
+
+    const combined = [
+      ...finalOdooOrders,
+      ...internalOrders.map((o) => ({
+        id: o.id,
+        orderCode: o.orderCode || `Đơn #${o.id.slice(0, 6)}`,
+        amountTotal: o.totalAmount,
+        dateOrder: o.createdAt,
+        state: o.status,
+        isInternal: true,
+      })),
+    ];
+
+    return { orders: combined };
   });
 
   // ── Helper: Format VND currency ───────────────────────────────────────────
@@ -627,7 +783,26 @@ export async function orderRoutes(app: FastifyInstance) {
         return { sent: false, reason: 'Chưa có hội thoại Zalo của khách hàng' };
       }
 
-      // Persist outbound message in DB
+      // Dispatch to real Zalo if connected and not a test conversation
+      const instance = zaloPool.getInstance(conversation.zaloAccountId);
+      const isRealZalo = instance && instance.api && conversation.externalThreadId && !conversation.externalThreadId.startsWith('test_');
+
+      if (isRealZalo) {
+        try {
+          await instance.api.sendMessage(
+            { msg: messageText },
+            conversation.externalThreadId,
+            conversation.threadType === 'group' ? 1 : 0
+          );
+          logger.info(`[order-routes] Order notification sent via Zalo to thread ${conversation.externalThreadId}`);
+          // Note: Zalo listener will capture this message with its real zaloMsgId and emit chat:message
+          return { sent: true, conversationId: conversation.id };
+        } catch (err: any) {
+          logger.warn(`[order-routes] Failed to deliver via Zalo API: ${err.message}`);
+        }
+      }
+
+      // Fallback: If not real Zalo or Zalo send failed, save directly to DB and emit to socket
       const message = await prisma.message.create({
         data: {
           conversationId: conversation.id,
@@ -646,22 +821,6 @@ export async function orderRoutes(app: FastifyInstance) {
         },
       });
 
-      // Dispatch to real Zalo if connected and not a test conversation
-      const instance = zaloPool.getInstance(conversation.zaloAccountId);
-      if (instance && instance.api && conversation.externalThreadId && !conversation.externalThreadId.startsWith('test_')) {
-        try {
-          await instance.api.sendMessage(
-            { msg: messageText },
-            conversation.externalThreadId,
-            conversation.threadType === 'group' ? 1 : 0
-          );
-          logger.info(`[order-routes] Order notification sent via Zalo to thread ${conversation.externalThreadId}`);
-        } catch (err: any) {
-          logger.warn(`[order-routes] Failed to deliver via Zalo API: ${err.message}`);
-        }
-      }
-
-      // Emit Socket.IO message
       zaloPool.getIO()?.to(`conversation:${conversation.id}`).emit('chat:message', {
         message,
         conversationId: conversation.id,
@@ -745,14 +904,16 @@ export async function orderRoutes(app: FastifyInstance) {
 
       // Save PDF to temp file
       const safeCode = (order.orderCode || 'order').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const tempDir = path.join(os.tmpdir(), 'zalo-crm-pdf');
+      const tempDir = path.join(os.tmpdir(), 'ocms-pdf');
       await fs.promises.mkdir(tempDir, { recursive: true });
       tempFilePath = path.join(tempDir, `${safeCode}.pdf`);
       await fs.promises.writeFile(tempFilePath, reportPdf.buffer);
 
       // Send PDF via Zalo if real thread
       const instance = zaloPool.getInstance(conversation.zaloAccountId);
-      if (instance && instance.api && conversation.externalThreadId && !conversation.externalThreadId.startsWith('test_')) {
+      const isRealZalo = instance && instance.api && conversation.externalThreadId && !conversation.externalThreadId.startsWith('test_');
+
+      if (isRealZalo) {
         try {
           await instance.api.sendMessage(
             { msg: '', attachments: [tempFilePath] },
@@ -760,12 +921,14 @@ export async function orderRoutes(app: FastifyInstance) {
             conversation.threadType === 'group' ? 1 : 0
           );
           logger.info(`[order-routes] PDF file sent via Zalo API to thread ${conversation.externalThreadId}`);
+          // Note: Zalo listener will receive this file attachment with real Zalo download link and emit chat:message
+          return { sent: true };
         } catch (zErr: any) {
           logger.warn(`[order-routes] Failed to deliver PDF via Zalo API: ${zErr.message}`);
         }
       }
 
-      // Save PDF message to DB
+      // Fallback: Only if offline or test conversation, save PDF message to DB and emit to socket
       const savedFileMessage = await prisma.message.create({
         data: {
           conversationId: conversation.id,
@@ -783,7 +946,7 @@ export async function orderRoutes(app: FastifyInstance) {
         conversationId: conversation.id,
       });
 
-      logger.info(`[order-routes] PDF sent successfully for order ${order.orderCode} to conversation ${conversation.id}`);
+      logger.info(`[order-routes] PDF saved to CRM fallback for order ${order.orderCode} to conversation ${conversation.id}`);
       return { sent: true };
     } catch (err: any) {
       logger.error(`[order-routes] Error sending PDF to customer:`, err);
@@ -803,16 +966,81 @@ export async function orderRoutes(app: FastifyInstance) {
         orgId: user.orgId,
         currentState: 'CONFIRMATION',
         aiState: { isNot: null },
+        ...(user.role === 'member' ? { contact: { assignedUserId: user.id } } : {}),
       },
     });
     return { count: confirmationConvsCount };
+  });
+
+  // ── Update AI Draft Order Items & Discounts ──────────────────────────────
+  app.put('/api/v1/orders/draft/:conversationId', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { conversationId } = request.params as { conversationId: string };
+    const body = (request.body || {}) as { items?: any[]; notes?: string; paymentTerm?: string };
+
+    const conv = await prisma.conversation.findFirst({
+      where: { id: conversationId, orgId: user.orgId },
+      include: { aiState: true },
+    });
+
+    if (!conv) {
+      return reply.status(404).send({ error: 'Không tìm thấy cuộc hội thoại' });
+    }
+
+    const currentDraft = (conv.aiState?.draftOrder as any) || { items: [] };
+    if (body.items && Array.isArray(body.items)) {
+      currentDraft.items = body.items;
+    }
+    if (body.notes !== undefined) {
+      currentDraft.notes = body.notes;
+    }
+    if (body.paymentTerm !== undefined) {
+      currentDraft.paymentTerm = body.paymentTerm;
+    }
+
+    // Recalculate totals
+    const items = currentDraft.items || [];
+    const subtotal = items.reduce((sum: number, it: any) => {
+      const orig = it.originalPrice || it.priceUnit || it.price || 0;
+      const qty = Number(it.quantity) || Number(it.qty) || 1;
+      return sum + (orig * qty);
+    }, 0);
+    const amountTotal = items.reduce((sum: number, it: any) => {
+      const p = it.discountedPrice || it.priceUnit || it.price || 0;
+      const q = Number(it.quantity) || Number(it.qty) || 1;
+      const d = Number(it.discount) || 0;
+      return sum + Math.round(q * p * (1 - d / 100));
+    }, 0);
+
+    currentDraft.subtotal = subtotal;
+    currentDraft.amountTotal = amountTotal;
+    currentDraft.discountAmount = Math.max(0, subtotal - amountTotal);
+
+    await prisma.conversationAiState.upsert({
+      where: { conversationId },
+      create: {
+        orgId: user.orgId,
+        conversationId,
+        draftOrder: currentDraft,
+      },
+      update: {
+        draftOrder: currentDraft,
+      },
+    });
+
+    zaloPool.getIO()?.emit('chat:order_draft_updated', {
+      conversationId,
+      draftOrder: currentDraft,
+    });
+
+    return { success: true, draft: currentDraft };
   });
 
   // ── Confirm Order & Dispatch Zalo Notification ────────────────────────────
   app.post('/api/v1/orders/:id/confirm', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
-    const body = (request.body || {}) as { customNote?: string; customZaloMessage?: string };
+    const body = (request.body || {}) as { customNote?: string; customZaloMessage?: string; lines?: any[] };
 
     const isNumeric = /^\d+$/.test(id);
 
@@ -848,6 +1076,32 @@ export async function orderRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Đơn hàng không có sản phẩm nào' });
       }
 
+      // Merge staff-edited lines if provided (skip free gift lines to avoid overwriting regular purchased items with same SKU)
+      if (Array.isArray(body.lines) && body.lines.length > 0) {
+        for (const inputLine of body.lines) {
+          if (inputLine.isFreeGift || inputLine.discount === 100) {
+            continue;
+          }
+
+          const item = items.find((it: any) =>
+            (inputLine.productSku && it.sku && it.sku.toLowerCase() === inputLine.productSku.toLowerCase()) ||
+            (inputLine.odooProductId && (Number(it.matchedProductOdooId) === Number(inputLine.odooProductId) || Number(it.odooProductId) === Number(inputLine.odooProductId))) ||
+            (inputLine.productName && (it.matchedProductName === inputLine.productName || it.name === inputLine.productName))
+          );
+          if (item) {
+            if (typeof inputLine.discount === 'number') item.discount = inputLine.discount;
+            if (typeof inputLine.priceUnit === 'number') {
+              item.priceUnit = inputLine.priceUnit;
+              item.price = inputLine.priceUnit;
+            }
+            if (typeof inputLine.quantity === 'number') {
+              item.quantity = inputLine.quantity;
+              item.qty = inputLine.quantity;
+            }
+          }
+        }
+      }
+
       const odooPartnerId = parseInt(conv.contact?.customerId || '17871', 10) || 17871;
       let odooOrderId: number | null = null;
       let officialOrderCode = '';
@@ -861,8 +1115,9 @@ export async function orderRoutes(app: FastifyInstance) {
         const it = items[idx];
         let odooPid = it.matchedProductOdooId || it.odooProductId;
         let pName = it.matchedProductName || it.productNameRaw || it.name || it.sku || '';
-        let pPrice = it.priceUnit || it.price || 0;
-        let pQty = it.quantity || it.qty || 1;
+        let pPrice = it.discountedPrice || it.priceUnit || it.price || 0;
+        let pQty = Number(it.quantity) || Number(it.qty) || 1;
+        let pDiscount = typeof it.discount === 'number' ? it.discount : 0;
 
         if (!odooPid || odooPid === 1 || odooPid === 104) {
           const skuToMatch = (it.sku || '').trim();
@@ -889,17 +1144,140 @@ export async function orderRoutes(app: FastifyInstance) {
             product_id: odooPid,
             product_uom_qty: pQty,
             price_unit: pPrice,
-            discount: it.discount || 0,
+            discount: pDiscount,
           });
+          const lineSub = Math.round(pQty * pPrice * (1 - pDiscount / 100));
           resolvedLines.push({
             id: randomUUID(),
             odooLineId: idx + 1,
             productName: pName,
+            productSku: it.sku || it.productSku || null,
             quantity: pQty,
             priceUnit: pPrice,
-            priceSubtotal: pQty * pPrice,
-            priceTotal: pQty * pPrice,
+            discount: pDiscount,
+            priceSubtotal: lineSub,
+            priceTotal: lineSub,
             odooProductId: odooPid,
+          });
+        }
+      }
+
+      // 1.1 Include promotional free gift items into Odoo order lines with 100% discount
+      const allFreeGifts: any[] = [];
+      if (Array.isArray(draft.freeItems)) {
+        for (const g of draft.freeItems) {
+          if (g && (g.sku || g.name) && (Number(g.quantity) > 0 || Number(g.qty) > 0)) {
+            allFreeGifts.push(g);
+          }
+        }
+      }
+      if (Array.isArray(draft.appliedPromotions)) {
+        for (const ap of draft.appliedPromotions) {
+          const promoGifts = ap.freeItems || ap.freeGifts;
+          if (Array.isArray(promoGifts)) {
+            for (const g of promoGifts) {
+              if (g && (g.sku || g.name) && (Number(g.quantity) > 0 || Number(g.qty) > 0)) {
+                const exists = allFreeGifts.some(
+                  ag => (ag.sku && g.sku && ag.sku.toLowerCase() === g.sku.toLowerCase()) ||
+                        (ag.name && g.name && ag.name.toLowerCase() === g.name.toLowerCase())
+                );
+                if (!exists) allFreeGifts.push(g);
+              }
+            }
+          }
+        }
+      }
+
+      // Also check if body.lines has any free gift lines from staff edit
+      if (Array.isArray(body.lines)) {
+        for (const bl of body.lines) {
+          if (bl.isFreeGift || bl.discount === 100) {
+            const exists = allFreeGifts.some(
+              g => (bl.productSku && g.sku && bl.productSku.toLowerCase() === g.sku.toLowerCase()) ||
+                   (bl.productName && g.name && bl.productName.toLowerCase() === g.name.toLowerCase())
+            );
+            if (!exists) {
+              allFreeGifts.push({
+                sku: bl.productSku,
+                name: bl.productName,
+                quantity: bl.quantity || bl.qty || 1,
+                unitPrice: bl.priceUnit,
+                odooProductId: bl.odooProductId,
+              });
+            }
+          }
+        }
+      }
+
+      for (const gift of allFreeGifts) {
+        let giftSku = (gift.sku || '').trim();
+        let giftName = (gift.name || '').trim();
+        let giftQty = Number(gift.quantity) || Number(gift.qty) || 1;
+        let giftPid = gift.odooProductId || gift.matchedProductOdooId || null;
+
+        // If staff edited this gift in body.lines, check for updated quantity
+        if (Array.isArray(body.lines)) {
+          const staffGift = body.lines.find((bl: any) =>
+            (bl.isFreeGift || bl.discount === 100) && (
+              (bl.productSku && giftSku && bl.productSku.toLowerCase() === giftSku.toLowerCase()) ||
+              (bl.productName && giftName && bl.productName.toLowerCase().includes(giftName.toLowerCase())) ||
+              (giftPid && bl.odooProductId && Number(bl.odooProductId) === Number(giftPid))
+            )
+          );
+          if (staffGift) {
+            if (typeof staffGift.quantity === 'number') giftQty = staffGift.quantity;
+            else if (typeof staffGift.qty === 'number') giftQty = staffGift.qty;
+          }
+        }
+
+        if (giftQty <= 0) continue;
+
+        // Resolve Odoo product ID
+        if (!giftPid || giftPid === 1 || giftPid === 104) {
+          const orConditions: any[] = [];
+          if (giftSku) orConditions.push({ sku: { equals: giftSku, mode: 'insensitive' } });
+          if (giftName) orConditions.push({ name: { contains: giftName, mode: 'insensitive' } });
+
+          const cacheProd = await prisma.productCache.findFirst({
+            where: {
+              orgId: user.orgId,
+              ...(orConditions.length > 0 ? { OR: orConditions } : {}),
+            },
+          });
+          if (cacheProd && cacheProd.odooId) {
+            giftPid = cacheProd.odooId;
+            if (!giftName) giftName = cacheProd.name;
+          }
+        }
+
+        // Get price for display/Odoo line (unit price will be discounted by 100%)
+        let giftPrice = Number(gift.unitPrice) || Number(gift.price) || 0;
+        if (!giftPrice && giftPid) {
+          const cacheForPrice = await prisma.productCache.findFirst({
+            where: { orgId: user.orgId, odooId: giftPid },
+          });
+          giftPrice = cacheForPrice?.wholesalePrice || cacheForPrice?.listPrice || 15000;
+        }
+        if (!giftPrice) giftPrice = 15000;
+
+        if (giftPid) {
+          odooLines.push({
+            product_id: giftPid,
+            product_uom_qty: giftQty,
+            price_unit: giftPrice,
+            discount: 100, // Chiết khấu 100% cho hàng tặng kèm theo đúng yêu cầu
+          });
+          resolvedLines.push({
+            id: randomUUID(),
+            odooLineId: items.length + odooLines.length,
+            productName: `[Tặng] ${giftName || giftSku}`.trim(),
+            productSku: giftSku || null,
+            quantity: giftQty,
+            priceUnit: giftPrice,
+            discount: 100,
+            priceSubtotal: 0,
+            priceTotal: 0,
+            odooProductId: giftPid,
           });
         }
       }
@@ -944,10 +1322,10 @@ export async function orderRoutes(app: FastifyInstance) {
       try {
         const odooOrder = await odooService.getOrder(validOdooOrderId);
         officialOrderCode = odooOrder?.name || `SO-${validOdooOrderId}`;
-        officialTotal = odooOrder?.amount_total || odooLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit, 0);
+        officialTotal = odooOrder?.amount_total || odooLines.reduce((s, l) => s + Math.round(l.product_uom_qty * l.price_unit * (1 - (l.discount || 0) / 100)), 0);
       } catch (err: any) {
         officialOrderCode = `SO-${validOdooOrderId}`;
-        officialTotal = odooLines.reduce((s, l) => s + l.product_uom_qty * l.price_unit, 0);
+        officialTotal = odooLines.reduce((s, l) => s + Math.round(l.product_uom_qty * l.price_unit * (1 - (l.discount || 0) / 100)), 0);
       }
 
       // Complete conversation state now that order is really created on Odoo
@@ -982,7 +1360,7 @@ export async function orderRoutes(app: FastifyInstance) {
       });
 
       if (!created) {
-        created = await prisma.orderHistory.upsert({
+        created = await (prisma.orderHistory as any).upsert({
           where: {
             orgId_odooOrderId: {
               orgId: user.orgId,
@@ -998,6 +1376,7 @@ export async function orderRoutes(app: FastifyInstance) {
             partnerName: draft.customer?.name || draft.recipientName || conv.contact?.fullName || 'Khách hàng',
             dateOrder: new Date(),
             amountTotal: officialTotal,
+            discountAmount: Number(draft.discountAmount) || 0,
             state: 'draft',
             note: body.customNote || draft.notes || 'Đơn hàng tạo từ Chatbot AI',
             salesperson: conv.contact?.salesperson || user.email,
@@ -1008,18 +1387,44 @@ export async function orderRoutes(app: FastifyInstance) {
           update: {
             orderCode: officialOrderCode,
             amountTotal: officialTotal,
+            discountAmount: Number(draft.discountAmount) || 0,
             state: 'draft',
             partnerName: draft.customer?.name || draft.recipientName || conv.contact?.fullName || 'Khách hàng',
             note: body.customNote || draft.notes || 'Đơn hàng tạo từ Chatbot AI',
           },
-          include: { lines: true, customerProfile: true },
+          include: { lines: true, customerProfile: true, appliedPromotions: true },
         });
+
+        // Persist applied promotion snapshots for full auditability
+        if (created && Array.isArray(draft.appliedPromotions) && draft.appliedPromotions.length > 0) {
+          for (const ap of draft.appliedPromotions) {
+            try {
+              await (prisma as any).orderAppliedPromotion.create({
+                data: {
+                  orgId: user.orgId,
+                  orderHistoryId: created?.id,
+                  promotionId: ap.promotionId || ap.id,
+                  promotionCode: ap.promotionCode || ap.code || 'PROMO',
+                  promotionName: ap.promotionName || ap.name || 'Khuyến mãi',
+                  policyVersion: Number(ap.policyVersion || ap.version) || 1,
+                  discountAmount: Number(ap.discountAmount) || 0,
+                  freeItems: ap.freeItems || ap.freeGifts || [],
+                  appliedRuleSnapshot: ap.appliedRuleSnapshot || {},
+                  explanation: ap.explanation || null,
+                },
+              });
+            } catch (promoErr: any) {
+              logger.warn(`[order-routes] OrderAppliedPromotion save warning: ${promoErr.message}`);
+            }
+          }
+        }
       }
 
+      const partnerDisplayName = created?.partnerName || draft.customer?.name || draft.recipientName || conv.contact?.fullName || 'Khách hàng';
       const noteText = body.customNote ? `Ghi chú: ${body.customNote}\n` : '';
-      const defaultZaloMsg = `Dạ đơn hàng ${officialOrderCode} của ${created.partnerName || 'mình'} đã được xác nhận và đang được chuyển sang bộ phận đóng gói ạ. Tổng giá trị đơn hàng là ${formatVND(officialTotal)}.
+      const defaultZaloMsg = `Dạ đơn hàng ${officialOrderCode} của ${partnerDisplayName} đã được xác nhận và đang được chuyển sang bộ phận đóng gói ạ. Tổng giá trị đơn hàng là ${formatVND(officialTotal)}.
 ${noteText}
-Em cảm ơn ${created.partnerName || 'mình'} đã ủng hộ shop ạ!`.trim();
+Em cảm ơn ${partnerDisplayName} đã ủng hộ shop ạ!`.trim();
 
       let finalZaloMessage = body.customZaloMessage?.trim() || defaultZaloMsg;
       finalZaloMessage = finalZaloMessage
@@ -1042,8 +1447,7 @@ Em cảm ơn ${created.partnerName || 'mình'} đã ủng hộ shop ạ!`.trim()
           // Send confirmation text message
           await sendOrderNotificationToCustomer(user.orgId, created, finalZaloMessage, conv.id);
 
-          // Send PDF attachment immediately after text
-          if (reportPdf) {
+          if (reportPdf && created) {
             await sendPdfAttachmentToCustomer(user.orgId, created, reportPdf, conv.id);
             await prisma.orderHistory.update({
               where: { id: created.id },
@@ -1303,45 +1707,18 @@ Em cảm ơn ${customerName} đã ủng hộ shop ạ!`.trim();
         data: { currentState: 'NEW' },
       });
 
-      const customerName = conv.contact?.fullName || 'Quý khách';
-      const defaultRejectMsg = customZaloMessage?.trim() || `⚠️ [OCMS] THÔNG BÁO VỀ ĐƠN HÀNG
-Kính gửi Quý khách ${customerName},
+      const defaultRejectMsg = customZaloMessage?.trim() || `Xin lỗi khách hàng, đơn hàng trên không thể được tạo với lý do: ${reason}.
+Quý khách có thể sửa lại nội dung đơn hàng để hợp lệ không ạ?
+Mong khách hàng thông cảm.`;
 
-Rất tiếc, đơn hàng tạm thời chưa thể xác nhận.
-❌ Lý do từ chối: ${reason}
+      // Dispatch as real outbound Zalo chat message to customer
+      const zaloResult = await sendOrderNotificationToCustomer(
+        user.orgId,
+        { partnerName: conv.contact?.fullName },
+        defaultRejectMsg,
+        conv.id
+      );
 
-Quý khách vui lòng nhắn tin trực tiếp để nhân viên hỗ trợ tư vấn sản phẩm thay thế hoặc giải đáp thêm.
-Trân trọng cảm ơn Quý khách!`;
-
-      // Create a system note message in conversation
-      await prisma.message.create({
-        data: {
-          id: randomUUID(),
-          conversationId: conv.id,
-          zaloMsgId: null,
-          senderType: 'self',
-          senderUid: user.id,
-          senderName: user.email,
-          content: defaultRejectMsg,
-          contentType: 'text',
-          attachments: [],
-          isNote: true,
-          isAi: false,
-          sentAt: new Date(),
-        },
-      });
-
-      zaloPool.getIO()?.emit('chat:message', {
-        conversationId: conv.id,
-        message: {
-          id: randomUUID(),
-          conversationId: conv.id,
-          senderType: 'self',
-          content: defaultRejectMsg,
-          contentType: 'text',
-          sentAt: new Date().toISOString(),
-        }
-      });
       zaloPool.getIO()?.emit('chat:state_updated', { conversationId: conv.id, currentState: 'NEW' });
       zaloPool.getIO()?.emit('chat:order_draft_updated', { conversationId: conv.id, draftOrder: null });
       zaloPool.getIO()?.emit('order:updated');
@@ -1349,6 +1726,8 @@ Trân trọng cảm ơn Quý khách!`;
       return reply.send({
         success: true,
         message: `Đã từ chối đơn hàng AI (${reason})`,
+        zaloSent: zaloResult.sent,
+        zaloReason: zaloResult.reason,
       });
     }
 
@@ -1383,19 +1762,9 @@ Trân trọng cảm ơn Quý khách!`;
     const linesText = buildLinesSummary(order.lines);
 
     const defaultRejectZalo =
-`⚠️ [OCMS] THÔNG BÁO VỀ ĐƠN HÀNG #${order.orderCode}
-Kính gửi Quý khách ${customerName},
-
-Rất tiếc, đơn hàng #${order.orderCode} của Quý khách tạm thời chưa thể xác nhận.
-
-📦 Danh sách sản phẩm:
-${linesText}
-
-❌ Lý do từ chối:
-${reason}
-
-Quý khách vui lòng nhắn tin trực tiếp để nhân viên hỗ trợ tư vấn sản phẩm thay thế hoặc giải đáp thêm.
-Trân trọng cảm ơn Quý khách!`;
+`Xin lỗi khách hàng, đơn hàng trên không thể được tạo với lý do: ${reason}.
+Quý khách có thể sửa lại nội dung đơn hàng để hợp lệ không ạ?
+Mong khách hàng thông cảm.`;
 
     const finalRejectZaloMessage = customZaloMessage?.trim() || defaultRejectZalo;
     const zaloResult = await sendOrderNotificationToCustomer(user.orgId, order, finalRejectZaloMessage);

@@ -5,9 +5,11 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { chatbotStateMachine } from './chatbot-state-machine.js';
+import { chatbotService } from './chatbot-service.js';
 import { knowledgeService } from './knowledge-service.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
 
 export const chatbotRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.addHook('preHandler', authMiddleware);
@@ -61,6 +63,12 @@ export const chatbotRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     try {
       const { id } = req.params;
       const updated = await chatbotStateMachine.resumeAi(id);
+      const orgId = req.user?.orgId || updated.orgId;
+      if (orgId) {
+        chatbotService.checkAndAutoReplyOnResume(id, orgId).catch(err => {
+          logger.warn(`[chatbot-routes] Failed to trigger auto-reply on resume: ${err.message}`);
+        });
+      }
       return reply.send({ success: true, conversation: updated });
     } catch (err: any) {
       return reply.status(500).send({ error: err.message });
@@ -89,6 +97,110 @@ export const chatbotRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         where: { id },
         data: { aiActive: typeof aiActive === 'boolean' ? aiActive : false },
       });
+
+      if (updated.aiActive) {
+        const orgId = req.user?.orgId || updated.orgId;
+        if (orgId) {
+          chatbotService.checkAndAutoReplyOnResume(id, orgId).catch(err => {
+            logger.warn(`[chatbot-routes] Failed to trigger auto-reply on toggle active: ${err.message}`);
+          });
+        }
+      }
+
+      return reply.send({ success: true, conversation: updated });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  });
+
+  // 4.1. Set or Adjust AI Context Boundary
+  app.post('/conversations/:id/context-boundary', async (req: any, reply) => {
+    try {
+      const { id } = req.params;
+      const { startMessageId, endMessageId, resetDraft } = req.body || {};
+
+      const existingConv = await prisma.conversation.findUnique({
+        where: { id },
+      });
+      if (!existingConv) {
+        return reply.status(404).send({ error: 'Conversation not found' });
+      }
+
+      const updateData: any = {};
+
+      if (startMessageId !== undefined) {
+        if (startMessageId === null) {
+          updateData.contextStartMsgId = null;
+          updateData.contextStartedAt = null;
+        } else {
+          const startMsg = await prisma.message.findFirst({
+            where: {
+              conversationId: id,
+              OR: [{ id: startMessageId }, { zaloMsgId: startMessageId }],
+            },
+            select: { id: true, sentAt: true },
+          });
+          if (!startMsg) {
+            return reply.status(400).send({ error: 'Start message not found in this conversation' });
+          }
+          updateData.contextStartMsgId = startMsg.id;
+          updateData.contextStartedAt = startMsg.sentAt;
+        }
+      }
+
+      if (endMessageId !== undefined) {
+        if (endMessageId === null) {
+          updateData.contextEndMsgId = null;
+          updateData.contextEndedAt = null;
+        } else {
+          const endMsg = await prisma.message.findFirst({
+            where: {
+              conversationId: id,
+              OR: [{ id: endMessageId }, { zaloMsgId: endMessageId }],
+            },
+            select: { id: true, sentAt: true },
+          });
+          if (!endMsg) {
+            return reply.status(400).send({ error: 'End message not found in this conversation' });
+          }
+          updateData.contextEndMsgId = endMsg.id;
+          updateData.contextEndedAt = endMsg.sentAt;
+        }
+      }
+
+      if (resetDraft) {
+        updateData.currentState = 'NEW';
+      }
+
+      const updated = await prisma.conversation.update({
+        where: { id },
+        data: updateData,
+      });
+
+      if (resetDraft) {
+        await chatbotStateMachine.updateSessionState(id, existingConv.orgId, {
+          draftOrder: { items: [] },
+          pendingSlots: [],
+          lastAiQuestion: null,
+        }, 'NEW');
+      }
+
+      // Emit real-time update
+      const uAny = updated as any;
+      try {
+        zaloPool.getIO()?.emit('chat:context_boundary_updated', {
+          conversationId: id,
+          contextStartMsgId: uAny.contextStartMsgId,
+          contextEndMsgId: uAny.contextEndMsgId,
+          contextStartedAt: uAny.contextStartedAt,
+          contextEndedAt: uAny.contextEndedAt,
+          currentState: uAny.currentState,
+          resetDraft: !!resetDraft,
+        });
+      } catch (e: any) {
+        logger.warn(`[chatbot-routes] Socket emit chat:context_boundary_updated failed: ${e.message}`);
+      }
+
       return reply.send({ success: true, conversation: updated });
     } catch (err: any) {
       return reply.status(500).send({ error: err.message });

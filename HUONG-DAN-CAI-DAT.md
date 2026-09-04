@@ -1,4 +1,4 @@
-# Hướng dẫn cài đặt ZaloCRM
+# Hướng dẫn cài đặt OCMS
 
 ## Bước 1: Chuẩn bị VPS
 
@@ -85,7 +85,7 @@ docker compose up -d --build
 
 Chờ cho tới khi hiện:
 ```
-Container zalo-crm-app Started
+Container app Started
 ```
 
 **Kiểm tra hoạt động:**
@@ -94,10 +94,11 @@ Container zalo-crm-app Started
 # Xem trạng thái các container
 docker compose ps
 
-# Kết quả mong đợi: 3 container đều "Up"
-# - zalo-crm-app    Up
-# - zalo-crm-db     Up (healthy)
-# - zalo-crm-backup Up (healthy)
+# Kết quả mong đợi: Các container đều "Up"
+# - app        Up
+# - database   Up (healthy)
+# - backup     Up (healthy)
+# - chatbot    Up
 ```
 
 ## Bước 5: Truy cập lần đầu
@@ -189,14 +190,14 @@ Hệ thống **tự động sao lưu** hàng ngày vào thư mục `backups/`:
 
 ```bash
 # Tạo bản sao lưu ngay
-docker exec zalo-crm-db pg_dump -U crmuser zalocrm > backup-manual.sql
+docker exec database pg_dump -U crmuser zalocrm > backup-manual.sql
 ```
 
 **Khôi phục từ bản sao lưu:**
 
 ```bash
 # Khôi phục database
-cat backup-manual.sql | docker exec -i zalo-crm-db psql -U crmuser zalocrm
+cat backup-manual.sql | docker exec -i database psql -U crmuser zalocrm
 ```
 
 ---
@@ -229,7 +230,7 @@ docker compose restart app
 
 ```bash
 # Truy cập database trực tiếp
-docker exec -it zalo-crm-db psql -U crmuser zalocrm
+docker exec -it database psql -U crmuser zalocrm
 
 # Xem email admin
 SELECT email, role FROM users WHERE role = 'owner';

@@ -7,9 +7,6 @@
           <v-icon color="primary" class="page-icon">lucide-shopping-bag</v-icon>
           Quản lý Đơn hàng
         </h1>
-        <div class="text-caption text-medium-emphasis mt-1">
-          Dữ liệu đơn hàng đồng bộ trực tiếp từ Odoo ERP • Lưu trữ cục bộ siêu tốc
-        </div>
       </div>
 
       <div class="d-flex align-center gap-3">
@@ -32,93 +29,6 @@
         </v-btn>
       </div>
     </div>
-
-    <!-- KPI Summary Cards -->
-    <v-row class="mb-4">
-      <v-col cols="6" sm="6" md="3">
-        <v-card variant="outlined" class="kpi-card rounded-lg">
-          <v-card-text class="pa-4">
-            <div class="d-flex justify-space-between align-start">
-              <div>
-                <div class="text-caption text-medium-emphasis font-weight-medium">TỔNG ĐƠN HÀNG</div>
-                <div class="text-h5 font-weight-bold mt-1 text-primary">
-                  {{ stats?.totalOrders ? stats.totalOrders.toLocaleString('vi-VN') : '—' }}
-                </div>
-              </div>
-              <v-avatar color="primary" variant="tonal" size="40" rounded="lg">
-                <v-icon icon="lucide-shopping-bag" size="20" />
-              </v-avatar>
-            </div>
-            <div class="text-caption text-medium-emphasis mt-2">
-              Báo giá: <span class="font-weight-bold text-amber-darken-3">{{ stats?.draftOrders || 0 }}</span> • Đã huỷ: {{ stats?.cancelledOrders || 0 }}
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-
-      <v-col cols="6" sm="6" md="3">
-        <v-card variant="outlined" class="kpi-card rounded-lg">
-          <v-card-text class="pa-4">
-            <div class="d-flex justify-space-between align-start">
-              <div>
-                <div class="text-caption text-medium-emphasis font-weight-medium">ĐÃ XÁC NHẬN / HOÀN THÀNH</div>
-                <div class="text-h5 font-weight-bold mt-1 text-success">
-                  {{ stats?.confirmedOrders ? stats.confirmedOrders.toLocaleString('vi-VN') : '—' }}
-                </div>
-              </div>
-              <v-avatar color="success" variant="tonal" size="40" rounded="lg">
-                <v-icon icon="lucide-check-circle-2" size="20" />
-              </v-avatar>
-            </div>
-            <div class="text-caption text-medium-emphasis mt-2">
-              Tỷ lệ chốt: <span class="font-weight-medium">{{ getConversionRate() }}%</span>
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-
-      <v-col cols="6" sm="6" md="3">
-        <v-card variant="outlined" class="kpi-card rounded-lg">
-          <v-card-text class="pa-4">
-            <div class="d-flex justify-space-between align-start">
-              <div>
-                <div class="text-caption text-medium-emphasis font-weight-medium">TỔNG DOANH THU</div>
-                <div class="text-h6 font-weight-bold mt-1 text-teal font-monospace">
-                  {{ formatVND(stats?.totalRevenue ?? 0) }}
-                </div>
-              </div>
-              <v-avatar color="teal" variant="tonal" size="40" rounded="lg">
-                <v-icon icon="lucide-badge-dollar-sign" size="20" />
-              </v-avatar>
-            </div>
-            <div class="text-caption text-medium-emphasis mt-2">
-              Lợi nhuận gộp: <span class="font-weight-medium text-teal">{{ formatVND(stats?.totalMargin ?? 0) }}</span>
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-
-      <v-col cols="6" sm="6" md="3">
-        <v-card variant="outlined" class="kpi-card rounded-lg">
-          <v-card-text class="pa-4">
-            <div class="d-flex justify-space-between align-start">
-              <div>
-                <div class="text-caption text-medium-emphasis font-weight-medium">DOANH THU HÔM NAY</div>
-                <div class="text-h6 font-weight-bold mt-1 text-orange-darken-2 font-monospace">
-                  {{ formatVND(stats?.todayRevenue ?? 0) }}
-                </div>
-              </div>
-              <v-avatar color="orange" variant="tonal" size="40" rounded="lg">
-                <v-icon icon="lucide-calendar" size="20" />
-              </v-avatar>
-            </div>
-            <div class="text-caption text-medium-emphasis mt-2">
-              Giá trị TB/đơn: <span class="font-weight-medium">{{ formatVND(stats?.avgOrderValue ?? 0) }}</span>
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
 
     <!-- Navigation Tabs -->
     <v-tabs v-model="activeTab" color="primary" class="border-b mb-4" :grow="$vuetify.display.smAndDown" show-arrows>
@@ -783,7 +693,6 @@ const {
   loading,
   detailLoading,
   syncing,
-  stats,
   staffStats,
   salespersons,
   pendingOrders,
@@ -794,7 +703,6 @@ const {
   confirmOrder,
   rejectOrder,
   fetchOrderDetail,
-  fetchStats,
   fetchStaffStats,
   fetchSalespersons,
   syncOrders,
@@ -920,11 +828,6 @@ const hasActiveFilters = computed(() => {
   );
 });
 
-function getConversionRate() {
-  if (!stats.value?.totalOrders) return 0;
-  return ((stats.value.confirmedOrders / stats.value.totalOrders) * 100).toFixed(1);
-}
-
 function buildParams() {
   const p: Record<string, string | number> = {
     page: page.value,
@@ -991,7 +894,6 @@ async function loadData() {
   await Promise.all([
     fetchOrders(buildParams()),
     fetchPendingOrders(),
-    fetchStats(buildParams() as any),
   ]);
 }
 
@@ -1024,16 +926,9 @@ Em cảm ơn ${customerName} đã ủng hộ shop ạ!`.trim();
 
 function resetRejectZaloMessage() {
   if (!targetOrder.value) return;
-  const customerName = targetOrder.value.partnerName || 'Quý khách';
-  const odooCode = targetOrder.value.orderCode;
-  customRejectZaloMessage.value = `⚠️ [OCMS] THÔNG BÁO VỀ ĐƠN HÀNG #${odooCode}
-Kính gửi Quý khách ${customerName},
-
-Rất tiếc, đơn hàng #${odooCode} của Quý khách tạm thời chưa thể xác nhận.
-❌ Lý do từ chối: ${activeRejectReason.value}
-
-Quý khách vui lòng nhắn tin trực tiếp để nhân viên hỗ trợ tư vấn sản phẩm thay thế hoặc giải đáp thêm.
-Trân trọng cảm ơn Quý khách!`;
+  customRejectZaloMessage.value = `Xin lỗi khách hàng, đơn hàng trên không thể được tạo với lý do: ${activeRejectReason.value}.
+Quý khách có thể sửa lại nội dung đơn hàng để hợp lệ không ạ?
+Mong khách hàng thông cảm.`;
 }
 
 // @ts-ignore
@@ -1081,7 +976,7 @@ async function executeConfirmOrder() {
   actionLoading.value = true;
   try {
     // 1. Await real creation of quotation / order in DB & Odoo
-    const res = await confirmOrder(targetId, note, customZalo);
+    const res = await confirmOrder(targetId, note, customZalo, targetOrder.value?.lines);
     if (res?.order?.orderCode) {
       confirmProgress.odooCode = res.order.orderCode;
     }

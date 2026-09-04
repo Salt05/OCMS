@@ -121,7 +121,7 @@
           <v-col cols="12" sm="6">
             <div class="field-label mb-1.5">Khách hàng</div>
             <v-text-field
-              :model-value="contact.fullName"
+              :model-value="(contact.fullName && contact.fullName !== 'Khách hàng') ? contact.fullName : (contact.zaloName || contact.fullName || '')"
               variant="outlined"
               density="compact"
               readonly
@@ -271,13 +271,18 @@
               </v-btn>
             </div>
 
-            <!-- Bottom Section: Pricing, Quantity Stepper & Subtotal -->
+            <!-- Bottom Section: Pricing, Quantity Stepper, Discount Input & Subtotal -->
             <div class="product-calc-bar d-flex align-center justify-space-between flex-wrap gap-2">
               <!-- Left: Unit Price × Stepper -->
               <div class="d-flex align-center gap-2 flex-shrink-0">
-                <span class="unit-price-text text-medium-emphasis font-weight-medium">
-                  {{ formatCurrency(line.price) }}
-                </span>
+                <div class="d-flex flex-column align-start">
+                  <span v-if="line.originalPrice && line.originalPrice > line.price" class="text-caption text-decoration-line-through text-medium-emphasis leading-none">
+                    {{ formatCurrency(line.originalPrice) }}
+                  </span>
+                  <span class="unit-price-text font-weight-bold" :class="line.originalPrice && line.originalPrice > line.price ? 'text-success' : 'text-medium-emphasis'">
+                    {{ formatCurrency(line.price) }}
+                  </span>
+                </div>
                 <span class="text-medium-emphasis opacity-60 font-size-11">×</span>
 
                 <!-- Quantity Stepper -->
@@ -312,10 +317,28 @@
                 </div>
               </div>
 
+              <!-- Middle: Discount Input (CK %) for Staff -->
+              <div class="discount-group d-flex align-center gap-1 flex-shrink-0">
+                <span class="text-caption text-medium-emphasis font-weight-medium">CK:</span>
+                <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1.5 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
+                  <input
+                    type="number"
+                    v-model.number="line.discount"
+                    min="0"
+                    max="100"
+                    step="1"
+                    class="discount-input text-center font-weight-bold text-error"
+                    style="width: 44px; font-size: 0.825rem; border: none; outline: none; background: transparent;"
+                    placeholder="0"
+                  />
+                  <span class="text-caption font-weight-bold text-error">%</span>
+                </div>
+              </div>
+
               <!-- Right: Subtotal (Thành tiền) -->
               <div class="subtotal-group d-flex align-center gap-1.5 ml-auto flex-shrink-0">
                 <span class="text-caption text-medium-emphasis font-weight-medium">Thành tiền:</span>
-                <span class="line-subtotal-val font-weight-bold text-high-emphasis">
+                <span class="line-subtotal-val font-weight-bold text-primary">
                   {{ formatCurrency(lineSubtotal(line)) }}
                 </span>
               </div>
@@ -343,6 +366,14 @@
           <div class="d-flex align-center justify-space-between summary-row">
             <span class="text-caption font-weight-medium text-medium-emphasis">Tổng số lượng:</span>
             <span class="text-caption font-weight-bold text-high-emphasis">{{ totalProductsCount }} sản phẩm</span>
+          </div>
+          <div v-if="undiscountedTotalAmount > totalAmount" class="d-flex align-center justify-space-between summary-row">
+            <span class="text-caption font-weight-medium text-medium-emphasis">Tổng tiền hàng (chưa giảm):</span>
+            <span class="text-caption font-weight-bold text-high-emphasis">{{ formatCurrency(undiscountedTotalAmount) }}</span>
+          </div>
+          <div v-if="undiscountedTotalAmount > totalAmount" class="d-flex align-center justify-space-between summary-row text-error">
+            <span class="text-caption font-weight-medium">Tổng chiết khấu & ưu đãi:</span>
+            <span class="text-caption font-weight-bold">-{{ formatCurrency(undiscountedTotalAmount - totalAmount) }}</span>
           </div>
           <div class="d-flex align-center justify-space-between summary-row-total">
             <span class="text-subtitle-2 font-weight-bold text-high-emphasis">Tổng thanh toán:</span>
@@ -450,6 +481,8 @@ export interface OrderLineItem {
   qty: number;
   price: number;
   discount: number;
+  originalPrice?: number | null;
+  discountedPrice?: number | null;
   aiConfidence?: number | null;
   aiRawName?: string;
 }
@@ -468,6 +501,13 @@ function lineSubtotal(line: OrderLineItem) {
 // Totals
 const totalProductsCount = computed(() => {
   return orderLines.value.reduce((sum, line) => sum + (line.qty || 0), 0);
+});
+
+const undiscountedTotalAmount = computed(() => {
+  return orderLines.value.reduce((sum, line) => {
+    const basePrice = line.originalPrice && line.originalPrice > 0 ? line.originalPrice : (line.price || 0);
+    return sum + (Number(line.qty) || 0) * basePrice;
+  }, 0);
 });
 
 const totalAmount = computed(() => {
@@ -514,13 +554,16 @@ function onProductFromPicker(product: OdooProduct, addQty: number = 1) {
       color: 'info',
     };
   } else {
+    const basePrice = product.wholesale_price || product.list_price || 0;
     orderLines.value.push({
       product: {
         ...product,
         id: odooProductId,
       },
       qty: quantityToAdd,
-      price: product.list_price || product.wholesale_price || 0,
+      price: basePrice,
+      originalPrice: basePrice,
+      discountedPrice: null,
       discount: 0,
     });
     snackbar.value = {
@@ -712,7 +755,9 @@ async function fillOrderFromAI(draft: any) {
     // Fallback: create product representation directly so it never shows "Chưa chọn sản phẩm"
     const finalSku = item.sku || matchedProduct?.default_code || (rawName.match(/^\[?([A-Za-z0-9_-]+)\]?/)?.[1] || '');
     const finalName = matchedProduct?.name || matchedProduct?.display_name || rawName || finalSku || 'Sản phẩm';
-    const finalPrice = item.priceUnit || item.price || matchedProduct?.wholesale_price || matchedProduct?.list_price || 0;
+    const origPrice = item.originalPrice || matchedProduct?.wholesale_price || matchedProduct?.list_price || null;
+    const discPrice = item.discountedPrice || null;
+    const finalPrice = discPrice || item.priceUnit || item.price || matchedProduct?.wholesale_price || matchedProduct?.list_price || 0;
     const finalOdooId = matchedProduct ? Number(matchedProduct.odoo_id || matchedProduct.id) : (odooIdToMatch || 0);
 
     const productObj: OdooProduct = matchedProduct ? {
@@ -738,6 +783,8 @@ async function fillOrderFromAI(draft: any) {
       product: productObj,
       qty: Number(item.quantity) || Number(item.qty) || 1,
       price: finalPrice,
+      originalPrice: origPrice,
+      discountedPrice: discPrice,
       discount: item.discount || 0,
       aiConfidence: item.confidence || 0.95,
       aiRawName: rawName,

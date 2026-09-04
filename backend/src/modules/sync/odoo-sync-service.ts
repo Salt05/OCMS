@@ -623,7 +623,7 @@ class OdooSyncService {
 
       // 4. Save to temporary file
       const safeOrderCode = orderCode.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const tempDir = path.join(os.tmpdir(), 'zalo-crm-pdf');
+      const tempDir = path.join(os.tmpdir(), 'ocms-pdf');
       await fs.promises.mkdir(tempDir, { recursive: true });
       const tempFilePath = path.join(tempDir, `${safeOrderCode}.pdf`);
       await fs.promises.writeFile(tempFilePath, reportPdf.buffer);
@@ -654,32 +654,7 @@ class OdooSyncService {
 
         logger.info(`[sync] Order ${orderCode} confirmed → PDF sent successfully via Zalo to ${customerDisplayName} (${threadId})`);
 
-        // 6. Save messages to DB for chat history
-        const savedTextMessage = await prisma.message.create({
-          data: {
-            conversationId: matchedConversation.id,
-            senderType: 'self',
-            content: textMessage,
-            contentType: 'text',
-            sentAt: new Date(),
-          },
-        });
-
-        const savedFileMessage = await prisma.message.create({
-          data: {
-            conversationId: matchedConversation.id,
-            senderType: 'self',
-            content: `[File PDF] ${reportPdf.filename || `${orderCode}.pdf`}`,
-            contentType: 'file',
-            attachments: [{
-              name: reportPdf.filename || `${orderCode}.pdf`,
-              size: reportPdf.buffer.length,
-              type: 'application/pdf',
-            }],
-            sentAt: new Date(),
-          },
-        });
-
+        // Update lastMessageAt on conversation
         await prisma.conversation.update({
           where: { id: matchedConversation.id },
           data: {
@@ -688,20 +663,7 @@ class OdooSyncService {
           },
         });
 
-        // Emit Socket.IO events for UI update
-        const io = zaloPool.getIO();
-        if (io) {
-          io.to(`conversation:${matchedConversation.id}`).emit('chat:message', {
-            message: savedTextMessage,
-            conversationId: matchedConversation.id,
-          });
-          io.to(`conversation:${matchedConversation.id}`).emit('chat:message', {
-            message: savedFileMessage,
-            conversationId: matchedConversation.id,
-          });
-        }
-
-        // 7. Update pdfSentAt in DB to prevent re-sending
+        // 6. Update pdfSentAt in DB to prevent re-sending
         await prisma.orderHistory.update({
           where: { orgId_odooOrderId: { orgId, odooOrderId } },
           data: { pdfSentAt: new Date() },

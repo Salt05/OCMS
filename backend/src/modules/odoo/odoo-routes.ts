@@ -30,12 +30,25 @@ export async function odooRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Missing customer ID' });
       }
 
-      const customer = await odooService.getCustomerById(id);
+      const [customer, orderStats] = await Promise.all([
+        odooService.getCustomerById(id),
+        odooService.getCustomerOrderStats(id),
+      ]);
+
       if (!customer) {
         return reply.status(404).send({ error: 'Không tìm thấy khách hàng trên Odoo' });
       }
 
-      return reply.send({ success: true, customer });
+      return reply.send({
+        success: true,
+        customer: {
+          ...customer,
+          totalRevenue: orderStats.totalRevenue,
+          totalOrders: orderStats.totalOrders,
+          lastOrderDate: orderStats.lastOrderDate,
+        },
+        orderStats,
+      });
     } catch (err: any) {
       logger.error('[odoo-routes] get customer error:', err);
       return reply.status(500).send({ error: err.message || 'Lỗi truy vấn Odoo' });

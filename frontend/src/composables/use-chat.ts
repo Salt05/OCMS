@@ -31,6 +31,10 @@ export interface Conversation {
   pausedUntil?: string | null;
   handoffReason?: string | null;
   currentState?: string;
+  contextStartMsgId?: string | null;
+  contextEndMsgId?: string | null;
+  contextStartedAt?: string | null;
+  contextEndedAt?: string | null;
   messages?: ConversationMessage[];
 }
 
@@ -66,6 +70,10 @@ export interface Message {
     isNote?: boolean;
   } | null;
   reactions?: MessageReactionItem[];
+  status?: 'sending' | 'sent' | 'failed';
+  tempId?: string;
+  errorMessage?: string;
+  pendingFile?: File;
 }
 /** Helper to sort messages chronologically (oldest first, newest at bottom) */
 function sortMessagesChronologically(msgs: Message[]): Message[] {
@@ -84,6 +92,10 @@ export function useChat() {
   const searchQuery = ref('');
   const accountFilter = ref<string | null>(null);
   let socket: Socket | null = null;
+
+  // In-memory cache of messages per conversation to make switching instantaneous
+  const messagesCache = new Map<string, Message[]>();
+  let activeConvRequestId = 0;
 
   const selectedConv = computed(() =>
     conversations.value.find(c => c.id === selectedConvId.value) || null,
@@ -104,49 +116,112 @@ export function useChat() {
   }
 
   async function selectConversation(convId: string | null) {
+    if (selectedConvId.value && selectedConvId.value !== convId) {
+      socket?.emit('conversation:leave', { conversationId: selectedConvId.value });
+    }
+
     if (!convId) {
       selectedConvId.value = null;
       messages.value = [];
       return;
     }
     selectedConvId.value = convId;
+    socket?.emit('conversation:join', { conversationId: convId });
     hasMoreMessages.value = true;
-    await fetchMessages(convId);
-    // Fetch full conversation detail to populate contact CRM fields
-    try {
-      const convDetail = await api.get(`/conversations/${convId}`);
-      const conv = conversations.value.find(c => c.id === convId);
-      if (conv && convDetail.data.contact) {
-        conv.contact = convDetail.data.contact;
-        conversations.value = [...conversations.value];
-      }
-    } catch {
-      // Non-critical — panel will show partial data from list
+
+    // Turn off handoff effect immediately when staff enters this chat session
+    const currentConv = conversations.value.find(c => c.id === convId);
+    if (currentConv && currentConv.currentState === 'HUMAN_REQUESTED') {
+      currentConv.currentState = 'AI_PAUSED';
     }
-    // Mark as read
-    try {
-      await api.post(`/conversations/${convId}/mark-read`);
-      const conv = conversations.value.find(c => c.id === convId);
-      if (conv) conv.unreadCount = 0;
-    } catch {
-      // Ignore mark-read errors
+
+    // 1. Instant switch: Check cache first
+    const cached = messagesCache.get(convId);
+    if (cached && cached.length > 0) {
+      messages.value = [...cached];
+      loadingMsgs.value = false;
+    } else {
+      // Clear old messages and show spinner immediately for new conversation
+      messages.value = [];
+      loadingMsgs.value = true;
+    }
+
+    const requestId = ++activeConvRequestId;
+    await fetchMessages(convId, requestId);
+
+    if (requestId === activeConvRequestId) {
+      // Fetch full conversation detail to populate contact CRM fields
+      try {
+        const convDetail = await api.get(`/conversations/${convId}`);
+        const conv = conversations.value.find(c => c.id === convId);
+        if (conv && convDetail.data.contact) {
+          conv.contact = convDetail.data.contact;
+          conversations.value = [...conversations.value];
+        } else if (!conv && convDetail.data) {
+          conversations.value = [convDetail.data, ...conversations.value];
+        }
+      } catch {
+        // Non-critical — panel will show partial data from list
+      }
+      // Mark as read
+      try {
+        await api.post(`/conversations/${convId}/mark-read`);
+        const conv = conversations.value.find(c => c.id === convId);
+        if (conv) conv.unreadCount = 0;
+      } catch {
+        // Ignore mark-read errors
+      }
     }
   }
 
-  async function fetchMessages(convId: string) {
-    loadingMsgs.value = true;
+  async function fetchMessages(convId: string, requestId?: number) {
+    const hasCache = (messagesCache.get(convId)?.length || 0) > 0;
+    if (!hasCache) {
+      loadingMsgs.value = true;
+    }
     try {
       const res = await api.get(`/conversations/${convId}/messages`, {
         params: { limit: 50 },
       });
-      messages.value = sortMessagesChronologically(res.data.messages || []);
+
+      // Ignore stale requests if user rapidly switched conversations
+      if (requestId !== undefined && requestId !== activeConvRequestId) {
+        return;
+      }
+
+      const fetched = sortMessagesChronologically(res.data.messages || []);
+      // Preserve any optimistic messages currently sending or failed in this conversation
+      const optimistic = (messages.value || []).filter(
+        m => (m.status === 'sending' || m.status === 'failed') && m.senderType === 'self'
+      );
+
+      let merged = fetched;
+      if (optimistic.length > 0) {
+        const nonDuplicated = optimistic.filter(opt => {
+          return !fetched.some(f => {
+            if (f.id === opt.id) return true;
+            if (f.senderType === 'self' && Math.abs(new Date(f.sentAt).getTime() - new Date(opt.sentAt).getTime()) < 60000) {
+              if (f.content === opt.content) return true;
+              if ((f.contentType === 'image' || f.contentType === 'file') && (opt.contentType === 'image' || opt.contentType === 'file')) return true;
+            }
+            return false;
+          });
+        });
+        merged = sortMessagesChronologically([...fetched, ...nonDuplicated]);
+      }
+
+      messages.value = merged;
+      messagesCache.set(convId, merged);
+
       if ((res.data.messages || []).length < 50) {
         hasMoreMessages.value = false;
       }
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
-      loadingMsgs.value = false;
+      if (requestId === undefined || requestId === activeConvRequestId) {
+        loadingMsgs.value = false;
+      }
     }
   }
 
@@ -180,6 +255,9 @@ export function useChat() {
 
       if (newUnique.length > 0) {
         messages.value = sortMessagesChronologically([...newUnique, ...messages.value]);
+        if (selectedConvId.value) {
+          messagesCache.set(selectedConvId.value, messages.value);
+        }
       }
 
       if (olderMessages.length < 30) {
@@ -195,31 +273,150 @@ export function useChat() {
     }
   }
 
-  async function sendMessage(content: string, contentType: string = 'text', isNote?: boolean, replyToId?: string) {
+  async function sendMessage(content: string, contentType: string = 'text', isNote?: boolean, replyToId?: string, existingTempId?: string) {
     if (!selectedConvId.value || !content.trim()) return;
 
+    const convId = selectedConvId.value;
+    const authStore = useAuthStore();
+    const currentUserName = authStore.user?.fullName || authStore.user?.email || 'Tôi';
+    const tempId = existingTempId || `temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    let replyToObj = null;
+    if (replyToId) {
+      const parent = messages.value.find(m => m.id === replyToId);
+      if (parent) {
+        replyToObj = {
+          id: parent.id,
+          senderName: parent.senderName,
+          content: parent.content,
+          contentType: parent.contentType,
+          isNote: parent.isNote,
+        };
+      }
+    }
+
+    // Build optimistic message
+    const optimisticMsg: Message = {
+      id: tempId,
+      tempId,
+      content: content.trim(),
+      contentType,
+      senderType: 'self',
+      senderName: currentUserName,
+      senderUid: authStore.user?.id || null,
+      sentAt: new Date().toISOString(),
+      isDeleted: false,
+      isNote: !!isNote,
+      replyToId: replyToId || null,
+      replyTo: replyToObj,
+      zaloMsgId: null,
+      status: 'sending',
+    };
+
+    const existingIdx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
+    if (existingIdx !== -1) {
+      messages.value[existingIdx] = optimisticMsg;
+      messages.value = [...messages.value];
+    } else {
+      messages.value = sortMessagesChronologically([...messages.value, optimisticMsg]);
+    }
+    messagesCache.set(convId, messages.value);
     sendingMsg.value = true;
 
     try {
-      await api.post(
-        `/conversations/${selectedConvId.value}/messages`,
+      const res = await api.post(
+        `/conversations/${convId}/messages`,
         {
           content: content.trim(),
           contentType,
           isNote,
           replyToId,
         },
+        { timeout: 30000 }
       );
-    } catch (err) {
+
+      // If note or server returns created message:
+      if (res.data?.message) {
+        const serverMsg = res.data.message;
+        const idx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
+        if (idx !== -1) {
+          messages.value[idx] = { ...serverMsg, status: 'sent' };
+          messages.value = [...messages.value];
+          messagesCache.set(convId, messages.value);
+        }
+      } else {
+        // Customer message: will be confirmed via socket, mark sent
+        const idx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
+        if (idx !== -1) {
+          messages.value[idx].status = 'sent';
+          messages.value = [...messages.value];
+          messagesCache.set(convId, messages.value);
+        }
+      }
+    } catch (err: any) {
       console.error('Failed to send message:', err);
+      const idx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
+      if (idx !== -1) {
+        const errMsg = err.response?.data?.error || err.message || 'Lỗi gửi tin nhắn';
+        messages.value[idx].status = 'failed';
+        messages.value[idx].errorMessage = errMsg;
+        messages.value = [...messages.value];
+        messagesCache.set(convId, messages.value);
+      }
     } finally {
       sendingMsg.value = false;
     }
   }
 
-  async function sendAttachment(file: File) {
+  function retrySendMessage(tempId: string) {
+    const msg = messages.value.find(m => m.id === tempId || m.tempId === tempId);
+    if (!msg || !msg.content) return;
+    sendMessage(msg.content, msg.contentType, msg.isNote, msg.replyToId || undefined, tempId);
+  }
+
+  function removeOptimisticMessage(tempId: string) {
+    if (!selectedConvId.value) return;
+    messages.value = messages.value.filter(m => m.id !== tempId && m.tempId !== tempId);
+    messagesCache.set(selectedConvId.value, messages.value);
+  }
+
+  async function sendAttachment(file: File, existingTempId?: string) {
     if (!selectedConvId.value) return;
 
+    const convId = selectedConvId.value;
+    const authStore = useAuthStore();
+    const currentUserName = authStore.user?.fullName || authStore.user?.email || 'Tôi';
+    const tempId = existingTempId || `temp_att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const isImg = file.type.startsWith('image/');
+    let previewUrl = '';
+    try {
+      if (isImg) previewUrl = URL.createObjectURL(file);
+    } catch {}
+
+    const optimisticMsg: Message = {
+      id: tempId,
+      tempId,
+      content: isImg ? JSON.stringify({ href: previewUrl, title: file.name }) : JSON.stringify({ title: file.name, size: file.size }),
+      contentType: isImg ? 'image' : 'file',
+      senderType: 'self',
+      senderName: currentUserName,
+      senderUid: authStore.user?.id || null,
+      sentAt: new Date().toISOString(),
+      isDeleted: false,
+      isNote: false,
+      zaloMsgId: null,
+      status: 'sending',
+      pendingFile: file,
+    };
+
+    const existingIdx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
+    if (existingIdx !== -1) {
+      messages.value[existingIdx] = optimisticMsg;
+      messages.value = [...messages.value];
+    } else {
+      messages.value = sortMessagesChronologically([...messages.value, optimisticMsg]);
+    }
+    messagesCache.set(convId, messages.value);
     sendingMsg.value = true;
 
     try {
@@ -227,48 +424,128 @@ export function useChat() {
       formData.append('file', file);
 
       await api.post(
-        `/conversations/${selectedConvId.value}/upload`,
+        `/conversations/${convId}/upload`,
         formData,
         {
           headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 120000, // 2 minutes for large files
+          timeout: 120000,
         },
       );
-    } catch (err) {
+
+      const idx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
+      if (idx !== -1) {
+        messages.value[idx].status = 'sent';
+        messages.value = [...messages.value];
+        messagesCache.set(convId, messages.value);
+      }
+    } catch (err: any) {
       console.error('Failed to send attachment:', err);
+      const idx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
+      if (idx !== -1) {
+        messages.value[idx].status = 'failed';
+        messages.value[idx].errorMessage = err.response?.data?.error || err.message || 'Gửi tệp thất bại';
+        messages.value = [...messages.value];
+        messagesCache.set(convId, messages.value);
+      }
       throw err;
     } finally {
       sendingMsg.value = false;
     }
   }
 
+  function retrySendAttachment(tempId: string) {
+    const msg = messages.value.find(m => m.id === tempId || m.tempId === tempId);
+    if (!msg || !msg.pendingFile) return;
+    sendAttachment(msg.pendingFile, tempId);
+  }
+
   function initSocket() {
     socket = io({ transports: ['websocket', 'polling'] });
+    const authStore = useAuthStore();
 
-    // When socket connects or reconnects to backend, immediately refresh conversations
+    // When socket connects or reconnects to backend, identify user and refresh conversations
     socket.on('connect', () => {
+      socket?.emit('user:join', {
+        userId: authStore.user?.id,
+        orgId: authStore.user?.orgId,
+        role: authStore.user?.role,
+      });
+      if (selectedConvId.value) {
+        socket?.emit('conversation:join', { conversationId: selectedConvId.value });
+      }
       fetchConversations();
     });
 
     socket.on('chat:message', (data: { message: Message; conversationId: string; contactId?: string; assignedUserId?: string | null }) => {
-      const authStore = useAuthStore();
       const currentUser = authStore.user;
       const isAdmin = authStore.isAdmin;
 
-      // Check permission:
-      // - Admins/owners have access to all customer messages
-      // - Staff (members) only have access if:
-      //   1. The contact is assigned to them (data.assignedUserId === currentUser.id)
-      //   2. Or the conversation already exists in their assigned conversation list
       const isAssignedToMe = !!(currentUser?.id && data.assignedUserId && data.assignedUserId === currentUser.id);
       const isKnownInMyList = conversations.value.some(c => c.id === data.conversationId);
       const hasPermission = isAdmin || isAssignedToMe || isKnownInMyList;
 
       // Add to messages if viewing this conversation
       if (data.conversationId === selectedConvId.value) {
-        // Avoid duplicates and insert in chronological order
-        if (!messages.value.find(m => m.id === data.message.id)) {
-          messages.value = sortMessagesChronologically([...messages.value, data.message]);
+        const incoming = data.message;
+        // Look for matching optimistic message
+        const optIndex = messages.value.findIndex(m => {
+          if (m.id === incoming.id) return true;
+          // 1. Text / Note match:
+          if (
+            (m.status === 'sending' || m.status === 'sent') &&
+            m.senderType === 'self' &&
+            incoming.senderType === 'self' &&
+            m.content === incoming.content &&
+            Boolean(m.isNote) === Boolean(incoming.isNote)
+          ) {
+            return true;
+          }
+          // 2. Attachment / Image / File match:
+          if (
+            (m.status === 'sending' || m.status === 'sent') &&
+            m.senderType === 'self' &&
+            incoming.senderType === 'self' &&
+            (m.contentType === 'image' || m.contentType === 'file') &&
+            (incoming.contentType === 'image' || incoming.contentType === 'file') &&
+            Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000
+          ) {
+            return true;
+          }
+          return false;
+        });
+
+        if (optIndex !== -1) {
+          messages.value[optIndex] = { ...incoming, status: 'sent' };
+          messages.value = [...messages.value];
+        } else {
+          // Extra deduplication: Don't add if identical message was already added in the last 15s
+          const isDuplicate = messages.value.some(m =>
+            m.id === incoming.id ||
+            (m.senderType === incoming.senderType &&
+             m.content === incoming.content &&
+             Boolean(m.isNote) === Boolean(incoming.isNote) &&
+             Math.abs(new Date(m.sentAt).getTime() - new Date(incoming.sentAt).getTime()) < 15000)
+          );
+          if (!isDuplicate) {
+            messages.value = sortMessagesChronologically([...messages.value, { ...incoming, status: 'sent' }]);
+          }
+        }
+
+        messagesCache.set(data.conversationId, messages.value);
+      } else {
+        // Update cache if conversation is in cache
+        const cached = messagesCache.get(data.conversationId);
+        if (cached) {
+          const isDuplicate = cached.some(m =>
+            m.id === data.message.id ||
+            (m.senderType === data.message.senderType &&
+             m.content === data.message.content &&
+             Boolean(m.isNote) === Boolean(data.message.isNote) &&
+             Math.abs(new Date(m.sentAt).getTime() - new Date(data.message.sentAt).getTime()) < 15000)
+          );
+          if (!isDuplicate) {
+            messagesCache.set(data.conversationId, sortMessagesChronologically([...cached, data.message]));
+          }
         }
       }
 
@@ -332,11 +609,39 @@ export function useChat() {
       fetchConversations();
     });
 
-    // Real-time conversation state updates (e.g. green blinking border)
-    socket.on('chat:state_updated', (data: { conversationId: string; currentState: string }) => {
+    // Real-time conversation state updates (e.g. green blinking border, AI paused handoff)
+    socket.on('chat:state_updated', (data: {
+      conversationId: string;
+      currentState: string;
+      aiPaused?: boolean;
+      handoffReason?: string | null;
+      pausedUntil?: string | null;
+    }) => {
       const conv = conversations.value.find(c => c.id === data.conversationId);
       if (conv) {
         conv.currentState = data.currentState;
+        if (data.aiPaused !== undefined) conv.aiPaused = data.aiPaused;
+        if (data.handoffReason !== undefined) conv.handoffReason = data.handoffReason;
+        if (data.pausedUntil !== undefined) conv.pausedUntil = data.pausedUntil;
+      }
+    });
+
+    // Real-time AI context boundary updates
+    socket.on('chat:context_boundary_updated', (data: {
+      conversationId: string;
+      contextStartMsgId?: string | null;
+      contextEndMsgId?: string | null;
+      contextStartedAt?: string | null;
+      contextEndedAt?: string | null;
+      currentState?: string;
+    }) => {
+      const conv = conversations.value.find(c => c.id === data.conversationId);
+      if (conv) {
+        if (data.contextStartMsgId !== undefined) conv.contextStartMsgId = data.contextStartMsgId;
+        if (data.contextEndMsgId !== undefined) conv.contextEndMsgId = data.contextEndMsgId;
+        if (data.contextStartedAt !== undefined) conv.contextStartedAt = data.contextStartedAt;
+        if (data.contextEndedAt !== undefined) conv.contextEndedAt = data.contextEndedAt;
+        if (data.currentState) conv.currentState = data.currentState;
       }
     });
 
@@ -409,6 +714,31 @@ export function useChat() {
     }
   }
 
+  async function setContextBoundary(
+    convId: string,
+    options: { startMessageId?: string | null; endMessageId?: string | null; resetDraft?: boolean }
+  ) {
+    try {
+      const res = await api.post(`/chatbot/conversations/${convId}/context-boundary`, options);
+      if (res.data?.conversation) {
+        const conv = conversations.value.find(c => c.id === convId);
+        if (conv) {
+          conv.contextStartMsgId = res.data.conversation.contextStartMsgId;
+          conv.contextEndMsgId = res.data.conversation.contextEndMsgId;
+          conv.contextStartedAt = res.data.conversation.contextStartedAt;
+          conv.contextEndedAt = res.data.conversation.contextEndedAt;
+          if (res.data.conversation.currentState) {
+            conv.currentState = res.data.conversation.currentState;
+          }
+        }
+      }
+      return res.data;
+    } catch (err) {
+      console.error('Failed to set context boundary:', err);
+      throw err;
+    }
+  }
+
   function destroySocket() {
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', handleOnline);
@@ -434,11 +764,15 @@ export function useChat() {
     fetchMessages,
     loadMoreMessages,
     sendMessage,
+    retrySendMessage,
     sendAttachment,
+    retrySendAttachment,
+    removeOptimisticMessage,
     sendReaction,
     pauseAi,
     resumeAi,
     toggleAi,
+    setContextBoundary,
     initSocket,
     destroySocket,
   };

@@ -6,11 +6,11 @@
       <p class="text-body-2 text-grey mt-1">Tạo tổ chức và tài khoản quản trị viên</p>
     </div>
     <v-form @submit.prevent="handleSetup" ref="form">
-      <v-text-field v-model="orgName" label="Tên tổ chức / phòng khám" prepend-inner-icon="lucide-building-2" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
-      <v-text-field v-model="fullName" label="Họ tên quản trị viên" prepend-inner-icon="lucide-user" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
-      <v-text-field v-model="email" label="Email đăng nhập" type="email" prepend-inner-icon="lucide-mail" :rules="[v => !!v || 'Bắt buộc']" class="mb-2" />
-      <v-text-field v-model="password" label="Mật khẩu" type="password" prepend-inner-icon="lucide-lock" :rules="[v => v.length >= 6 || 'Tối thiểu 6 ký tự']" class="mb-4" />
-      <v-btn type="submit" color="primary" block size="large" :loading="loading">Tạo tài khoản</v-btn>
+      <v-text-field v-model="orgName" label="Tên tổ chức / doanh nghiệp" prepend-inner-icon="lucide-building-2" variant="outlined" :rules="[v => !!v || 'Bắt buộc']" class="mb-3" />
+      <v-text-field v-model="fullName" label="Họ tên quản trị viên" prepend-inner-icon="lucide-user" variant="outlined" :rules="[v => !!v || 'Bắt buộc']" class="mb-3" />
+      <v-text-field v-model="email" label="Email đăng nhập" type="email" prepend-inner-icon="lucide-mail" variant="outlined" :rules="[v => !!v || 'Bắt buộc']" class="mb-3" />
+      <v-text-field v-model="password" label="Mật khẩu" type="password" prepend-inner-icon="lucide-lock" variant="outlined" :rules="[v => v.length >= 6 || 'Tối thiểu 6 ký tự']" class="mb-4" />
+      <v-btn type="submit" color="primary" block size="large" :loading="loading" rounded="lg">Tạo tài khoản</v-btn>
     </v-form>
     <v-alert v-if="error" type="error" class="mt-4" density="compact" closable>{{ error }}</v-alert>
     <v-alert v-if="success" type="success" class="mt-4" density="compact">Tạo thành công! Đang chuyển hướng...</v-alert>
@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
@@ -31,6 +31,15 @@ const error = ref('');
 const success = ref(false);
 const router = useRouter();
 const authStore = useAuthStore();
+
+onMounted(async () => {
+  try {
+    const needs = await authStore.checkSetup();
+    if (!needs) {
+      router.replace('/login');
+    }
+  } catch {}
+});
 
 async function handleSetup() {
   loading.value = true;

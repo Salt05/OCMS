@@ -96,12 +96,27 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Không thể thay đổi role của chính mình' });
     }
 
+    if (id === currentUser.id && isActive === false) {
+      return reply.status(400).send({ error: 'Không thể tự vô hiệu hóa tài khoản của chính mình' });
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id, orgId: currentUser.orgId } });
+    if (!targetUser) {
+      return reply.status(404).send({ error: 'Không tìm thấy người dùng' });
+    }
+
+    if (targetUser.role === 'owner' && currentUser.role !== 'owner') {
+      return reply.status(403).send({ error: 'Không có quyền chỉnh sửa tài khoản của chủ sở hữu' });
+    }
+
     const updateData: any = {};
     if (fullName !== undefined) updateData.fullName = fullName;
     if (rawEmail !== undefined) updateData.email = rawEmail.toLowerCase().trim();
     if (role !== undefined && currentUser.role === 'owner') updateData.role = role;
     if (teamId !== undefined) updateData.teamId = teamId || null;
-    if (isActive !== undefined && currentUser.role === 'owner') updateData.isActive = isActive;
+    if (isActive !== undefined && ['owner', 'admin'].includes(currentUser.role)) {
+      updateData.isActive = Boolean(isActive);
+    }
     if (odooId !== undefined) updateData.odooId = odooId || null;
 
     const user = await prisma.user.update({
@@ -134,6 +149,14 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Mật khẩu tối thiểu 6 ký tự' });
     }
 
+    const targetUser = await prisma.user.findUnique({ where: { id, orgId: currentUser.orgId } });
+    if (!targetUser) {
+      return reply.status(404).send({ error: 'Không tìm thấy người dùng' });
+    }
+    if (targetUser.role === 'owner' && currentUser.role !== 'owner') {
+      return reply.status(403).send({ error: 'Không thể đặt lại mật khẩu của chủ sở hữu' });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     await prisma.user.update({
       where: { id, orgId: currentUser.orgId },
@@ -143,16 +166,22 @@ export async function userRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
-  // DELETE /api/v1/users/:id — deactivate user (owner only)
+  // DELETE /api/v1/users/:id — deactivate user (owner/admin only)
   app.delete('/api/v1/users/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     const currentUser = request.user!;
-    if (currentUser.role !== 'owner') {
-      return reply.status(403).send({ error: 'Chỉ owner có quyền xóa nhân viên' });
+    if (!['owner', 'admin'].includes(currentUser.role)) {
+      return reply.status(403).send({ error: 'Chỉ quản trị viên hoặc chủ sở hữu có quyền vô hiệu hóa' });
     }
 
     const { id } = request.params as { id: string };
     if (id === currentUser.id) {
-      return reply.status(400).send({ error: 'Không thể xóa chính mình' });
+      return reply.status(400).send({ error: 'Không thể tự vô hiệu hóa chính mình' });
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id, orgId: currentUser.orgId } });
+    if (!targetUser) return reply.status(404).send({ error: 'Không tìm thấy người dùng' });
+    if (targetUser.role === 'owner' && currentUser.role !== 'owner') {
+      return reply.status(403).send({ error: 'Không thể vô hiệu hóa chủ sở hữu' });
     }
 
     await prisma.user.update({

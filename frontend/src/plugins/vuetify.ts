@@ -82,6 +82,7 @@ export const vuetify = createVuetify({
           'on-background': '#111827',
           'on-surface': '#111827',
           'on-primary': '#ffffff',
+          'on-surface-variant': '#1e293b',
         },
       },
       dark: {
@@ -101,6 +102,7 @@ export const vuetify = createVuetify({
           'on-background': '#e4e6eb',
           'on-surface': '#e4e6eb',
           'on-primary': '#ffffff',
+          'on-surface-variant': '#f8fafc',
         },
       },
     },

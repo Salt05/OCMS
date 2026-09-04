@@ -157,15 +157,74 @@
                     </td>
                     <td class="text-center text-caption">{{ line.uomName || 'Units' }}</td>
                     <td class="text-right font-weight-medium">{{ line.quantity }}</td>
-                    <td class="text-right text-caption">{{ formatVND(line.priceUnit) }}</td>
                     <td class="text-right text-caption">
-                      <span v-if="line.discount > 0" class="text-error font-weight-medium">-{{ line.discount }}%</span>
-                      <span v-else class="text-medium-emphasis">—</span>
+                      <div v-if="line.originalPrice && line.originalPrice > line.priceUnit" class="text-caption text-decoration-line-through text-medium-emphasis">
+                        {{ formatVND(line.originalPrice) }}
+                      </div>
+                      <div :class="['font-weight-medium', (line.originalPrice && line.originalPrice > line.priceUnit) ? 'text-success font-weight-bold' : '']">
+                        {{ formatVND(line.priceUnit) }}
+                      </div>
+                    </td>
+                    <td class="text-right text-caption">
+                      <div v-if="canEditDiscount(order)" class="d-inline-flex align-center justify-end gap-1">
+                        <input
+                          type="number"
+                          v-model.number="line.discount"
+                          min="0"
+                          max="100"
+                          step="1"
+                          class="discount-edit-input text-right font-weight-bold text-error border rounded px-1.5 py-0.5 bg-surface"
+                          style="width: 58px; font-size: 0.825rem;"
+                          placeholder="0"
+                          @input="onLineDiscountChange(line)"
+                        />
+                        <span class="text-caption text-error font-weight-bold">%</span>
+                      </div>
+                      <template v-else>
+                        <span v-if="line.discount > 0" class="text-error font-weight-medium">-{{ line.discount }}%</span>
+                        <span v-else class="text-medium-emphasis">—</span>
+                      </template>
                     </td>
                     <td class="text-right font-weight-bold text-body-2">{{ formatVND(line.priceSubtotal) }}</td>
                   </tr>
                 </tbody>
               </v-table>
+            </v-card>
+          </div>
+
+          <!-- Applied Promotions & Free Gifts Section -->
+          <div v-if="(order as any).appliedPromotions?.length || (order as any).freeItems?.length" class="mb-4">
+            <v-card variant="outlined" class="rounded-lg pa-3 bg-amber-50/40 dark:bg-amber-950/20 border-amber-200">
+              <div class="text-subtitle-2 font-weight-bold text-amber-800 dark:text-amber-400 d-flex align-center gap-1 mb-2">
+                <v-icon size="18">lucide-gift</v-icon>
+                Ưu đãi & Quà tặng áp dụng cho đơn:
+              </div>
+              <div class="d-flex flex-wrap gap-2 mb-2">
+                <v-chip
+                  v-for="(p, pidx) in (order as any).appliedPromotions"
+                  :key="pidx"
+                  size="small"
+                  color="primary"
+                  variant="flat"
+                  class="font-weight-medium"
+                >
+                  🎉 {{ p.promotionName || p.name }} (v{{ p.policyVersion || 1 }})
+                  <span v-if="p.discountAmount > 0" class="ml-1 font-weight-bold">-{{ formatVND(p.discountAmount) }}</span>
+                </v-chip>
+              </div>
+
+              <!-- Free Gifts -->
+              <div v-for="(p, pidx) in (order as any).appliedPromotions" :key="'g-' + pidx">
+                <div v-if="p.freeItems?.length" class="d-flex flex-wrap gap-2">
+                  <div
+                    v-for="(g, gidx) in p.freeItems"
+                    :key="gidx"
+                    class="text-caption font-weight-bold text-deep-orange bg-deep-orange-lighten-5 px-2 py-1 rounded border"
+                  >
+                    🎁 Tặng kèm: {{ g.quantity }}x {{ g.name }} (SKU: {{ g.sku }})
+                  </div>
+                </div>
+              </div>
             </v-card>
           </div>
 
@@ -349,6 +408,34 @@ function cleanNote(note: string | null | undefined) {
   
   return cleaned.trim();
 }
+
+function canEditDiscount(order: any): boolean {
+  if (!order) return false;
+  return order.state === 'draft' || order.isAiDraft === true;
+}
+
+function onLineDiscountChange(line: any) {
+  if (line.discount == null || isNaN(line.discount) || line.discount < 0) {
+    line.discount = 0;
+  } else if (line.discount > 100) {
+    line.discount = 100;
+  }
+  const qty = Number(line.quantity) || 0;
+  const unit = Number(line.priceUnit) || 0;
+  const disc = Number(line.discount) || 0;
+  line.priceSubtotal = Math.round(qty * unit * (1 - disc / 100));
+
+  if (props.order) {
+    const untaxed = productLines.value.reduce((sum, l) => sum + (Number(l.priceSubtotal) || 0), 0);
+    props.order.amountUntaxed = untaxed;
+    props.order.amountTotal = untaxed + (Number(props.order.amountTax) || 0);
+    const undiscounted = productLines.value.reduce((sum, l) => {
+      const orig = Number(l.originalPrice) || Number(l.priceUnit) || 0;
+      return sum + ((Number(l.quantity) || 0) * orig);
+    }, 0);
+    props.order.amountUndiscounted = undiscounted;
+  }
+}
 </script>
 
 <style scoped>
@@ -372,5 +459,14 @@ function cleanNote(note: string | null | undefined) {
 .order-note-content :deep(a) {
   color: var(--v-theme-primary);
   text-decoration: underline;
+}
+.discount-edit-input {
+  border-color: rgba(var(--v-theme-error), 0.35) !important;
+  outline: none;
+  transition: all 0.2s;
+}
+.discount-edit-input:focus {
+  border-color: rgb(var(--v-theme-error)) !important;
+  box-shadow: 0 0 0 2px rgba(var(--v-theme-error), 0.2);
 }
 </style>

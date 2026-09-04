@@ -29,7 +29,7 @@ COPY --from=backend-builder /app/backend/package.json /app/package.json
 COPY --from=backend-builder /app/backend/data       /app/data
 COPY --from=frontend-builder /app/frontend/dist     /app/static
 
-RUN mkdir -p /var/lib/zalo-crm/files
+RUN mkdir -p /var/lib/ocms/files
 
 EXPOSE 3000
 ENTRYPOINT ["/sbin/tini", "--"]

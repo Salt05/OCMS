@@ -35,7 +35,6 @@ import { zaloSyncRoutes } from './modules/zalo/zalo-sync-routes.js';
 import { zaloPool } from './modules/zalo/zalo-pool.js';
 import { registerZaloSocketHandlers } from './modules/zalo/zalo-socket.js';
 import { notificationRoutes } from './modules/notifications/notification-routes.js';
-import { searchRoutes } from './modules/search/search-routes.js';
 import { startZaloHealthCheck } from './modules/zalo/zalo-health-check.js';
 import { publicApiRoutes } from './modules/api/public-api-routes.js';
 import { webhookSettingsRoutes } from './modules/api/webhook-settings-routes.js';
@@ -45,7 +44,8 @@ import { quickMessageRoutes } from './modules/quick-messages/quick-message-route
 import { odooRoutes } from './modules/odoo/odoo-routes.js';
 import { syncRoutes } from './modules/sync/sync-routes.js';
 import { chatbotRoutes } from './modules/chatbot/chatbot-routes.js';
-import { chatbotTestRoutes } from './modules/chatbot-test/chatbot-test-routes.js';
+import { promotionRoutes } from './modules/promotions/promotion-routes.js';
+import { productRoutes } from './modules/products/product-routes.js';
 import { odooSyncService } from './modules/sync/odoo-sync-service.js';
 import cron from 'node-cron';
 
@@ -180,7 +180,6 @@ async function bootstrap() {
   await app.register(zaloAccessRoutes);
   await app.register(zaloSyncRoutes);
   await app.register(notificationRoutes);
-  await app.register(searchRoutes);
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
   await app.register(orderRoutes);
@@ -188,8 +187,9 @@ async function bootstrap() {
   await app.register(quickMessageRoutes);
   await app.register(odooRoutes);
   await app.register(syncRoutes);
+  await app.register(promotionRoutes);
+  await app.register(productRoutes);
   await app.register(chatbotRoutes, { prefix: '/api/v1/chatbot' });
-  await app.register(chatbotTestRoutes);
 
   // Liveness/readiness probe — also checks DB connectivity
   app.get('/health', async () => {
@@ -224,7 +224,7 @@ async function bootstrap() {
 
   // API version banner
   app.get('/api/v1/status', async () => {
-    return { version: '1.0.0', name: 'Zalo CRM' };
+    return { version: '1.0.0', name: 'OCMS' };
   });
 
   // Favicon handler
@@ -264,7 +264,7 @@ async function bootstrap() {
 
   try {
     await app.listen({ port: config.port, host: config.host });
-    logger.info(`Zalo CRM running on http://${config.host}:${config.port}`);
+    logger.info(`OCMS running on http://${config.host}:${config.port}`);
     logger.info(`Environment: ${config.nodeEnv}`);
     startAppointmentReminder(io);
     startZaloHealthCheck();
@@ -313,7 +313,7 @@ async function bootstrap() {
   // Reconnect Zalo accounts that have saved sessions (staggered to avoid rate limits)
   try {
     const accounts = await prisma.zaloAccount.findMany({
-      where: { sessionData: { not: Prisma.JsonNull } },
+      where: { sessionData: { not: Prisma.JsonNull }, deletedAt: null },
       select: { id: true, sessionData: true },
     });
     logger.info(`Attempting reconnect for ${accounts.length} Zalo account(s)`);

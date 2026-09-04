@@ -195,13 +195,18 @@
                       <!-- Dashed Divider -->
                       <div class="chat-product-dashed-divider my-3"></div>
 
-                      <!-- Bottom Section: Unit Price × Stepper ... Subtotal -->
+                      <!-- Bottom Section: Unit Price × Stepper ... Discount ... Subtotal -->
                       <div class="d-flex align-center justify-space-between flex-wrap gap-2">
                         <!-- Left: Unit Price × Stepper -->
                         <div class="d-flex align-center gap-2 flex-shrink-0">
-                          <span class="chat-unit-price text-body-2 font-weight-semibold text-high-emphasis">
-                            {{ formatCurrency(line.price) }}
-                          </span>
+                          <div class="d-flex flex-column align-start">
+                            <span v-if="line.originalPrice && line.originalPrice > line.price" class="text-caption text-decoration-line-through text-medium-emphasis leading-none" style="font-size: 11px;">
+                              {{ formatCurrency(line.originalPrice) }}
+                            </span>
+                            <span class="chat-unit-price text-body-2 font-weight-semibold" :class="line.originalPrice && line.originalPrice > line.price ? 'text-success font-weight-bold' : 'text-high-emphasis'">
+                              {{ formatCurrency(line.price) }}
+                            </span>
+                          </div>
                           <span class="text-medium-emphasis text-caption font-weight-medium">×</span>
 
                           <!-- Quantity Stepper -->
@@ -234,11 +239,30 @@
                           </div>
                         </div>
 
+                        <!-- Middle: Discount Input (CK %) for Staff -->
+                        <div class="chat-discount-group d-flex align-center gap-1 flex-shrink-0">
+                          <span class="text-caption text-medium-emphasis font-weight-medium">CK:</span>
+                          <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1.5 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
+                            <input
+                              type="number"
+                              v-model.number="line.discount"
+                              min="0"
+                              max="100"
+                              step="1"
+                              :disabled="msg.orderDraft.orderCreated"
+                              class="chat-discount-input text-center font-weight-bold text-error"
+                              style="width: 40px; font-size: 0.8rem; border: none; outline: none; background: transparent;"
+                              placeholder="0"
+                            />
+                            <span class="text-caption font-weight-bold text-error">%</span>
+                          </div>
+                        </div>
+
                         <!-- Right: Subtotal (Thành tiền) -->
                         <div class="chat-subtotal-group d-flex align-center gap-1.5 ml-auto flex-shrink-0">
                           <span class="text-caption text-medium-emphasis">Thành tiền:</span>
                           <span class="chat-line-subtotal font-weight-bold text-body-2 text-primary">
-                            {{ formatCurrency(line.price * (line.qty ?? 0)) }}
+                            {{ formatCurrency(calcLineSubtotal(line)) }}
                           </span>
                         </div>
                       </div>
@@ -246,9 +270,17 @@
                   </div>
 
                   <!-- Footer: Total Summary & Interaction Buttons -->
-                  <div class="order-draft-footer px-4 py-3.5 border-t bg-surface-variant-subtle d-flex flex-column gap-3">
+                  <div class="order-draft-footer px-4 py-3.5 border-t bg-surface-variant-subtle d-flex flex-column gap-2.5">
+                    <div v-if="calcDraftUndiscountedTotal(msg.orderDraft) > calcDraftTotal(msg.orderDraft)" class="d-flex align-center justify-space-between text-caption text-medium-emphasis">
+                      <span>Tổng tiền hàng (chưa giảm):</span>
+                      <span class="font-weight-medium text-high-emphasis">{{ formatCurrency(calcDraftUndiscountedTotal(msg.orderDraft)) }}</span>
+                    </div>
+                    <div v-if="calcDraftUndiscountedTotal(msg.orderDraft) > calcDraftTotal(msg.orderDraft)" class="d-flex align-center justify-space-between text-caption text-error">
+                      <span>Tổng chiết khấu & ưu đãi:</span>
+                      <span class="font-weight-bold">-{{ formatCurrency(calcDraftUndiscountedTotal(msg.orderDraft) - calcDraftTotal(msg.orderDraft)) }}</span>
+                    </div>
                     <div class="d-flex align-center justify-space-between mb-0.5">
-                      <span class="text-body-2 font-weight-medium text-medium-emphasis">Tổng thanh toán:</span>
+                      <span class="text-body-2 font-weight-bold text-high-emphasis">Tổng thanh toán:</span>
                       <span class="text-subtitle-1 font-weight-bold text-success total-draft-amount">
                         {{ formatCurrency(calcDraftTotal(msg.orderDraft)) }}
                       </span>
@@ -527,6 +559,8 @@ interface ChatMessage {
       sku?: string | null;
       qty: number;
       price: number;
+      originalPrice?: number | null;
+      discountedPrice?: number | null;
       discount?: number;
       aiConfidence?: number;
     }>;
@@ -1139,6 +1173,21 @@ async function loadSession(sessionId: string) {
             }
             content = cleanAssistantText(draftExtracted.cleanContent);
           }
+
+          if (orderDraft && Array.isArray(orderDraft.items)) {
+            orderDraft.items = orderDraft.items.map((it: any) => {
+              const origPrice = it.originalPrice || it.product?.wholesale_price || it.product?.list_price || null;
+              const discPrice = it.discountedPrice || null;
+              const finalPrice = discPrice || it.price || it.priceUnit || it.product?.wholesale_price || it.product?.list_price || 0;
+              return {
+                ...it,
+                price: finalPrice,
+                originalPrice: origPrice,
+                discountedPrice: discPrice,
+                discount: it.discount || 0,
+              };
+            });
+          }
           return {
             role: m.role,
             content,
@@ -1198,9 +1247,25 @@ function removeDraftItem(msg: ChatMessage, index: number) {
   }
 }
 
+function calcLineSubtotal(line: any): number {
+  const qty = Number(line?.qty) || 0;
+  const price = Number(line?.price) || 0;
+  const discount = Number(line?.discount) || 0;
+  return Math.round(qty * price * (1 - discount / 100));
+}
+
+function calcDraftUndiscountedTotal(draft: any): number {
+  if (!draft || !draft.items) return 0;
+  return draft.items.reduce((sum: number, l: any) => {
+    const qty = Number(l.qty) || 0;
+    const basePrice = (l.originalPrice && Number(l.originalPrice) > 0) ? Number(l.originalPrice) : (Number(l.price) || 0);
+    return sum + (qty * basePrice);
+  }, 0);
+}
+
 function calcDraftTotal(draft: any): number {
   if (!draft || !draft.items) return 0;
-  return draft.items.reduce((sum: number, l: any) => sum + (l.price || 0) * (l.qty ?? 0), 0);
+  return draft.items.reduce((sum: number, l: any) => sum + calcLineSubtotal(l), 0);
 }
 
 function openPickerForDraft(msg: ChatMessage) {
@@ -1217,6 +1282,7 @@ function onProductFromPickerForDraft(product: OdooProduct, addQty: number = 1) {
     (l) => Number(l.product?.odoo_id || l.product?.id) === odooProductId
   );
 
+  const basePrice = product.wholesale_price || product.list_price || 0;
   if (existing) {
     existing.qty += (typeof addQty === 'number' && addQty >= 0 ? addQty : 1);
   } else {
@@ -1228,7 +1294,9 @@ function onProductFromPickerForDraft(product: OdooProduct, addQty: number = 1) {
       productNameRaw: product.name,
       sku: product.default_code || product.sku || null,
       qty: typeof addQty === 'number' && addQty >= 0 ? addQty : 1,
-      price: product.wholesale_price || product.list_price || 0,
+      price: basePrice,
+      originalPrice: basePrice,
+      discountedPrice: null,
       discount: 0,
     });
   }
@@ -1347,12 +1415,17 @@ async function sendMessage() {
             if (!matched && it.sku) {
               matched = products.value.find(p => (p.default_code || p.sku || '').toLowerCase() === it.sku.toLowerCase()) || null;
             }
+            const origPrice = it.originalPrice || matched?.wholesale_price || matched?.list_price || null;
+            const discPrice = it.discountedPrice || null;
+            const finalPrice = discPrice || it.priceUnit || it.price || matched?.wholesale_price || matched?.list_price || 0;
             return {
               product: matched ? { ...matched, id: Number(matched.odoo_id || matched.id) } : null,
               productNameRaw: it.productNameRaw || matched?.name || 'Sản phẩm',
               sku: matched?.default_code || matched?.sku || it.sku || null,
               qty: it.quantity ?? 0,
-              price: it.priceUnit || matched?.wholesale_price || matched?.list_price || 0,
+              price: finalPrice,
+              originalPrice: origPrice,
+              discountedPrice: discPrice,
               discount: it.discount || 0,
               aiConfidence: it.confidence,
             };
@@ -1455,12 +1528,17 @@ async function sendMessage() {
           if (!matched && it.sku) {
             matched = products.value.find(p => (p.default_code || p.sku || '').toLowerCase() === it.sku.toLowerCase()) || null;
           }
+          const origPrice = it.originalPrice || matched?.wholesale_price || matched?.list_price || null;
+          const discPrice = it.discountedPrice || null;
+          const finalPrice = discPrice || it.priceUnit || it.price || matched?.wholesale_price || matched?.list_price || 0;
           return {
             product: matched ? { ...matched, id: Number(matched.odoo_id || matched.id) } : null,
             productNameRaw: it.productNameRaw || matched?.name || 'Sản phẩm',
             sku: matched?.default_code || matched?.sku || it.sku || null,
             qty: it.quantity || 1,
-            price: it.priceUnit || matched?.wholesale_price || matched?.list_price || 0,
+            price: finalPrice,
+            originalPrice: origPrice,
+            discountedPrice: discPrice,
             discount: it.discount || 0,
             aiConfidence: it.confidence,
           };
@@ -1566,7 +1644,7 @@ async function sendMessage() {
   try {
     const enrichedQuestion = buildEnrichedQuestion(text);
 
-    const res = await fetch(`${CHATBOT_API_BASE}/api/vanna/v2/chat_sse`, {
+    const res = await fetch(`${CHATBOT_API_BASE}/api/ai/chat_sse`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1706,6 +1784,9 @@ async function sendMessage() {
             const s = (prodObj.sku || prodObj.default_code || '').toLowerCase();
             matched = products.value.find(p => (p.default_code || p.sku || '').toLowerCase() === s) || null;
           }
+          const origPrice = it.originalPrice || prodObj.wholesale_price || prodObj.list_price || null;
+          const discPrice = it.discountedPrice || null;
+          const finalPrice = discPrice || it.price || it.priceUnit || prodObj.list_price || 0;
           return {
             product: matched ? { ...matched, id: Number(matched.odoo_id || matched.id) } : {
               id: prodObj.id || prodObj.odoo_id || 1001,
@@ -1717,7 +1798,9 @@ async function sendMessage() {
             productNameRaw: it.productNameRaw || prodObj.name || 'Sản phẩm',
             sku: prodObj.sku || prodObj.default_code || it.sku || null,
             qty: Number(it.qty || it.quantity || 1),
-            price: Number(it.price || it.priceUnit || prodObj.list_price || 0),
+            price: finalPrice,
+            originalPrice: origPrice,
+            discountedPrice: discPrice,
             discount: Number(it.discount || 0),
           };
         });

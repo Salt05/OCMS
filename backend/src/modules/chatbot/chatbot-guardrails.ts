@@ -192,11 +192,20 @@ export class ChatbotGuardrails {
   /**
    * Enforce response length based on intent type.
    * INFO/GENERAL responses capped at ~500 chars.
-   * BUY/ORDER responses allowed up to 800 chars.
-   * Strictly respects sentence boundaries to prevent mid-word / broken sentence truncation.
+  /**
+   * Enforce response length constraint to prevent AI talking too much.
+   * General responses allowed up to 600 chars.
+   * BUY/ORDER responses allowed up to 1500 chars.
+   * NEVER truncate order item lists (splitMessageIntoChunks handles sending them sequentially).
    */
-  static enforceResponseLength(text: string, isBuyingFlow: boolean): string {
-    const maxLength = isBuyingFlow ? 800 : 500;
+  static enforceResponseLength(text: string, isBuyingFlow: boolean, hasOrderDraft: boolean = false): string {
+    // If the message is an order confirmation/draft listing with bullets, NEVER truncate it!
+    const isOrderList = hasOrderDraft || (text.includes('\n- ') && /(?:đơn hàng|sản phẩm|gói|túi|kho)/i.test(text));
+    if (isOrderList) {
+      return text;
+    }
+
+    const maxLength = isBuyingFlow ? 1200 : 600;
 
     if (!text || text.length <= maxLength) return text;
 
@@ -279,5 +288,29 @@ export class ChatbotGuardrails {
 
     return cleaned;
   }
+
+  /**
+   * Detects if AI generated an unwanted stall/waiting message for a normal query
+   * (e.g. "Dạ để em kiểm tra lại... Chị chờ em một chút nha!", "Đợi em tí nhé", "Chờ em một lát để em xem...")
+   * Returns true if text is purely an empty stall/wait promise without actual answers.
+   */
+  static detectUnwantedWaitResponse(text: string): boolean {
+    if (!text || text.length > 250) return false;
+    const lower = text.toLowerCase();
+
+    const waitPhrases = [
+      /(?:chờ|đợi)\s*(?:em|mình|chút|tí|xíu|lát|nha|nhé)/i,
+      /(?:để\s*em\s*(?:kiểm tra|tra cứu|xem lại|coi lại|tìm|check)\s*(?:lại)?)/i,
+      /(?:chờ\s*(?:em|mình)\s*(?:tìm|tra|check))/i,
+    ];
+
+    const hasWait = waitPhrases.some(p => p.test(lower));
+    if (!hasWait) return false;
+
+    // Check if the message contains concrete data/SKU or is just a stall
+    const hasConcreteData = /\b[BCE]\d{1,3}\b|\bOD-\d+\b|\b\d+[.,]\d+\s*đ\b|\b\d+\s*gói\b|\n-\s+/i.test(text);
+    return !hasConcreteData;
+  }
 }
+
 

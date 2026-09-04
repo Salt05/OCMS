@@ -8,6 +8,8 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { ensureTagsExist, cleanupUnusedTags } from '../tags/tag-routes.js';
+import { mergeContacts } from './contact-merge-service.js';
+import { odooService } from '../odoo/odoo-service.js';
 
 type QueryParams = Record<string, string>;
 
@@ -64,6 +66,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       if (search) {
         where.OR = [
           { fullName: { contains: search, mode: 'insensitive' } },
+          { zaloName: { contains: search, mode: 'insensitive' } },
           { phone: { contains: search } },
           { email: { contains: search, mode: 'insensitive' } },
           { customerId: { contains: search, mode: 'insensitive' } },
@@ -200,7 +203,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // ── GET /api/v1/contacts/:id — detail with appointments + conversation count
+  // ── GET /api/v1/contacts/:id — detail with appointments + conversation count + CRM stats ──
   app.get('/api/v1/contacts/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
@@ -222,7 +225,75 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(403).send({ error: 'Bạn không có quyền xem thông tin khách hàng này' });
       }
 
-      return contact;
+      let totalRevenue = 0;
+      let totalOrders = 0;
+      let lastOrderDate: string | Date | null = null;
+      let customerProfile: any = null;
+
+      const numericOdooId = contact.customerId ? parseInt(contact.customerId, 10) : NaN;
+      if (!isNaN(numericOdooId) && numericOdooId > 0) {
+        customerProfile = await prisma.customerProfile.findFirst({
+          where: { orgId: user.orgId, odooPartnerId: numericOdooId },
+        });
+
+        if (customerProfile) {
+          totalRevenue = customerProfile.totalRevenue || 0;
+          totalOrders = customerProfile.totalOrders || 0;
+          lastOrderDate = customerProfile.lastOrderDate || null;
+        }
+
+        // Aggregate from orderHistory in database if exists
+        const odooOrdersAgg = await prisma.orderHistory.aggregate({
+          where: { orgId: user.orgId, odooPartnerId: numericOdooId, state: { not: 'cancel' } },
+          _sum: { amountTotal: true },
+          _count: { id: true },
+          _max: { dateOrder: true },
+        });
+
+        if (odooOrdersAgg && odooOrdersAgg._count.id > 0) {
+          totalRevenue = odooOrdersAgg._sum.amountTotal || 0;
+          totalOrders = odooOrdersAgg._count.id || 0;
+          lastOrderDate = odooOrdersAgg._max.dateOrder || lastOrderDate;
+        } else if (totalOrders === 0) {
+          // If no local stats yet, query live from Odoo
+          try {
+            const odooStats = await odooService.getCustomerOrderStats(numericOdooId);
+            if (odooStats.totalOrders > 0) {
+              totalRevenue = odooStats.totalRevenue;
+              totalOrders = odooStats.totalOrders;
+              lastOrderDate = odooStats.lastOrderDate;
+            }
+          } catch (e) {
+            // Ignore odoo query error
+          }
+        }
+      }
+
+      // Check internal OCMS orders
+      const internalOrdersAgg = await prisma.order.aggregate({
+        where: { orgId: user.orgId, contactId: id, status: { notIn: ['cancelled', 'cancel'] } },
+        _sum: { totalAmount: true },
+        _count: { id: true },
+        _max: { createdAt: true },
+      });
+
+      if (internalOrdersAgg && internalOrdersAgg._count.id > 0) {
+        if (totalOrders === 0) {
+          totalRevenue = internalOrdersAgg._sum.totalAmount || 0;
+          totalOrders = internalOrdersAgg._count.id || 0;
+          lastOrderDate = internalOrdersAgg._max.createdAt || lastOrderDate;
+        }
+      }
+
+      return {
+        ...contact,
+        customer: {
+          totalRevenue,
+          totalOrders,
+          lastOrderDate,
+          customerProfile,
+        },
+      };
     } catch (err) {
       logger.error('[contacts] Detail error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contact' });
@@ -409,4 +480,26 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(500).send({ error: 'Failed to delete contact' });
     }
   });
+
+  // ── POST /api/v1/contacts/merge — Merge multiple contacts into one ────────
+  app.post('/api/v1/contacts/merge', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      if (!['owner', 'admin'].includes(user.role)) {
+        return reply.status(403).send({ error: 'Chỉ quản trị viên mới có quyền gộp khách hàng' });
+      }
+
+      const body = request.body as { primaryContactId: string; sourceContactIds: string[] };
+      if (!body.primaryContactId || !Array.isArray(body.sourceContactIds) || body.sourceContactIds.length === 0) {
+        return reply.status(400).send({ error: 'Vui lòng cung cấp primaryContactId và danh sách sourceContactIds' });
+      }
+
+      const merged = await mergeContacts(user.orgId, body.primaryContactId, body.sourceContactIds);
+      return { success: true, contact: merged };
+    } catch (err) {
+      logger.error('[contacts] Merge error:', err);
+      return reply.status(500).send({ error: 'Lỗi gộp khách hàng: ' + String(err) });
+    }
+  });
 }
+

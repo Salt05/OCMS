@@ -112,8 +112,8 @@ function enrichProductGroup(p: OdooProduct): OdooProduct {
   return p;
 }
 
-const PRODUCTS_STORAGE_KEY = 'zalocrm_products_cache_v3';
-const TERMS_STORAGE_KEY = 'zalocrm_terms_cache_v3';
+const PRODUCTS_STORAGE_KEY = 'ocms_products_cache_v3';
+const TERMS_STORAGE_KEY = 'ocms_terms_cache_v3';
 const STALE_TIME = 10 * 60 * 1000; // 10 minutes
 
 // Global in-memory singleton cache

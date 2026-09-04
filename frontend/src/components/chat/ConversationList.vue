@@ -1,25 +1,78 @@
 <template>
   <div class="conversation-list d-flex flex-column" style="width: 100%; border-right: 1px solid var(--v-border-color, rgba(128,128,128,0.15)); height: 100%;">
-    <!-- 1. Zalo PC Top Header: Search Box + Action Icons -->
+    <!-- 1. Zalo PC Top Header: Search Box with Search Button -->
     <div class="zalo-conv-header px-3 pt-3 pb-2 d-flex align-center gap-2">
-      <!-- Search Input -->
-      <div class="zalo-search-box flex-grow-1 d-flex align-center px-2 py-1">
-        <v-icon size="16" class="zalo-search-icon mr-1.5 text-grey">lucide-search</v-icon>
+      <div class="zalo-search-box flex-grow-1 d-flex align-center px-2.5 py-1 rounded-lg border bg-surface">
         <input
           type="text"
           :value="search"
-          @input="$emit('update:search', ($event.target as HTMLInputElement).value)"
-          placeholder="Tìm kiếm"
+          @input="onSearchInput(($event.target as HTMLInputElement).value)"
+          @keydown.enter="handleSearchTrigger"
+          placeholder="Tìm kiếm hoặc nhập SĐT..."
           class="zalo-search-input flex-grow-1"
         />
         <button
-          v-if="search"
           type="button"
-          class="zalo-clear-btn d-flex align-center justify-center"
-          @click="$emit('update:search', '')"
+          class="zalo-search-action-btn d-flex align-center justify-center pa-1 cursor-pointer"
+          :class="search ? 'text-primary' : 'text-grey'"
+          title="Tìm kiếm trên Zalo (Enter)"
+          @click="handleSearchTrigger"
         >
-          <v-icon size="12">lucide-x</v-icon>
+          <v-icon size="16">lucide-search</v-icon>
         </button>
+      </div>
+    </div>
+
+    <!-- Loading State when searching Zalo by phone -->
+    <div v-if="zaloSearchLoading" class="px-3 py-2 border-b bg-surface d-flex align-center justify-center text-caption text-grey gap-2">
+      <v-progress-circular indeterminate size="16" width="2" color="primary" />
+      <span>Đang tìm kiếm thông tin trên Zalo...</span>
+    </div>
+
+    <!-- Result Found: Clickable Customer Card with Avatar + Name -->
+    <div
+      v-if="!zaloSearchLoading && zaloSearchResult"
+      class="px-3 py-2 border-b bg-surface"
+    >
+      <div
+        class="zalo-user-search-card pa-2.5 rounded-lg border d-flex align-center gap-3 cursor-pointer"
+        @click="startChatWithZaloUser"
+        title="Bấm để mở cuộc trò chuyện"
+      >
+        <v-avatar size="44" color="primary" class="flex-shrink-0">
+          <v-img v-if="zaloSearchResult.avatar" :src="zaloSearchResult.avatar">
+            <template #error>
+              <span class="text-white font-weight-bold">{{ (zaloSearchResult.displayName || 'Z').charAt(0) }}</span>
+            </template>
+          </v-img>
+          <span v-else class="text-white font-weight-bold">{{ (zaloSearchResult.displayName || 'Z').charAt(0) }}</span>
+        </v-avatar>
+
+        <div class="overflow-hidden flex-grow-1">
+          <div class="d-flex align-center justify-space-between mb-0.5">
+            <span class="font-weight-bold text-body-2 text-truncate">{{ zaloSearchResult.displayName }}</span>
+            <v-chip size="x-small" color="primary" variant="tonal" class="font-weight-medium">Zalo</v-chip>
+          </div>
+          <div class="text-caption text-grey text-truncate">
+            {{ zaloSearchResult.phone ? `SĐT: ${zaloSearchResult.phone}` : 'Tài khoản Zalo' }}
+            <span v-if="zaloSearchResultExistingConvId" class="text-success font-weight-medium ml-1">• Đã có tin nhắn</span>
+          </div>
+        </div>
+
+        <v-icon size="18" class="text-grey flex-shrink-0">lucide-chevron-right</v-icon>
+      </div>
+    </div>
+
+    <!-- Not Found / Error State -->
+    <div v-if="!zaloSearchLoading && zaloSearchError" class="px-3 py-2 border-b bg-surface">
+      <div class="pa-2 rounded-lg bg-red-lighten-5 text-caption text-error d-flex align-center justify-space-between">
+        <div class="d-flex align-center gap-1.5 flex-grow-1">
+          <v-icon size="14" class="flex-shrink-0">lucide-alert-circle</v-icon>
+          <span>{{ zaloSearchError }}</span>
+        </div>
+        <v-btn icon size="x-small" variant="text" color="error" @click="zaloSearchError = ''">
+          <v-icon size="12">lucide-x</v-icon>
+        </v-btn>
       </div>
     </div>
 
@@ -476,14 +529,19 @@
               :class="{
                 'is-active': conv.id === selectedId,
                 'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
-                'needs-confirmation-blink': conv.currentState === 'CONFIRMATION'
+                'needs-confirmation-blink': conv.currentState === 'CONFIRMATION',
+                'needs-handoff-blink': conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId
               }"
               @click="$emit('select', conv.id)"
             >
               <!-- Avatar -->
               <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
                 <v-avatar size="44" class="zalo-conv-avatar">
-                  <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl" />
+                  <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl">
+                    <template #error>
+                      <v-icon :icon="conv.threadType === 'group' ? 'lucide-users' : 'lucide-user'" color="white" size="22" />
+                    </template>
+                  </v-img>
                   <v-icon v-else-if="conv.threadType === 'group'" icon="lucide-users" color="white" size="22" />
                   <v-icon v-else icon="lucide-user" color="white" size="22" />
                 </v-avatar>
@@ -498,7 +556,7 @@
                     class="zalo-conv-title text-truncate"
                     :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
                   >
-                    {{ conv.threadType === 'group' ? (conv.contact?.fullName || 'Nhóm') : (conv.contact?.fullName || 'Khách hàng') }}
+                    {{ getConversationTitle(conv) }}
                   </span>
                   <span class="zalo-conv-time text-caption text-grey ml-2 flex-shrink-0">
                     {{ formatTime(conv.lastMessageAt) }}
@@ -519,7 +577,15 @@
                 </div>
 
                 <!-- Extra row: Zone badge + Tags (if any) -->
-                <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+                <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone || (conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId)" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+                  <span
+                    v-if="conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId"
+                    class="conv-handoff-badge text-truncate mr-1"
+                    :title="`Cần hỗ trợ: ${conv.handoffReason || 'Khách yêu cầu gặp nhân viên'}`"
+                  >
+                    <v-icon size="10" class="mr-0.5">lucide-user-check</v-icon>
+                    Cần hỗ trợ
+                  </span>
                   <span
                     v-if="conv.contact?.zone"
                     class="conv-zone-badge text-truncate"
@@ -556,14 +622,19 @@
           :class="{
             'is-active': conv.id === selectedId,
             'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
-            'needs-confirmation-blink': conv.currentState === 'CONFIRMATION'
+            'needs-confirmation-blink': conv.currentState === 'CONFIRMATION',
+            'needs-handoff-blink': conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId
           }"
           @click="$emit('select', conv.id)"
         >
           <!-- Avatar -->
           <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
             <v-avatar size="44" class="zalo-conv-avatar">
-              <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl" />
+              <v-img v-if="conv.contact?.avatarUrl" :src="conv.contact.avatarUrl">
+                <template #error>
+                  <v-icon :icon="conv.threadType === 'group' ? 'lucide-users' : 'lucide-user'" color="white" size="22" />
+                </template>
+              </v-img>
               <v-icon v-else-if="conv.threadType === 'group'" icon="lucide-users" color="white" size="22" />
               <v-icon v-else icon="lucide-user" color="white" size="22" />
             </v-avatar>
@@ -578,7 +649,7 @@
                 class="zalo-conv-title text-truncate"
                 :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
               >
-                {{ conv.threadType === 'group' ? (conv.contact?.fullName || 'Nhóm') : (conv.contact?.fullName || 'Khách hàng') }}
+                {{ getConversationTitle(conv) }}
               </span>
               <span class="zalo-conv-time text-caption text-grey ml-2 flex-shrink-0">
                 {{ formatTime(conv.lastMessageAt) }}
@@ -599,7 +670,15 @@
             </div>
 
             <!-- Extra row: Zone badge + Tags (if any) -->
-            <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+            <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone || (conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId)" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+              <span
+                v-if="conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId"
+                class="conv-handoff-badge text-truncate mr-1"
+                :title="`Cần hỗ trợ: ${conv.handoffReason || 'Khách yêu cầu gặp nhân viên'}`"
+              >
+                <v-icon size="10" class="mr-0.5">lucide-user-check</v-icon>
+                Cần hỗ trợ
+              </span>
               <span
                 v-if="conv.contact?.zone"
                 class="conv-zone-badge text-truncate"
@@ -703,6 +782,105 @@ const { tags, tagGroups, getTagStyle, getTagName, fetchTags, fetchTagGroups, del
 
 const accountOptions = ref<{ text: string; value: string }[]>([]);
 const selectedAccountId = ref<string | null>(null);
+
+// ── Phone Search on Zalo State ──────────────────────────────────────────────
+const isPhoneSearch = computed(() => {
+  const s = (props.search || '').trim().replace(/[\s.-]/g, '');
+  return /^(0|\+?84)[0-9]{7,10}$/.test(s) || (s.length >= 9 && /^\d+$/.test(s));
+});
+
+const zaloSearchLoading = ref(false);
+const zaloSearchResult = ref<any>(null);
+const zaloSearchResultExistingConvId = ref<string | null>(null);
+const zaloSearchError = ref('');
+const startingChat = ref(false);
+
+function onSearchInput(val: string) {
+  emit('update:search', val);
+  zaloSearchResult.value = null;
+  zaloSearchError.value = '';
+}
+
+function clearSearch() {
+  emit('update:search', '');
+  clearZaloSearchResult();
+}
+
+function clearZaloSearchResult() {
+  zaloSearchResult.value = null;
+  zaloSearchResultExistingConvId.value = null;
+  zaloSearchError.value = '';
+}
+
+async function searchZaloByPhone() {
+  const phone = props.search.trim();
+  if (!phone) return;
+
+  zaloSearchLoading.value = true;
+  zaloSearchError.value = '';
+  zaloSearchResult.value = null;
+  zaloSearchResultExistingConvId.value = null;
+
+  try {
+    const res = await api.post('/zalo/search-phone', {
+      phone,
+      accountId: selectedAccountId.value || undefined,
+    });
+
+    if (res.data.found && res.data.user) {
+      zaloSearchResult.value = res.data.user;
+      zaloSearchResultExistingConvId.value = res.data.existingConversationId || null;
+    } else {
+      zaloSearchError.value = res.data.message || 'Không tìm thấy tài khoản Zalo với số điện thoại này.';
+    }
+  } catch (err: any) {
+    zaloSearchError.value = err.response?.data?.error || 'Lỗi khi tìm kiếm trên Zalo. Vui lòng thử lại sau.';
+  } finally {
+    zaloSearchLoading.value = false;
+  }
+}
+
+function handleSearchTrigger() {
+  const q = (props.search || '').trim();
+  if (!q) return;
+
+  if (isPhoneSearch.value) {
+    searchZaloByPhone();
+  }
+}
+
+async function startChatWithZaloUser() {
+  if (!zaloSearchResult.value) return;
+
+  // If already exists in conversation list
+  if (zaloSearchResultExistingConvId.value) {
+    const convId = zaloSearchResultExistingConvId.value;
+    clearSearch();
+    emit('select', convId);
+    return;
+  }
+
+  startingChat.value = true;
+  try {
+    const res = await api.post('/zalo/start-chat-by-phone', {
+      phone: zaloSearchResult.value.phone,
+      uid: zaloSearchResult.value.uid,
+      displayName: zaloSearchResult.value.displayName,
+      avatarUrl: zaloSearchResult.value.avatar,
+      accountId: selectedAccountId.value || zaloSearchResult.value.zaloAccountId || undefined,
+    });
+
+    if (res.data.conversationId) {
+      const convId = res.data.conversationId;
+      clearSearch();
+      emit('select', convId);
+    }
+  } catch (err: any) {
+    zaloSearchError.value = err.response?.data?.error || 'Không thể tạo cuộc trò chuyện';
+  } finally {
+    startingChat.value = false;
+  }
+}
 
 const activeTab = ref<'all' | 'unread' | 'zone'>('all');
 const selectedZoneFilter = ref<string | null>(null);
@@ -937,6 +1115,25 @@ onMounted(async () => {
   } catch {}
 });
 
+function getConversationTitle(conv: Conversation): string {
+  if (conv.threadType === 'group') {
+    return conv.contact?.fullName || 'Nhóm';
+  }
+  const zaloName = conv.contact?.zaloName?.trim();
+  const fullName = conv.contact?.fullName?.trim();
+
+  const isInvalid = (name?: string | null) =>
+    !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
+
+  if (!isInvalid(zaloName)) {
+    return zaloName!;
+  }
+  if (!isInvalid(fullName)) {
+    return fullName!;
+  }
+  return zaloName || fullName || 'Khách hàng';
+}
+
 function getContactTags(conv: Conversation): any[] {
   const tagsList = conv.contact?.tags;
   return Array.isArray(tagsList) ? tagsList.filter((t: any) => t) : [];
@@ -956,7 +1153,7 @@ function lastMessagePreview(conv: Conversation): string {
   if (!msg) return '';
   if (msg.isDeleted || isUndoSyncMessage(msg)) {
     if (msg.senderType === 'self') return 'Bạn đã thu hồi một tin nhắn';
-    const contactName = conv.contact?.fullName || conv.contact?.zaloName || 'Khách hàng';
+    const contactName = getConversationTitle(conv);
     return `${contactName} đã thu hồi một tin nhắn`;
   }
 
@@ -1178,6 +1375,28 @@ function formatTime(dateStr: string | null): string {
   background-color: rgba(0, 104, 255, 0.1) !important;
 }
 
+.zalo-search-action-btn {
+  background: transparent;
+  border: none;
+  outline: none;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+.zalo-search-action-btn:hover {
+  transform: scale(1.1);
+}
+
+.zalo-user-search-card {
+  background-color: rgba(var(--v-theme-primary), 0.04);
+  border-color: rgba(var(--v-theme-primary), 0.2) !important;
+  transition: all 0.15s ease;
+}
+.zalo-user-search-card:hover {
+  background-color: rgba(var(--v-theme-primary), 0.1) !important;
+  border-color: rgba(var(--v-theme-primary), 0.45) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
 .needs-confirmation-blink {
   border-left: 4px solid #10B981 !important;
   animation: blink-green 2.5s infinite ease-in-out;
@@ -1186,5 +1405,28 @@ function formatTime(dateStr: string | null): string {
 @keyframes blink-green {
   0%, 100% { background-color: rgba(16, 185, 129, 0.02); }
   50% { background-color: rgba(16, 185, 129, 0.12); }
+}
+
+.needs-handoff-blink {
+  border-left: 4px solid #F59E0B !important;
+  animation: blink-amber 2.5s infinite ease-in-out;
+}
+
+@keyframes blink-amber {
+  0%, 100% { background-color: rgba(245, 158, 11, 0.02); }
+  50% { background-color: rgba(245, 158, 11, 0.12); }
+}
+
+.conv-handoff-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.2;
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.35);
 }
 </style>

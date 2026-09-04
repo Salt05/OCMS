@@ -22,6 +22,19 @@
           Hủy chọn
         </v-btn>
 
+        <!-- Merge button (when 2+ contacts are selected) -->
+        <v-btn
+          v-if="selected.length >= 2"
+          color="indigo"
+          variant="tonal"
+          size="small"
+          prepend-icon="mdi-call-merge"
+          class="text-none font-weight-medium"
+          @click="openMergeDialog"
+        >
+          Gộp ({{ selected.length }})
+        </v-btn>
+
         <!-- Bulk delete -->
         <v-btn
           v-if="selected.length > 0"
@@ -66,11 +79,13 @@
           <tr
             v-bind="rowProps"
             class="cursor-pointer contact-row"
-            @touchstart="onTouchStart(item)"
+            @touchstart.passive="onTouchStart(item)"
             @touchend="onTouchEnd"
             @touchmove="onTouchMove"
-            @mouseenter="onRowMouseEnter(item)"
-            @mouseleave="onRowMouseLeave"
+            @touchcancel="onTouchEnd"
+            @mousedown="onMouseDown(item)"
+            @mouseup="onMouseUp"
+            @mouseleave="onMouseLeave"
             @click="onRowClick($event, item)"
           >
             <!-- Checkbox column when enabled -->
@@ -93,11 +108,11 @@
 
             <!-- Full name -->
             <td class="text-left" :style="isMobile ? (isSelectMode ? 'width: 34%;' : 'width: 38%;') : ''">
-              <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="item.fullName || ''">
-                {{ formatCustomerName(item.fullName) }}
+              <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="getContactDisplayName(item)">
+                {{ formatCustomerName(getContactDisplayName(item)) }}
               </div>
-              <div v-else class="d-flex align-center gap-1.5 flex-nowrap" :title="item.fullName || ''">
-                <span class="font-weight-bold text-caption text-high-emphasis">{{ item.fullName || '—' }}</span>
+              <div v-else class="d-flex align-center gap-1.5 flex-nowrap" :title="getContactDisplayName(item)">
+                <span class="font-weight-bold text-caption text-high-emphasis">{{ getContactDisplayName(item) }}</span>
                 <span v-if="item.phone || item.zone || item.address" class="text-caption text-medium-emphasis ml-1 font-weight-regular">
                   ({{ [item.phone, item.zone || item.address].filter(Boolean).join(' • ') }})
                 </span>
@@ -174,6 +189,105 @@
       @saved="onSaved"
       @deleted="onDeleted"
     />
+
+    <!-- Merge Contacts Dialog -->
+    <v-dialog v-model="showMergeDialog" max-width="620px" persistent>
+      <v-card class="rounded-xl overflow-hidden">
+        <v-card-title class="d-flex align-center justify-space-between pa-4 border-b bg-surface">
+          <div class="d-flex align-center gap-2">
+            <v-icon color="indigo" size="24">mdi-call-merge</v-icon>
+            <div>
+              <h2 class="text-subtitle-1 font-weight-bold mb-0">Gộp khách hàng trùng lặp</h2>
+              <div class="text-caption text-medium-emphasis">
+                Chuyển tất cả tin nhắn từ các tài khoản Zalo về 1 hồ sơ duy nhất
+              </div>
+            </div>
+          </div>
+          <v-btn icon="mdi-close" variant="text" size="small" @click="showMergeDialog = false" />
+        </v-card-title>
+
+        <v-card-text class="pa-4">
+          <v-alert
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-4 text-caption rounded-lg"
+          >
+            Hệ thống sẽ giữ lại <strong>Hồ sơ chính</strong> bạn chọn bên dưới. Toàn bộ hội thoại Zalo (kể cả từ các tài khoản Zalo khác nhau), đơn hàng, lịch hẹn từ các hồ sơ còn lại sẽ được gộp vào hồ sơ này.
+          </v-alert>
+
+          <div class="text-caption font-weight-bold mb-2 text-medium-emphasis text-uppercase">
+            Chọn 1 khách hàng làm Hồ sơ chính:
+          </div>
+
+          <v-radio-group v-model="primaryMergeContactId" hide-details class="mb-2">
+            <div class="d-flex flex-column gap-2">
+              <div
+                v-for="c in selectedContactsList"
+                :key="c.id"
+                class="pa-3 rounded-lg border cursor-pointer transition-all"
+                :class="primaryMergeContactId === c.id ? 'border-primary bg-primary-subtle' : 'bg-surface'"
+                @click="primaryMergeContactId = c.id"
+              >
+                <div class="d-flex align-center gap-3">
+                  <v-radio :value="c.id" density="compact" hide-details />
+                  <v-avatar size="38" color="slate-200">
+                    <v-img v-if="c.avatarUrl" :src="c.avatarUrl">
+                      <template #error>
+                        <v-icon size="20" color="medium-emphasis">mdi-account</v-icon>
+                      </template>
+                    </v-img>
+                    <v-icon v-else size="20" color="medium-emphasis">mdi-account</v-icon>
+                  </v-avatar>
+                  <div class="flex-grow-1 min-w-0">
+                    <div class="d-flex align-center gap-2">
+                      <span class="font-weight-bold text-body-2 text-truncate">{{ getContactDisplayName(c) }}</span>
+                      <v-chip v-if="c.customerId" size="x-small" color="primary" variant="tonal" class="font-monospace font-weight-bold">
+                        {{ c.customerId }}
+                      </v-chip>
+                      <v-chip v-if="primaryMergeContactId === c.id" size="x-small" color="success" variant="flat" class="font-weight-bold">
+                        Chính
+                      </v-chip>
+                    </div>
+                    <div class="text-caption text-medium-emphasis d-flex align-center gap-2 mt-0.5">
+                      <span v-if="c.phone"><v-icon size="12" class="mr-0.5">mdi-phone</v-icon>{{ c.phone }}</span>
+                      <span v-if="c.email"><v-icon size="12" class="mr-0.5">mdi-email</v-icon>{{ c.email }}</span>
+                      <span v-if="c.conversations?.length"><v-icon size="12" class="mr-0.5">mdi-chat</v-icon>{{ c.conversations.length }} hội thoại</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </v-radio-group>
+        </v-card-text>
+
+        <v-card-actions class="pa-4 border-t bg-slate-50 dark:bg-slate-800/40 d-flex justify-end gap-2">
+          <v-btn variant="text" size="small" class="text-none" @click="showMergeDialog = false">
+            Hủy
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            size="small"
+            class="text-none font-weight-bold px-4"
+            prepend-icon="mdi-call-merge"
+            :loading="merging"
+            :disabled="!primaryMergeContactId"
+            @click="submitMerge"
+          >
+            Xác nhận gộp ({{ selected.length }} khách hàng)
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Global feedback snackbar -->
+    <v-snackbar v-model="showSnackbar" timeout="3500" location="top" color="slate-900" rounded="lg">
+      <div class="d-flex align-center gap-2">
+        <v-icon color="success" size="18">mdi-check-circle</v-icon>
+        <span class="text-body-2 text-white">{{ snackbarText }}</span>
+      </div>
+    </v-snackbar>
   </div>
 </template>
 
@@ -188,15 +302,43 @@ import type { Contact } from '@/composables/use-contacts';
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
 
-const { contacts, total, loading, filters, pagination, fetchContacts, deleteContacts, toggleContactAi } = useContacts();
+const {
+  contacts, total, loading, filters, pagination,
+  fetchContacts, deleteContacts, mergeContacts,
+  toggleContactAi,
+} = useContacts();
 
 const showDialog = ref(false);
 const selected = ref<string[]>([]);
 const selectedContact = ref<Contact | null>(null);
 const isSelectMode = ref(false);
 
-let touchTimer: ReturnType<typeof setTimeout> | null = null;
-let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+// Merge dialog state
+const showMergeDialog = ref(false);
+const merging = ref(false);
+const primaryMergeContactId = ref<string>('');
+const showSnackbar = ref(false);
+const snackbarText = ref('');
+
+const selectedContactsList = computed(() => {
+  return contacts.value.filter((c) => selected.value.includes(c.id));
+});
+
+let pressTimer: ReturnType<typeof setTimeout> | null = null;
+let longPressTriggered = false;
+
+function getContactDisplayName(item?: Partial<Contact> | null): string {
+  if (!item) return '—';
+  const zaloName = item.zaloName?.trim();
+  const fullName = item.fullName?.trim();
+
+  const isInvalid = (name?: string | null) =>
+    !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
+
+  if (!isInvalid(fullName)) return fullName!;
+  if (!isInvalid(zaloName)) return zaloName!;
+  return fullName || zaloName || '—';
+}
 
 function formatCustomerName(name?: string | null): string {
   if (!name) return '—';
@@ -207,32 +349,46 @@ function formatCustomerName(name?: string | null): string {
   return trimmed;
 }
 
-function onTouchStart(item: Contact) {
-  touchTimer = setTimeout(() => {
+function startPress(item: Contact) {
+  if (!isMobile.value || isSelectMode.value) return;
+  longPressTriggered = false;
+  if (pressTimer) clearTimeout(pressTimer);
+  pressTimer = setTimeout(() => {
+    longPressTriggered = true;
     isSelectMode.value = true;
     toggleSelectItem(item.id);
   }, 450);
 }
 
-function onTouchEnd() {
-  if (touchTimer) clearTimeout(touchTimer);
-}
-
-function onTouchMove() {
-  if (touchTimer) clearTimeout(touchTimer);
-}
-
-function onRowMouseEnter(item: Contact) {
-  if (isMobile.value) {
-    hoverTimer = setTimeout(() => {
-      isSelectMode.value = true;
-      toggleSelectItem(item.id);
-    }, 600);
+function cancelPress() {
+  if (pressTimer) {
+    clearTimeout(pressTimer);
+    pressTimer = null;
   }
 }
 
-function onRowMouseLeave() {
-  if (hoverTimer) clearTimeout(hoverTimer);
+function onTouchStart(item: Contact) {
+  startPress(item);
+}
+
+function onTouchEnd() {
+  cancelPress();
+}
+
+function onTouchMove() {
+  cancelPress();
+}
+
+function onMouseDown(item: Contact) {
+  startPress(item);
+}
+
+function onMouseUp() {
+  cancelPress();
+}
+
+function onMouseLeave() {
+  cancelPress();
 }
 
 function toggleSelectItem(id: string) {
@@ -300,6 +456,10 @@ function openCreate() {
 }
 
 function onRowClick(_event: Event, item: Contact) {
+  if (longPressTriggered) {
+    longPressTriggered = false;
+    return;
+  }
   if (isSelectMode.value) {
     toggleSelectItem(item.id);
     return;
@@ -325,11 +485,43 @@ async function confirmBulkDelete() {
     }
   }
 }
+
+function openMergeDialog() {
+  if (selected.value.length < 2) return;
+  const list = selectedContactsList.value;
+  const best = list.find((c) => c.customerId) || list.find((c) => c.phone) || list[0];
+  primaryMergeContactId.value = best?.id || selected.value[0];
+  showMergeDialog.value = true;
+}
+
+async function submitMerge() {
+  if (!primaryMergeContactId.value) return;
+  merging.value = true;
+  const sourceIds = selected.value.filter((id) => id !== primaryMergeContactId.value);
+  try {
+    const ok = await mergeContacts(primaryMergeContactId.value, sourceIds);
+    if (ok) {
+      showMergeDialog.value = false;
+      selected.value = [];
+      isSelectMode.value = false;
+      snackbarText.value = 'Đã gộp thành công các liên hệ!';
+      showSnackbar.value = true;
+    }
+  } finally {
+    merging.value = false;
+  }
+}
 </script>
 
 <style scoped>
 .contacts-table {
   width: 100% !important;
+}
+
+.contact-row {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .contacts-table :deep(th) {

@@ -380,7 +380,7 @@ async function startCliChat() {
         const detailResult = await toolExecutor.executeTool('get_product_detail', { sku: nextDecision.targetSku });
         console.log(`${colors.yellow}🛠️  [DETERMINISTIC DETAIL] Tra cứu chi tiết sản phẩm: ${nextDecision.targetSku}${colors.reset}`);
         if (detailResult?.found) {
-          toolResultsSummary = `Chi tiết sản phẩm [${detailResult.sku}] ${detailResult.name}: Thành phần: ${detailResult.ingredients || 'Chưa có thông tin xác nhận trong CSDL'}, Đối tượng: ${detailResult.target || 'Chưa có thông tin xác nhận'}, Độ tuổi tối thiểu: ${detailResult.suitable_min_age_months !== null ? detailResult.suitable_min_age_months + ' tháng' : 'Chưa có dữ liệu xác nhận trong CSDL'}, Giá sỉ: ${detailResult.formatted_price}`;
+          toolResultsSummary = `Chi tiết sản phẩm [${detailResult.sku}] ${detailResult.name}: Ngành hàng: ${detailResult.category || 'Chưa phân loại'}, Thương hiệu: ${detailResult.brand || 'LA PET'}, Thành phần: ${detailResult.ingredients || 'Chưa có thông tin xác nhận trong CSDL'}, Đối tượng: ${detailResult.target || 'Chưa có thông tin xác nhận'}, Độ tuổi tối thiểu: ${detailResult.suitable_min_age_months !== null ? detailResult.suitable_min_age_months + ' tháng' : 'Chưa có dữ liệu xác nhận trong CSDL'}, Giá sỉ: ${detailResult.formatted_price}`;
         }
       } else if (nextDecision.action === 'SEARCH_PRODUCT' && nextDecision.productSearchQuery) {
         const qParams = nextDecision.productSearchQuery;
@@ -389,12 +389,18 @@ async function startCliChat() {
           qParams.petType,
           qParams.excludeIngredients,
           qParams.ageMonths,
-          qParams.texturePreference
+          qParams.texturePreference,
+          qParams.category,
+          qParams.brand
         );
         console.log(`${colors.yellow}🛠️  [DETERMINISTIC SEARCH] Tìm thấy ${searchResult?.products?.length || 0} sản phẩm phù hợp.${colors.reset}`);
         if (searchResult?.products && searchResult.products.length > 0) {
           toolResultsSummary = searchResult.products
-            .map((p: any, idx: number) => `${idx + 1}. [Mã ${p.sku}] ${p.name} - Giá sỉ: ${p.formatted_price} (${p.specification}) - Đặc điểm: ${p.highlights}`)
+            .map((p: any, idx: number) => {
+              const catStr = p.category ? ` (Ngành: ${p.category})` : '';
+              const brandStr = p.brand ? ` (Brand: ${p.brand})` : '';
+              return `${idx + 1}. [Mã ${p.sku}] ${p.name}${catStr}${brandStr} - Giá sỉ: ${p.formatted_price} (${p.specification}) - Đặc điểm: ${p.highlights}`;
+            })
             .join('\n');
         }
       }

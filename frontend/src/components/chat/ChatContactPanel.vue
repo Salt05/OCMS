@@ -13,7 +13,7 @@
           <div class="overflow-hidden">
             <div class="d-flex align-center gap-1.5 flex-wrap">
               <span class="text-subtitle-1 font-weight-bold text-truncate" style="color: rgb(var(--v-theme-on-surface)); line-height: 1.2;">
-                {{ form.fullName || conversation?.contact?.fullName || conversation?.contact?.zaloName || 'Chưa đặt tên' }}
+                {{ (form.fullName && form.fullName !== 'Khách hàng') ? form.fullName : (form.zaloName || conversation?.contact?.zaloName || conversation?.contact?.fullName || 'Chưa đặt tên') }}
               </span>
               <v-chip v-if="form.customerId" size="x-small" color="primary" variant="flat" class="font-weight-bold">
                 #{{ form.customerId }}
@@ -54,15 +54,11 @@
       </div>
     </div>
 
-    <!-- 2. Tabs Navigation (4 Tabs: Thông tin, Lịch hẹn, Đơn hàng, File & Media) -->
+    <!-- 2. Tabs Navigation (3 Tabs: Thông tin, Đơn hàng, File & Media) -->
     <v-tabs v-model="activeTab" color="primary" density="compact" class="border-b px-2 flex-shrink-0 panel-tabs" :grow="$vuetify.display.smAndDown" show-arrows>
       <v-tab value="info" class="text-caption font-weight-bold">
         <v-icon start size="14">lucide-user</v-icon>
         Thông tin
-      </v-tab>
-      <v-tab value="appointments" class="text-caption font-weight-bold">
-        <v-icon start size="14">lucide-calendar</v-icon>
-        Lịch hẹn ({{ contactAppointments.length }})
       </v-tab>
       <v-tab value="orders" class="text-caption font-weight-bold">
         <v-icon start size="14">lucide-shopping-bag</v-icon>
@@ -208,7 +204,7 @@
                   <div class="card-icon-badge">
                     <v-icon size="16" color="teal">lucide-settings-2</v-icon>
                   </div>
-                  <span class="text-subtitle-2 font-weight-bold text-teal tracking-wide">THÔNG TIN NÂNG CAO (ODOO & CRM)</span>
+                  <span class="text-subtitle-2 font-weight-bold text-teal tracking-wide">THÔNG TIN NÂNG CAO</span>
                 </div>
                 <v-tooltip v-if="!isAdmin" text="Chỉ Admin mới có quyền sửa các trường này" location="top">
                   <template #activator="{ props }">
@@ -221,27 +217,86 @@
               <v-text-field
                 v-model="form.customerId"
                 label="ID Customer (Odoo)"
-                placeholder="VD: 17864"
+                placeholder="Nhập ID Odoo rồi nhấn Enter..."
                 density="compact"
                 variant="outlined"
                 prepend-inner-icon="lucide-hash"
                 hide-details="auto"
                 class="mb-2"
                 :disabled="!isAdmin"
-                :readonly="!isAdmin || !!form.customerId"
+                :loading="loadingOdoo"
+                @keyup.enter="lookupAndApplyOdoo()"
               >
-                <template v-if="form.customerId && isAdmin" #append-inner>
-                  <v-btn
-                    icon="lucide-unlink"
-                    variant="text"
-                    color="error"
-                    size="x-small"
-                    density="compact"
-                    title="Hủy liên kết Odoo"
-                    @click.stop="form.customerId = ''"
-                  />
+                <template #append-inner>
+                  <div class="odoo-action-buttons">
+                    <v-btn
+                      v-if="form.customerId && isAdmin"
+                      icon
+                      variant="text"
+                      color="primary"
+                      size="x-small"
+                      density="compact"
+                      class="action-icon-btn"
+                      :loading="loadingOdoo"
+                      title="Đồng bộ / Cập nhật lại từ Odoo"
+                      @click.stop="lookupAndApplyOdoo()"
+                    >
+                      <v-icon size="15">lucide-refresh-cw</v-icon>
+                    </v-btn>
+                    <v-btn
+                      v-else-if="isAdmin"
+                      icon
+                      variant="text"
+                      color="primary"
+                      size="x-small"
+                      density="compact"
+                      class="action-icon-btn"
+                      :loading="loadingOdoo"
+                      title="Tra cứu & Điền thông tin Odoo"
+                      @click.stop="lookupAndApplyOdoo()"
+                    >
+                      <v-icon size="15">lucide-search</v-icon>
+                    </v-btn>
+                    <v-btn
+                      v-if="form.customerId && isAdmin"
+                      icon
+                      variant="text"
+                      color="error"
+                      size="x-small"
+                      density="compact"
+                      class="action-icon-btn"
+                      title="Hủy liên kết Odoo"
+                      @click.stop="form.customerId = ''"
+                    >
+                      <v-icon size="15">lucide-unlink</v-icon>
+                    </v-btn>
+                  </div>
                 </template>
               </v-text-field>
+
+              <!-- Thông báo đồng bộ Odoo -->
+              <v-alert
+                v-if="odooSyncMessage"
+                type="success"
+                density="compact"
+                variant="tonal"
+                class="text-caption mb-2 py-1 px-2 rounded-lg"
+                closable
+                @click:close="odooSyncMessage = ''"
+              >
+                {{ odooSyncMessage }}
+              </v-alert>
+              <v-alert
+                v-if="odooSyncError"
+                type="warning"
+                density="compact"
+                variant="tonal"
+                class="text-caption mb-2 py-1 px-2 rounded-lg"
+                closable
+                @click:close="odooSyncError = ''"
+              >
+                {{ odooSyncError }}
+              </v-alert>
 
               <!-- Phân loại Odoo (Admin only edit) -->
               <v-select
@@ -371,20 +426,7 @@
 
       </div>
 
-      <!-- TAB 2: LỊCH HẸN -->
-      <div v-show="activeTab === 'appointments'">
-        <ChatAppointments
-          v-if="props.contactId"
-          :contact-id="props.contactId"
-          :appointments="contactAppointments"
-          @appointment-created="reloadAppointments"
-        />
-        <div v-else class="text-caption text-grey text-center py-4">
-          Chưa có liên hệ để xem lịch hẹn
-        </div>
-      </div>
-
-      <!-- TAB 3: ĐƠN HÀNG -->
+      <!-- TAB 2: ĐƠN HÀNG -->
       <div v-show="activeTab === 'orders'">
         <ChatOrders v-if="props.contactId" :contact-id="props.contactId" />
         <div v-else class="text-caption text-grey text-center py-4">
@@ -411,7 +453,6 @@ import { STATUS_OPTIONS, SOURCE_OPTIONS } from '@/composables/use-contacts';
 import { useChatContactPanel } from '@/composables/use-chat-contact-panel';
 import { useUsers } from '@/composables/use-users';
 import { useAuthStore } from '@/stores/auth';
-import ChatAppointments from './ChatAppointments.vue';
 import ChatOrders from './ChatOrders.vue';
 import ChatMediaGallery from './ChatMediaGallery.vue';
 import TagSelector from '@/components/common/TagSelector.vue';
@@ -435,8 +476,10 @@ const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role 
 
 const {
   form, saving, saveSuccess, saveError,
-  contactAppointments,
-  saveContact, reloadAppointments,
+  customerStats,
+  loadingOdoo, odooSyncMessage, odooSyncError,
+  saveContact,
+  lookupAndApplyOdoo,
 } = useChatContactPanel(
   () => props.contactId,
   () => props.contact,
@@ -479,11 +522,11 @@ function statusLabel(val?: string | null) {
 
 // Calculated CRM Metrics
 const customerRevenue = computed(() => {
-  return (props.contact as any)?.customer?.totalRevenue || props.conversation?.contact?.customer?.totalRevenue || 0;
+  return customerStats.value?.totalRevenue ?? ((props.contact as any)?.customer?.totalRevenue || props.conversation?.contact?.customer?.totalRevenue || 0);
 });
 
 const customerOrdersCount = computed(() => {
-  return (props.contact as any)?.customer?.totalOrders || props.conversation?.contact?.customer?.totalOrders || 0;
+  return customerStats.value?.totalOrders ?? ((props.contact as any)?.customer?.totalOrders || props.conversation?.contact?.customer?.totalOrders || 0);
 });
 
 const customerAov = computed(() => {
@@ -494,7 +537,7 @@ const customerAov = computed(() => {
 });
 
 const customerLastOrderDate = computed(() => {
-  const d = (props.contact as any)?.customer?.lastOrderDate || props.conversation?.contact?.customer?.lastOrderDate;
+  const d = customerStats.value?.lastOrderDate || (props.contact as any)?.customer?.lastOrderDate || props.conversation?.contact?.customer?.lastOrderDate;
   return d ? formatDateShort(d) : 'Chưa có đơn';
 });
 
@@ -537,5 +580,18 @@ onMounted(() => {
 .customer-profile-card {
   background-color: rgb(var(--v-theme-surface));
   border-color: rgba(var(--v-theme-on-surface), 0.12) !important;
+}
+.odoo-action-buttons {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 4px !important;
+  margin-right: -4px;
+}
+.action-icon-btn {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  padding: 0 !important;
 }
 </style>

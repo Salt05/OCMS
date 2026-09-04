@@ -1,11 +1,11 @@
-#version: "3.8"
+name: ocms
 
 services:
   app:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    container_name: zalo-crm-app
+    container_name: app
     restart: unless-stopped
     ports:
       - "3080:3000"
@@ -18,7 +18,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - file_storage:/var/lib/zalo-crm/files
+      - file_storage:/var/lib/ocms/files
     tmpfs:
       - /tmp
     security_opt:
@@ -28,7 +28,7 @@ services:
     build:
       context: ./ChatBot
       dockerfile: Dockerfile
-    container_name: zalo-crm-chatbot-prod
+    container_name: chatbot
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -49,7 +49,7 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: zalo-crm-db
+    container_name: database
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-crmuser}
@@ -72,7 +72,7 @@ services:
 
   backup:
     image: prodrigestivill/postgres-backup-local
-    container_name: zalo-crm-backup
+    container_name: backup
     restart: unless-stopped
     volumes:
       - ./backups:/backups
@@ -90,5 +90,11 @@ services:
 
 volumes:
   pg_data:
+    external: true
+    name: zalocrm_pg_data
   file_storage:
+    external: true
+    name: zalocrm_file_storage
   chatbot_data:
+    external: true
+    name: zalocrm_chatbot_data

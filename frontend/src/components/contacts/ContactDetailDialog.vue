@@ -26,6 +26,18 @@
           <v-spacer />
           <v-btn
             v-if="!isNew"
+            color="primary"
+            variant="flat"
+            size="small"
+            prepend-icon="lucide-message-square"
+            class="mr-2 font-weight-bold"
+            :loading="openingChat"
+            @click="goToChat"
+          >
+            Nhắn tin
+          </v-btn>
+          <v-btn
+            v-if="!isNew"
             color="error"
             variant="text"
             size="small"
@@ -46,7 +58,11 @@
             <!-- Left: Avatar & Name -->
             <div class="d-flex align-center gap-3 overflow-hidden">
               <v-avatar size="48" color="primary" variant="flat" class="elevation-1 flex-shrink-0">
-                <v-img v-if="contact?.avatarUrl" :src="contact.avatarUrl" />
+                <v-img v-if="contact?.avatarUrl" :src="contact.avatarUrl">
+                  <template #error>
+                    <v-icon size="24" color="white">lucide-user</v-icon>
+                  </template>
+                </v-img>
                 <v-icon v-else size="24" color="white">lucide-user</v-icon>
               </v-avatar>
               <div class="overflow-hidden">
@@ -93,9 +109,6 @@
         <!-- Tabs Navigation -->
         <v-tabs v-model="activeTab" color="primary" class="border-b px-2 flex-shrink-0 panel-tabs" :grow="$vuetify.display.smAndDown" show-arrows>
           <v-tab value="profile">Thông tin</v-tab>
-          <v-tab v-if="!isNew" value="appointments">
-            Lịch hẹn ({{ appointmentsList.length }})
-          </v-tab>
           <v-tab v-if="!isNew" value="system">Dữ liệu hệ thống</v-tab>
         </v-tabs>
 
@@ -146,24 +159,59 @@
                   <v-text-field
                     v-model="form.customerId"
                     label="ID Customer"
-                    placeholder="VD: 16586"
+                    placeholder="Nhập ID Odoo rồi nhấn Enter..."
                     density="compact"
                     variant="outlined"
                     prepend-inner-icon="lucide-hash"
                     hide-details="auto"
                     class="mb-2"
-                    :readonly="!!form.customerId"
+                    :loading="loadingOdoo"
+                    @keyup.enter="lookupOdooCustomer(form.customerId, true)"
                   >
-                    <template v-if="form.customerId" #append-inner>
-                      <v-btn
-                        icon="lucide-unlink"
-                        variant="text"
-                        color="error"
-                        size="x-small"
-                        density="compact"
-                        title="Hủy liên kết Odoo"
-                        @click.stop="form.customerId = ''"
-                      />
+                    <template #append-inner>
+                      <div class="odoo-action-buttons">
+                        <v-btn
+                          v-if="form.customerId"
+                          icon
+                          variant="text"
+                          color="primary"
+                          size="x-small"
+                          density="compact"
+                          class="action-icon-btn"
+                          :loading="loadingOdoo"
+                          title="Đồng bộ lại thông tin từ Odoo"
+                          @click.stop="lookupOdooCustomer(form.customerId, true)"
+                        >
+                          <v-icon size="15">lucide-refresh-cw</v-icon>
+                        </v-btn>
+                        <v-btn
+                          v-else
+                          icon
+                          variant="text"
+                          color="primary"
+                          size="x-small"
+                          density="compact"
+                          class="action-icon-btn"
+                          :loading="loadingOdoo"
+                          title="Tra cứu & Điền thông tin Odoo"
+                          @click.stop="lookupOdooCustomer(form.customerId, true)"
+                        >
+                          <v-icon size="15">lucide-search</v-icon>
+                        </v-btn>
+                        <v-btn
+                          v-if="form.customerId"
+                          icon
+                          variant="text"
+                          color="error"
+                          size="x-small"
+                          density="compact"
+                          class="action-icon-btn"
+                          title="Hủy liên kết Odoo"
+                          @click.stop="form.customerId = ''"
+                        >
+                          <v-icon size="15">lucide-unlink</v-icon>
+                        </v-btn>
+                      </div>
                     </template>
                   </v-text-field>
                 </v-col>
@@ -468,39 +516,7 @@
             </v-card>
           </div>
 
-        <!-- TAB 2: LỊCH HẸN & CHĂM SÓC -->
-        <div v-show="activeTab === 'appointments'">
-          <div v-if="appointmentsList.length === 0" class="text-center py-8 text-grey">
-            <v-icon size="40" class="mb-2">lucide-calendar-x</v-icon>
-            <div class="text-body-2">Chưa có lịch hẹn nào cho khách hàng này</div>
-          </div>
-          <v-list v-else lines="two" class="bg-transparent pa-0">
-            <v-list-item
-              v-for="apt in appointmentsList"
-              :key="apt.id"
-              class="mb-2 border rounded-lg bg-surface"
-            >
-              <template #prepend>
-                <v-avatar color="primary" variant="tonal" size="36">
-                  <v-icon size="18">lucide-calendar</v-icon>
-                </v-avatar>
-              </template>
-              <v-list-item-title class="font-weight-medium">
-                {{ formatDateTime(apt.appointmentDate, apt.appointmentTime) }}
-              </v-list-item-title>
-              <v-list-item-subtitle class="text-caption">
-                {{ apt.notes || 'Không có ghi chú' }}
-              </v-list-item-subtitle>
-              <template #append>
-                <v-chip size="x-small" :color="aptStatusColor(apt.status)" variant="tonal">
-                  {{ aptStatusLabel(apt.status) }}
-                </v-chip>
-              </template>
-            </v-list-item>
-          </v-list>
-        </div>
-
-        <!-- TAB 3: DỮ LIỆU HỆ THỐNG & KÊNH ZALO -->
+        <!-- TAB 2: DỮ LIỆU HỆ THỐNG & KÊNH ZALO -->
         <div v-show="activeTab === 'system'">
           <v-card variant="outlined" class="rounded-lg mb-3">
             <v-list density="compact">
@@ -561,6 +577,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import type { Contact } from '@/composables/use-contacts';
 import { STATUS_OPTIONS, SOURCE_OPTIONS, useContacts } from '@/composables/use-contacts';
@@ -579,6 +596,7 @@ const emit = defineEmits<{
   deleted: [id: string];
 }>();
 
+const router = useRouter();
 const { saving, deleting, createContact, updateContact, deleteContact, fetchContact } = useContacts();
 const { users, fetchUsers } = useUsers();
 const authStore = useAuthStore();
@@ -586,6 +604,35 @@ const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role 
 
 const activeTab = ref('profile');
 const fullContactDetail = ref<Contact | null>(null);
+const openingChat = ref(false);
+
+async function goToChat() {
+  if (!props.contact) return;
+  openingChat.value = true;
+  try {
+    const res = await api.post('/zalo/start-chat-by-phone', {
+      contactId: props.contact.id,
+      phone: form.value.phone || props.contact.phone || undefined,
+      uid: props.contact.zaloUid || undefined,
+      displayName: (form.value.fullName && form.value.fullName !== 'Khách hàng') ? form.value.fullName : (form.value.zaloName || props.contact.zaloName || props.contact.fullName || 'Khách hàng'),
+      avatarUrl: props.contact.avatarUrl || undefined,
+    });
+
+    if (res.data.conversationId) {
+      close();
+      router.push({ path: '/chat', query: { id: res.data.conversationId } });
+    } else {
+      close();
+      router.push({ path: '/chat' });
+    }
+  } catch (err) {
+    console.error('Failed to open chat from contact detail:', err);
+    close();
+    router.push({ path: '/chat' });
+  } finally {
+    openingChat.value = false;
+  }
+}
 
 // ── Odoo Integration State ──────────────────────────────────────────
 export interface OdooCustomer {
@@ -610,7 +657,7 @@ const odooCustomer = ref<OdooCustomer | null>(null);
 const loadingOdoo = ref(false);
 const odooError = ref('');
 
-async function lookupOdooCustomer(idStr?: string | null) {
+async function lookupOdooCustomer(idStr?: string | null, autoApply: boolean = false) {
   const cleanId = (idStr || odooSearchId.value || form.value.customerId || '').trim();
   if (!cleanId) return;
 
@@ -619,10 +666,13 @@ async function lookupOdooCustomer(idStr?: string | null) {
   odooError.value = '';
 
   try {
-    const res = await api.get(`/odoo/customers/${cleanId}`);
+    const res = await api.get(`/odoo/customers/${encodeURIComponent(cleanId)}`);
     if (res.data?.success && res.data?.customer) {
       odooCustomer.value = res.data.customer;
       odooError.value = '';
+      if (autoApply) {
+        confirmApplyOdooData();
+      }
     } else {
       odooCustomer.value = null;
       odooError.value = `Không tìm thấy khách hàng #${cleanId} trên Odoo`;
@@ -744,10 +794,6 @@ function emptyForm(): FormState {
   };
 }
 
-const appointmentsList = computed(() => {
-  return fullContactDetail.value?.appointments ?? props.contact?.appointments ?? [];
-});
-
 watch(() => props.contact, async (c) => {
   activeTab.value = 'profile';
   hasSearchedOdoo.value = false;
@@ -755,10 +801,12 @@ watch(() => props.contact, async (c) => {
   odooError.value = '';
 
   if (c) {
+    const isInvalid = (name?: string | null) =>
+      !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
     form.value = {
       isCompany: false,
-      fullName: c.fullName ?? '',
-      zaloName: c.zaloName || c.fullName || '',
+      fullName: !isInvalid(c.fullName) ? (c.fullName ?? '') : (c.zaloName || ''),
+      zaloName: c.zaloName || (!isInvalid(c.fullName) ? (c.fullName ?? '') : ''),
       customerId: c.customerId ?? '',
       contactType: c.contactType ?? 'other',
       phone: c.phone ?? '',
@@ -817,24 +865,6 @@ function statusColor(status: string) {
     lost: 'error',
   };
   return map[status] ?? 'grey';
-}
-
-function aptStatusColor(st?: string) {
-  if (st === 'completed') return 'success';
-  if (st === 'cancelled') return 'error';
-  return 'primary';
-}
-
-function aptStatusLabel(st?: string) {
-  if (st === 'completed') return 'Đã xong';
-  if (st === 'cancelled') return 'Đã huỷ';
-  return 'Đã lên lịch';
-}
-
-function formatDateTime(dateStr: string, timeStr?: string | null) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr).toLocaleDateString('vi-VN');
-  return timeStr ? `${timeStr} - ${d}` : d;
 }
 
 function formatFullDate(dateStr?: string | null) {
@@ -1047,5 +1077,19 @@ function close() {
 
 :deep(.v-theme--dark .v-field--focused .v-field__prepend-inner .v-icon) {
   color: #38bdf8 !important;
+}
+
+.odoo-action-buttons {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 4px !important;
+  margin-right: -4px;
+}
+.action-icon-btn {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  padding: 0 !important;
 }
 </style>

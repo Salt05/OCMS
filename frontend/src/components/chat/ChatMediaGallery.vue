@@ -265,7 +265,14 @@
 
     </div>
 
-    <!-- Lightbox Preview Dialog -->
+    <!-- Image Viewer Modal with Zoom, Pan, Rotate, and Gallery Navigation -->
+    <ImageViewerModal
+      v-model="showImageViewer"
+      :images="galleryImages"
+      :initial-index="activeImageViewerIndex"
+    />
+
+    <!-- Video Lightbox Preview Dialog -->
     <v-dialog v-model="showLightbox" max-width="880">
       <v-card class="rounded-2xl overflow-hidden bg-grey-darken-4 text-white elevation-24">
         <div class="d-flex align-center justify-space-between px-4 py-3 border-b border-grey-darken-3">
@@ -297,11 +304,17 @@
         </div>
 
         <div class="d-flex align-center justify-center pa-4" style="max-height: 80vh; min-height: 280px; overflow: auto; background-color: #111;">
+          <div v-if="activeLightboxItem?.isImage && lightboxImageError" class="d-flex flex-column align-center justify-center pa-6 text-center text-grey-lighten-1">
+            <v-icon size="48" color="grey" class="mb-2">lucide-image-off</v-icon>
+            <div class="text-body-2 font-weight-medium">Không thể tải ảnh này</div>
+            <div class="text-caption text-grey">Đường dẫn ảnh Zalo đã hết hạn hoặc không tồn tại</div>
+          </div>
           <img
-            v-if="activeLightboxItem?.isImage"
+            v-else-if="activeLightboxItem?.isImage"
             :src="activeLightboxItem.url"
             alt="Preview"
             style="max-width: 100%; max-height: 72vh; object-fit: contain; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);"
+            @error="lightboxImageError = true"
           />
           <video
             v-else-if="activeLightboxItem?.isVideo"
@@ -342,6 +355,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { api } from '@/api/index';
+import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
 
 interface Message {
   id: string;
@@ -361,7 +375,10 @@ const props = defineProps<{
 
 const mediaSubTab = ref<'photos' | 'docs' | 'links'>('photos');
 const showLightbox = ref(false);
+const lightboxImageError = ref(false);
 const activeLightboxItem = ref<any>(null);
+const showImageViewer = ref(false);
+const activeImageViewerIndex = ref(0);
 const showCopySnack = ref(false);
 const downloadSnack = ref({ show: false, text: '', color: 'info' });
 
@@ -688,7 +705,7 @@ const docItems = computed(() => {
     const date = formatDateShort(m.sentAt || m.createdAt);
 
     const params = parsed && typeof parsed.params === 'string' ? parseJsonSafe(parsed.params) : parsed?.params;
-    const paramExt = (params?.fileExt || '').toLowerCase();
+    const paramExt = (params?.fileExt || parsed?.fileExt || '').toLowerCase();
     const rawTitle = parsed?.title || parsed?.name || m.mediaUrl || '';
     const titleExt = getFileExtension(rawTitle);
     const urlCandidate = parsed?.href || parsed?.url || parsed?.downloadUrl || m.mediaUrl || (typeof rawContent === 'string' && rawContent.startsWith('http') ? rawContent : '');
@@ -708,7 +725,9 @@ const docItems = computed(() => {
       DOC_EXTENSIONS.includes(detectedExt) ||
       m.contentType === 'file' ||
       m.contentType === 'document' ||
-      params?.fType === 1;
+      params?.fType === 1 ||
+      (urlCandidate.includes('dlf1.vn') && !IMAGE_EXTENSIONS.includes(detectedExt) && !VIDEO_EXTENSIONS.includes(detectedExt)) ||
+      (urlCandidate.includes('zfcloud.zdn.vn') && !IMAGE_EXTENSIONS.includes(detectedExt) && !VIDEO_EXTENSIONS.includes(detectedExt));
 
     let fileUrl = '';
     let fileName = '';
@@ -756,7 +775,7 @@ const docItems = computed(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. EXTRACT WEB LINKS
+// 3. EXTRACT WEB LINKS (STRICT: NO FILES, ATTACHMENTS, OR MEDIA CDN LINKS)
 // ─────────────────────────────────────────────────────────────────────────────
 const linkItems = computed(() => {
   const list: any[] = [];
@@ -771,12 +790,13 @@ const linkItems = computed(() => {
     // If message is JSON link preview (Zalo link card)
     if (parsed && (parsed.href || parsed.url)) {
       const u = (parsed.href || parsed.url || '').trim();
-      if (u.startsWith('http') && !isMediaOrCdnUrl(u) && !seenUrls.has(u)) {
+      const title = parsed.title || parsed.name || '';
+      if (u.startsWith('http') && !isMediaOrCdnUrl(u, title, parsed, m.contentType) && !seenUrls.has(u)) {
         seenUrls.add(u);
         list.push({
           id: m.id,
           url: u,
-          title: sanitizeFileName(parsed.title, extractDomain(u)),
+          title: sanitizeFileName(title, extractDomain(u)),
           domain: extractDomain(u),
           date,
         });
@@ -790,7 +810,7 @@ const linkItems = computed(() => {
       if (matches) {
         for (let cleanUrl of matches) {
           cleanUrl = cleanUrl.replace(/[.,;:)\]]+$/, ''); // Strip trailing punctuations
-          if (cleanUrl.startsWith('http') && !isMediaOrCdnUrl(cleanUrl) && !seenUrls.has(cleanUrl)) {
+          if (cleanUrl.startsWith('http') && !isMediaOrCdnUrl(cleanUrl, '', null, m.contentType) && !seenUrls.has(cleanUrl)) {
             seenUrls.add(cleanUrl);
             list.push({
               id: `${m.id}-${cleanUrl}`,
@@ -808,21 +828,75 @@ const linkItems = computed(() => {
   return list.reverse();
 });
 
-/** Filter out internal media & file CDN URLs from Links tab */
-function isMediaOrCdnUrl(url: string): boolean {
-  const ext = getFileExtension(url);
-  if ([...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS, ...DOC_EXTENSIONS].includes(ext)) {
+/** Filter out internal media & file CDN URLs, PDFs, and attachments from Links tab */
+function isMediaOrCdnUrl(url: string, title?: string, rawParsed?: any, contentType?: string): boolean {
+  if (!url) return true;
+
+  // 1. Check message content type
+  if (['image', 'photo', 'video', 'file', 'document', 'voice', 'sticker', 'gif'].includes(contentType || '')) {
     return true;
   }
-  if (url.includes('chat-photo') || url.includes('zfcloud.zdn.vn/file/')) {
+
+  // 2. Check title extension & URL extension & paramExt
+  const urlExt = getFileExtension(url);
+  const titleExt = getFileExtension(title || '');
+  const params = rawParsed && typeof rawParsed.params === 'string' ? parseJsonSafe(rawParsed.params) : rawParsed?.params;
+  const paramExt = (params?.fileExt || rawParsed?.fileExt || '').toLowerCase();
+
+  const allDetectedExts = [urlExt, titleExt, paramExt].filter(Boolean);
+  for (const ext of allDetectedExts) {
+    if ([...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS, ...DOC_EXTENSIONS].includes(ext)) {
+      return true;
+    }
+  }
+
+  // 3. Check Zalo CDN domains (which only host uploaded attachments / photos / videos)
+  const lowerUrl = url.toLowerCase();
+  if (
+    lowerUrl.includes('dlf1.vn') ||
+    lowerUrl.includes('zdn.vn') ||
+    lowerUrl.includes('zadn.vn') ||
+    lowerUrl.includes('zfcloud') ||
+    lowerUrl.includes('chat-photo') ||
+    lowerUrl.includes('res-zalo') ||
+    lowerUrl.includes('zalo-api')
+  ) {
     return true;
   }
+
+  // 4. If parsed data has file-specific properties
+  if (params?.fType !== undefined || params?.fileSize !== undefined || rawParsed?.fileSize !== undefined) {
+    return true;
+  }
+
   return false;
 }
 
+const galleryImages = computed(() => {
+  return mediaItems.value
+    .filter((item: any) => item.isImage)
+    .map((item: any) => ({
+      id: item.id,
+      url: item.url,
+      thumb: item.thumbUrl || item.url,
+      title: item.name || 'Ảnh',
+      date: item.fullDate || item.date,
+      name: item.name || 'anh.jpg',
+      rawUrl: item.rawUrl || item.url,
+    }));
+});
+
 function openLightbox(item: any) {
-  activeLightboxItem.value = item;
-  showLightbox.value = true;
+  lightboxImageError.value = false;
+  if (item.isImage) {
+    const list = galleryImages.value;
+    const idx = list.findIndex((img) => img.url === item.url || img.id === item.id);
+    activeImageViewerIndex.value = idx !== -1 ? idx : 0;
+    showImageViewer.value = true;
+  } else {
+    activeLightboxItem.value = item;
+    showLightbox.value = true;
+  }
 }
 
 function copyLink(url: string) {

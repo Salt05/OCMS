@@ -1,1 +1,0 @@
-[{"id": 1, "name": "Administrator", "work_email": "phananfn@gmail.com", "job_title": false}, {"id": 7, "name": "Bùi Hạnh Tiên", "work_email": "buihanhtien369@gmail.com", "job_title": false}]

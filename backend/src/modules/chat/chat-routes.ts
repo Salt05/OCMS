@@ -36,6 +36,55 @@ export async function checkConversationContactAccess(conversationId: string, use
   return conv.contact.assignedUserId === user.id;
 }
 
+export async function getOrResolveActiveZaloInstance(
+  conversation: { id: string; zaloAccountId: string; orgId: string },
+  userOrgId: string,
+): Promise<{ instance: any; accountId: string } | null> {
+  let instance = zaloPool.getInstance(conversation.zaloAccountId);
+  if (instance?.api) {
+    return { instance, accountId: conversation.zaloAccountId };
+  }
+
+  // If current account is disconnected/reconnected under a new ID, find active connected account
+  const currentAcc = await prisma.zaloAccount.findUnique({
+    where: { id: conversation.zaloAccountId },
+    select: { zaloUid: true },
+  });
+
+  const activeAccount = (currentAcc?.zaloUid
+    ? await prisma.zaloAccount.findFirst({
+        where: {
+          orgId: userOrgId,
+          status: 'connected',
+          deletedAt: null,
+          zaloUid: currentAcc.zaloUid,
+        },
+        orderBy: { lastConnectedAt: 'desc' },
+      })
+    : null) || (await prisma.zaloAccount.findFirst({
+        where: {
+          orgId: userOrgId,
+          status: 'connected',
+          deletedAt: null,
+        },
+        orderBy: { lastConnectedAt: 'desc' },
+      }));
+
+  if (activeAccount && zaloPool.getInstance(activeAccount.id)?.api) {
+    instance = zaloPool.getInstance(activeAccount.id);
+    await prisma.conversation
+      .update({
+        where: { id: conversation.id },
+        data: { zaloAccountId: activeAccount.id },
+      })
+      .catch(() => {});
+    conversation.zaloAccountId = activeAccount.id;
+    return { instance, accountId: activeAccount.id };
+  }
+
+  return null;
+}
+
 export async function chatRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
 
@@ -95,6 +144,12 @@ export async function chatRoutes(app: FastifyInstance) {
           OR: [
             {
               fullName: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+            {
+              zaloName: {
                 contains: search,
                 mode: 'insensitive',
               },
@@ -575,19 +630,13 @@ export async function chatRoutes(app: FastifyInstance) {
         pendingReplies.set(conversation.id, replyToId);
       }
 
-      const instance =
-        zaloPool.getInstance(
-          conversation.zaloAccountId,
-        );
-
-      if (!instance?.api) {
-        return reply
-          .status(400)
-          .send({
-            error:
-              'Zalo account not connected',
-          });
+      const resolved = await getOrResolveActiveZaloInstance(conversation, user.orgId);
+      if (!resolved?.instance?.api) {
+        return reply.status(400).send({
+          error: 'Tài khoản Zalo chưa kết nối. Vui lòng kết nối lại tài khoản để tiếp tục nhắn tin.',
+        });
       }
+      const instance = resolved.instance;
 
       // Rate limit
       const limits =
@@ -738,7 +787,7 @@ export async function chatRoutes(app: FastifyInstance) {
           const imageUrl = content.trim();
           const originalName = imageUrl.split('/').pop()?.split('?')[0] || 'image.jpg';
           const uploadId = randomUUID();
-          const tempDir = path.join(os.tmpdir(), 'zalo-crm-uploads', uploadId);
+          const tempDir = path.join(os.tmpdir(), 'ocms-uploads', uploadId);
           await fs.promises.mkdir(tempDir, { recursive: true });
           const tempFilePath = path.join(tempDir, originalName);
 
@@ -821,10 +870,11 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      const instance = zaloPool.getInstance(conversation.zaloAccountId);
-      if (!instance?.api) {
-        return reply.status(400).send({ error: 'Zalo account not connected' });
+      const resolved = await getOrResolveActiveZaloInstance(conversation, user.orgId);
+      if (!resolved?.instance?.api) {
+        return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
       }
+      const instance = resolved.instance;
 
       // Rate limit
       const limits = zaloRateLimiter.checkLimits(conversation.zaloAccountId);
@@ -835,7 +885,7 @@ export async function chatRoutes(app: FastifyInstance) {
       // Save file to temp directory preserving original filename
       const originalName = data.filename || `file_${Date.now()}`;
       const uploadId = randomUUID();
-      const tempDir = path.join(os.tmpdir(), 'zalo-crm-uploads', uploadId);
+      const tempDir = path.join(os.tmpdir(), 'ocms-uploads', uploadId);
       await fs.promises.mkdir(tempDir, { recursive: true });
       const tempFilePath = path.join(tempDir, originalName);
 
@@ -891,7 +941,42 @@ export async function chatRoutes(app: FastifyInstance) {
           return reply.status(response.status).send({ error: 'Failed to fetch file from source' });
         }
 
-        const rawName = filename || 'download';
+        let rawName = (filename || 'download').trim();
+
+        // Detect extension from URL or Content-Type if missing from filename
+        let contentType = response.headers.get('content-type') || 'application/octet-stream';
+        const urlWithoutQuery = url.split('?')[0].split('#')[0];
+        const extFromUrl = urlWithoutQuery.split('.').pop()?.toLowerCase();
+        
+        if (!rawName.includes('.')) {
+          if (extFromUrl && ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'mp4', 'mov', 'pdf'].includes(extFromUrl)) {
+            rawName = `${rawName}.${extFromUrl}`;
+          } else if (contentType.includes('image/jpeg') || contentType.includes('image/jpg')) {
+            rawName = `${rawName}.jpg`;
+          } else if (contentType.includes('image/png')) {
+            rawName = `${rawName}.png`;
+          } else if (contentType.includes('image/webp')) {
+            rawName = `${rawName}.webp`;
+          } else if (contentType.includes('image/gif')) {
+            rawName = `${rawName}.gif`;
+          } else if (contentType.includes('video/mp4')) {
+            rawName = `${rawName}.mp4`;
+          } else {
+            rawName = `${rawName}.jpg`;
+          }
+        }
+
+        // Correct octet-stream/text-plain content-type if filename indicates image
+        const ext = rawName.split('.').pop()?.toLowerCase();
+        if (contentType === 'application/octet-stream' || contentType === 'text/plain' || !contentType) {
+          if (ext === 'jpg' || ext === 'jpeg') contentType = 'image/jpeg';
+          else if (ext === 'png') contentType = 'image/png';
+          else if (ext === 'webp') contentType = 'image/webp';
+          else if (ext === 'gif') contentType = 'image/gif';
+          else if (ext === 'mp4') contentType = 'video/mp4';
+          else if (ext === 'pdf') contentType = 'application/pdf';
+        }
+
         const safeFilename = encodeURIComponent(rawName).replace(/['()]/g, escape);
         const asciiFilename = rawName.replace(/[^\x20-\x7E]/g, '_');
 
@@ -900,7 +985,6 @@ export async function chatRoutes(app: FastifyInstance) {
           `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`,
         );
 
-        const contentType = response.headers.get('content-type') || 'application/octet-stream';
         reply.header('Content-Type', contentType);
 
         const contentLength = response.headers.get('content-length');
@@ -985,16 +1069,32 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
+      const conv = await prisma.conversation.findUnique({
+        where: { id },
+        select: { currentState: true },
+      });
+
+      const dataToUpdate: any = { unreadCount: 0 };
+      let stateChanged = false;
+      if (conv?.currentState === 'HUMAN_REQUESTED') {
+        dataToUpdate.currentState = 'AI_PAUSED';
+        stateChanged = true;
+      }
+
       await prisma.conversation.updateMany({
         where: {
           id,
           orgId: user.orgId,
         },
-
-        data: {
-          unreadCount: 0,
-        },
+        data: dataToUpdate,
       });
+
+      if (stateChanged) {
+        zaloPool.getIO()?.emit('chat:state_updated', {
+          conversationId: id,
+          currentState: 'AI_PAUSED',
+        });
+      }
 
       return {
         success: true,
@@ -1093,10 +1193,11 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Message not found' });
       }
 
-      const instance = zaloPool.getInstance(conversation.zaloAccountId);
-      if (!instance?.api) {
-        return reply.status(400).send({ error: 'Zalo account not connected' });
+      const resolved = await getOrResolveActiveZaloInstance(conversation, user.orgId);
+      if (!resolved?.instance?.api) {
+        return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
       }
+      const instance = resolved.instance;
 
       if (!message.zaloMsgId) {
         return reply.status(400).send({ error: 'Message does not have a Zalo message ID' });

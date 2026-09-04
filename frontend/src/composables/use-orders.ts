@@ -16,6 +16,8 @@ export interface OrderLineItem {
   odooProductId: number | null;
   uomName: string | null;
   quantity: number;
+  originalPrice?: number | null;
+  discountedPrice?: number | null;
   priceUnit: number;
   discount: number;
   priceSubtotal: number;
@@ -291,9 +293,9 @@ export function useOrders() {
     }
   }
 
-  async function confirmOrder(id: string, customNote?: string, customZaloMessage?: string) {
+  async function confirmOrder(id: string, customNote?: string, customZaloMessage?: string, lines?: any[]) {
     try {
-      const res = await api.post(`/orders/${id}/confirm`, { customNote, customZaloMessage });
+      const res = await api.post(`/orders/${id}/confirm`, { customNote, customZaloMessage, lines });
       return res.data;
     } catch (err) {
       console.error('[useOrders] confirmOrder error:', err);

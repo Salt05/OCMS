@@ -9,12 +9,15 @@ if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from typing import AsyncGenerator
+import json
+import traceback
 
 from vanna import Agent
 from vanna.servers.fastapi.routes import register_chat_routes
-from vanna.servers.base import ChatHandler
+from vanna.servers.base import ChatHandler, ChatRequest
 from vanna.core.user import UserResolver, User, RequestContext
 from vanna.integrations.openai import OpenAILlmService
 from vanna.tools import RunSqlTool
@@ -105,7 +108,7 @@ tools.register_local_tool(SaveQuestionToolArgsTool(), access_groups=[])
 
 schema_text = "\n".join(loaded_tables_summary)
 
-dynamic_schema = f"""Bạn là Trợ lý AI Thông minh & Chuyên gia Phân tích Dữ liệu CRM của hệ thống ZaloCRM (kết nối cơ sở dữ liệu PostgreSQL và ERP Odoo).
+dynamic_schema = f"""Bạn là Trợ lý AI Thông minh & Chuyên gia Phân tích Dữ liệu CRM của hệ thống OCMS (kết nối cơ sở dữ liệu PostgreSQL và ERP Odoo).
 
 HỆ THỐNG CƠ SỞ DỮ LIỆU ĐANG CÓ CÁC BẢNG SAU:
 {schema_text}
@@ -222,7 +225,7 @@ agent = Agent(
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 
-app = FastAPI(title="Vanna AI Data Assistant with Multi-Device Chat History")
+app = FastAPI(title="OCMS AI Data Assistant with Multi-Device Chat History")
 
 # Cấu hình CORS để frontend từ bất kỳ domain nào cũng có thể gọi API
 app.add_middleware(
@@ -238,12 +241,51 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/", response_class=FileResponse)
 async def get_index():
-    """Trả về giao diện trang web độc lập Vanna AI."""
+    """Trả về giao diện trang web độc lập OCMS AI."""
     return FileResponse("static/index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
-# Khởi tạo Chat Handler và đăng ký API routes của Vanna (/api/vanna/v2/chat_sse)
+# Khởi tạo Chat Handler và đăng ký API routes
 chat_handler = ChatHandler(agent)
 register_chat_routes(app, chat_handler)
+
+@app.post("/api/ai/chat_sse")
+async def ai_chat_sse(
+    chat_request: ChatRequest, http_request: Request
+) -> StreamingResponse:
+    """Server-Sent Events endpoint for OCMS AI streaming chat."""
+    chat_request.request_context = RequestContext(
+        cookies=dict(http_request.cookies),
+        headers=dict(http_request.headers),
+        remote_addr=http_request.client.host if http_request.client else None,
+        query_params=dict(http_request.query_params),
+        metadata=chat_request.metadata,
+    )
+
+    async def generate() -> AsyncGenerator[str, None]:
+        try:
+            async for chunk in chat_handler.handle_stream(chat_request):
+                chunk_json = chunk.model_dump_json()
+                yield f"data: {chunk_json}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            traceback.print_exc()
+            error_data = {
+                "type": "error",
+                "data": {"message": str(e)},
+                "conversation_id": chat_request.conversation_id or "",
+                "request_id": chat_request.request_id or "",
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 # ------------------------------------------------------------------------------
 # Auth Models & Dependency Helper
@@ -444,7 +486,7 @@ if __name__ == "__main__":
     import uvicorn
     import uuid
     print("--------------------------------------------------")
-    print("🚀 Khởi chạy Vanna AI Chatbot Web App!")
+    print("🚀 Khởi chạy OCMS AI Chatbot Web App!")
     print("👉 Mở trình duyệt truy cập: http://localhost:8000")
     print("📁 CSDL Lịch sử: chatbot.db (SQLite)")
     print("--------------------------------------------------")
