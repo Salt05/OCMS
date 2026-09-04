@@ -119,6 +119,20 @@
                 class="mb-2"
               />
 
+              <!-- Cách gọi khách hàng (Xưng hô) -->
+              <v-combobox
+                v-model="form.salutation"
+                :items="SALUTATION_OPTIONS"
+                label="Cách gọi khách hàng (Xưng hô)"
+                placeholder="Chọn hoặc nhập: Anh, Chị, Bạn, Cô, Chú..."
+                density="compact"
+                variant="outlined"
+                prepend-inner-icon="lucide-sparkles"
+                hide-details="auto"
+                class="mb-2"
+                clearable
+              />
+
               <!-- Tên liên lạc (Zalo) -->
               <v-text-field
                 :model-value="form.zaloName || contact?.zaloName || conversation?.contact?.zaloName || 'Khách hàng Zalo'"
@@ -449,7 +463,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import type { Contact } from '@/composables/use-contacts';
-import { STATUS_OPTIONS, SOURCE_OPTIONS } from '@/composables/use-contacts';
+import { STATUS_OPTIONS, SOURCE_OPTIONS, SALUTATION_OPTIONS } from '@/composables/use-contacts';
 import { useChatContactPanel } from '@/composables/use-chat-contact-panel';
 import { useUsers } from '@/composables/use-users';
 import { useAuthStore } from '@/stores/auth';
@@ -487,10 +501,12 @@ const {
 );
 
 const userOptions = computed(() => {
-  return users.value.map(u => ({
-    title: u.fullName || u.email,
-    value: u.id,
-  }));
+  return users.value
+    .filter(u => (u.isActive && u.odooId) || u.id === form.assignedUserId)
+    .map(u => ({
+      title: u.fullName || u.email,
+      value: u.id,
+    }));
 });
 
 function formatDateShort(dateStr: string) {

@@ -17,7 +17,7 @@
           </v-btn>
           <div>
             <h2 class="text-subtitle-1 font-weight-bold mb-0">
-              {{ isNew ? 'Thêm khách hàng mới' : 'Chi tiết khách hàng' }}
+              Chi tiết khách hàng
             </h2>
             <span v-if="form.customerId" class="text-caption text-primary font-weight-medium">
               Mã KH: #{{ form.customerId }}
@@ -247,6 +247,22 @@
                   />
                 </v-col>
 
+                <!-- Cách gọi khách hàng (Xưng hô) -->
+                <v-col cols="12" sm="6">
+                  <v-combobox
+                    v-model="form.salutation"
+                    :items="SALUTATION_OPTIONS"
+                    label="Cách gọi khách hàng (Xưng hô)"
+                    placeholder="Chọn hoặc nhập: Anh, Chị, Bạn, Cô, Chú..."
+                    density="compact"
+                    variant="outlined"
+                    prepend-inner-icon="lucide-sparkles"
+                    hide-details="auto"
+                    class="mb-2"
+                    clearable
+                  />
+                </v-col>
+
                 <!-- Tên liên lạc (Tên Zalo ban đầu - Đặt đối xứng với Tên khách hàng) -->
                 <v-col cols="12" sm="6">
                   <v-text-field
@@ -322,9 +338,9 @@
                 <v-col cols="12" sm="6">
                   <v-select
                     v-model="form.assignedUserId"
-                    :items="users"
-                    item-title="fullName"
-                    item-value="id"
+                    :items="userOptions"
+                    item-title="title"
+                    item-value="value"
                     label="Nhân viên phụ trách"
                     placeholder="Chọn nhân viên OCMS..."
                     density="compact"
@@ -567,7 +583,7 @@
         <v-btn variant="outlined" @click="close">Đóng</v-btn>
         <v-spacer />
         <v-btn color="primary" prepend-icon="lucide-check" :loading="saving" @click="onSave">
-          {{ isNew ? 'Tạo khách hàng' : 'Lưu thay đổi' }}
+          Lưu thay đổi
         </v-btn>
       </div>
       </div>
@@ -580,7 +596,7 @@ import { ref, watch, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import type { Contact } from '@/composables/use-contacts';
-import { STATUS_OPTIONS, SOURCE_OPTIONS, useContacts } from '@/composables/use-contacts';
+import { STATUS_OPTIONS, SOURCE_OPTIONS, SALUTATION_OPTIONS, useContacts } from '@/composables/use-contacts';
 import { useUsers } from '@/composables/use-users';
 import { useAuthStore } from '@/stores/auth';
 import TagSelector from '@/components/common/TagSelector.vue';
@@ -601,6 +617,15 @@ const { saving, deleting, createContact, updateContact, deleteContact, fetchCont
 const { users, fetchUsers } = useUsers();
 const authStore = useAuthStore();
 const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role || ''));
+
+const userOptions = computed(() => {
+  return users.value
+    .filter(u => (u.isActive && u.odooId) || u.id === form.value.assignedUserId)
+    .map(u => ({
+      title: u.fullName || u.email,
+      value: u.id,
+    }));
+});
 
 const activeTab = ref('profile');
 const fullContactDetail = ref<Contact | null>(null);
@@ -722,6 +747,7 @@ async function createOdooCustomer() {
   hasSearchedOdoo.value = true;
   
   try {
+    const assignedUser = users.value.find(u => u.id === form.value.assignedUserId);
     const res = await api.post('/odoo/customers', {
       is_company: form.value.isCompany,
       name: form.value.fullName,
@@ -729,7 +755,7 @@ async function createOdooCustomer() {
       city: form.value.zone,
       phone: form.value.phone,
       email: form.value.email,
-      salesperson: users.value.find(u => u.id === form.value.assignedUserId)?.fullName || '',
+      salesperson: assignedUser?.odooId ? parseInt(assignedUser.odooId) : (assignedUser?.fullName || ''),
     });
     
     if (res.data?.success && res.data?.id) {
@@ -755,6 +781,7 @@ const isNew = computed(() => !props.contact?.id);
 interface FormState {
   isCompany: boolean;
   fullName: string;
+  salutation: string;
   zaloName: string;
   customerId: string;
   contactType: 'customer' | 'employee' | 'other';
@@ -777,6 +804,7 @@ function emptyForm(): FormState {
   return {
     isCompany: false,
     fullName: '',
+    salutation: '',
     zaloName: '',
     customerId: '',
     contactType: 'other',
@@ -806,6 +834,7 @@ watch(() => props.contact, async (c) => {
     form.value = {
       isCompany: false,
       fullName: !isInvalid(c.fullName) ? (c.fullName ?? '') : (c.zaloName || ''),
+      salutation: c.salutation ?? '',
       zaloName: c.zaloName || (!isInvalid(c.fullName) ? (c.fullName ?? '') : ''),
       customerId: c.customerId ?? '',
       contactType: c.contactType ?? 'other',
@@ -881,6 +910,7 @@ function formatDateShort(dateStr?: string | null) {
 async function onSave() {
   const payload: Partial<Contact> = {
     fullName: form.value.fullName || null,
+    salutation: form.value.salutation || null,
     zaloName: form.value.zaloName || null,
     customerId: form.value.customerId || null,
     contactType: form.value.contactType,

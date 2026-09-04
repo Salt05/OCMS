@@ -73,6 +73,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/chatbot-test',
+    name: 'ChatbotTest',
+    component: () => import('@/views/ChatbotTestView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/SettingsView.vue'),
@@ -120,7 +126,7 @@ router.beforeEach(async (to, _from, next) => {
 
     // Role check for admin-only pages
     if (to.meta.requiresAdmin && !authStore.isAdmin) {
-      return next('/');
+      return next(to.path === '/chatbot-test' ? '/ai-assistant' : '/');
     }
   }
 

@@ -47,11 +47,6 @@
         >
           Xóa ({{ selected.length }})
         </v-btn>
-
-        <!-- Add Contact -->
-        <v-btn color="primary" size="small" prepend-icon="lucide-plus" class="text-none" @click="openCreate">
-          Thêm KH
-        </v-btn>
       </div>
     </div>
 
@@ -106,9 +101,18 @@
               <span v-else class="text-caption text-medium-emphasis">—</span>
             </td>
 
+            <!-- Cách gọi (Desktop only) -->
+            <td v-if="!isMobile" class="text-center">
+              <v-chip v-if="item.salutation" size="x-small" variant="flat" color="purple-lighten-4" class="text-purple-darken-3 font-weight-bold">
+                {{ item.salutation }}
+              </v-chip>
+              <span v-else class="text-caption text-medium-emphasis">—</span>
+            </td>
+
             <!-- Full name -->
             <td class="text-left" :style="isMobile ? (isSelectMode ? 'width: 34%;' : 'width: 38%;') : ''">
               <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="getContactDisplayName(item)">
+                <span v-if="item.salutation" class="text-primary font-weight-bold mr-1">[{{ item.salutation }}]</span>
                 {{ formatCustomerName(getContactDisplayName(item)) }}
               </div>
               <div v-else class="d-flex align-center gap-1.5 flex-nowrap" :title="getContactDisplayName(item)">
@@ -420,7 +424,8 @@ const headers = computed(() => {
     return list;
   }
   return [
-    { title: 'Mã KH', key: 'customerId', sortable: true, width: '100px', align: 'center' as const },
+    { title: 'Mã KH', key: 'customerId', sortable: true, width: '90px', align: 'center' as const },
+    { title: 'Cách gọi', key: 'salutation', sortable: true, width: '100px', align: 'center' as const },
     { title: 'Tên khách hàng', key: 'fullName', sortable: true },
     { title: 'SĐT', key: 'phone', sortable: false },
     { title: 'Email', key: 'email', sortable: false },
@@ -448,11 +453,6 @@ function statusColor(status: string) {
 function onFilterChange() {
   pagination.page = 1;
   fetchContacts();
-}
-
-function openCreate() {
-  selectedContact.value = null;
-  showDialog.value = true;
 }
 
 function onRowClick(_event: Event, item: Contact) {

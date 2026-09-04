@@ -279,7 +279,7 @@ class ChatbotService {
       // Only send waiting acknowledgment if CURRENT message attached an image OR customer asks to re-examine image
       if (currentMsgHasImages || (isReexamineImage && hasDirectImages)) {
         const rawPet = (memory.sessionState.petInfo as any) || {};
-        const salutation = rawPet._savedCustomerPronoun || 'anh/chị';
+        const salutation = (memory.contact as any)?.salutation?.trim() || rawPet._savedCustomerPronoun || 'anh/chị';
         const ackMsg = currentMsgHasImages
           ? `Dạ em đã nhận được hình ảnh rồi ạ! ${salutation} đợi em một lát để em kiểm tra và đối chiếu danh sách sản phẩm với kho nhé ạ.`
           : `Dạ em đang xem lại hình ảnh và đối chiếu danh sách sản phẩm với kho, ${salutation} chờ em một lát nhé ạ!`;
@@ -498,7 +498,7 @@ class ChatbotService {
         }
 
         const rawPet = (memory.sessionState.petInfo as any) || {};
-        const salutation = rawPet._savedCustomerPronoun || 'anh/chị';
+        const salutation = (memory.contact as any)?.salutation?.trim() || rawPet._savedCustomerPronoun || 'anh/chị';
         const waitReply = `Dạ vâng, em đang chờ ${salutation} gửi hình ảnh hoặc thông tin sản phẩm để lên đơn nhé ạ.`;
 
         await this.sendAiResponse(conversationId, zaloAccountId, waitReply, orgId);
@@ -539,7 +539,7 @@ class ChatbotService {
 
       if (isWaitRequest && (memory.currentState === 'WAITING_FOR_CUSTOMER_INFO' || memory.currentState === 'ORDER_COLLECTION')) {
         const rawPet = (memory.sessionState.petInfo as any) || {};
-        const salutation = rawPet._savedCustomerPronoun || 'anh/chị';
+        const salutation = (memory.contact as any)?.salutation?.trim() || rawPet._savedCustomerPronoun || 'anh/chị';
         const waitReply = `Dạ vâng, em đợi ${salutation} nhé ạ.`;
 
         await this.sendAiResponse(conversationId, zaloAccountId, waitReply, orgId);
@@ -598,7 +598,7 @@ class ChatbotService {
         // If no image arrived yet, but we are waiting for customer info, keep waiting without generating complaints
         if (memory.currentState === 'WAITING_FOR_CUSTOMER_INFO') {
           const rawPet = (memory.sessionState.petInfo as any) || {};
-          const salutation = rawPet._savedCustomerPronoun || 'anh/chị';
+          const salutation = (memory.contact as any)?.salutation?.trim() || rawPet._savedCustomerPronoun || 'anh/chị';
           const waitReply = `Dạ vâng, em đang chờ ${salutation} gửi hình ảnh hoặc thông tin sản phẩm để lên đơn nhé ạ.`;
           await this.sendAiResponse(conversationId, zaloAccountId, waitReply, orgId);
           this.scheduleOrderWaitTimer({
@@ -733,8 +733,9 @@ class ChatbotService {
 
       // 9. Extract Dynamic Persona, Pronouns & Tone from conversation history + persistent pronouns
       const rawPet = (memory.sessionState.petInfo as any) || {};
+      const contactSalutation = (memory.contact as any)?.salutation?.trim();
       const savedPronoun = {
-        customerPronoun: rawPet._savedCustomerPronoun || undefined,
+        customerPronoun: contactSalutation || rawPet._savedCustomerPronoun || undefined,
         selfPronoun: rawPet._savedSelfPronoun || undefined,
       };
 

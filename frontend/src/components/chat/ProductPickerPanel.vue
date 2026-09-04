@@ -81,6 +81,7 @@
                 v-if="prod.image_url"
                 :src="prod.image_url"
                 cover
+                @error="() => { prod.image_url = undefined; }"
               />
               <v-icon v-else size="18" class="opacity-60">lucide-image</v-icon>
             </v-avatar>

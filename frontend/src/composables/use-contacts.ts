@@ -10,6 +10,7 @@ import { api } from '@/api/index';
 export interface Contact {
   id: string;
   fullName: string | null;
+  salutation?: string | null;
   zaloName?: string | null;
   phone: string | null;
   email?: string | null;
@@ -42,6 +43,8 @@ export interface ContactFilters {
   contactType: string;
   assignedUserId: string;
 }
+
+export const SALUTATION_OPTIONS = ['Anh', 'Chị', 'Bạn', 'Cô', 'Chú', 'Bác', 'Em'];
 
 export const SOURCE_OPTIONS = [
   { text: 'Facebook', value: 'FB' },

@@ -678,104 +678,266 @@ class OdooSyncService {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // SYNC: Products (product.product + Directus enrichment)
+  // SYNC: Products (Directus + Odoo unified with Directus priority)
   // ──────────────────────────────────────────────────────────────────────────
-  async syncProducts(orgId?: string): Promise<number> {
+  async syncProducts(orgId?: string): Promise<{
+    createdCount: number;
+    updatedCount: number;
+    totalProcessed: number;
+    message: string;
+  }> {
     const oid = orgId || (await this.getOrgId());
     const modelName = 'product.product';
-    const syncState = await this.getSyncState(oid, modelName);
 
     await this.updateSyncState(oid, modelName, { status: 'syncing' });
 
     try {
+      // 1. Fetch fresh products from Directus (force = true)
       let directusProducts: any[] = [];
       try {
         directusProducts = await directusService.getProducts(true);
+        if (directusProducts && directusProducts.length > 0) {
+          directusService.saveDiskCache(directusProducts).catch(() => {});
+        }
       } catch (e: any) {
-        logger.warn('[sync] Directus products fetch failed, will use Odoo fallback:', e.message);
+        logger.warn('[sync] Directus products fetch error, fallback to disk cache:', e.message);
+        directusProducts = directusService.loadDiskCache();
       }
 
-      const domain: any[] = [['sale_ok', '=', true], ['active', '=', true]];
-      if (syncState.lastWriteDate && directusProducts.length === 0) {
-        domain.push(['write_date', '>', syncState.lastWriteDate]);
+      // 2. Fetch products from Odoo
+      let odooProducts: any[] = [];
+      try {
+        const domain: any[] = [['sale_ok', '=', true], ['active', '=', true]];
+        odooProducts = await odooService.executeKw<any[]>('product.product', 'search_read', [domain], {
+          fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'uom_id', 'active', 'write_date'],
+          context: { lang: 'vi_VN' },
+          order: 'write_date asc',
+        }) || [];
+      } catch (e: any) {
+        logger.warn('[sync] Odoo products fetch failed, continuing with Directus products:', e.message);
       }
 
-      const odooProducts = await odooService.executeKw<any[]>('product.product', 'search_read', [domain], {
-        fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'uom_id', 'active', 'write_date'],
-        context: { lang: 'vi_VN' },
-        order: 'write_date asc',
-      });
+      // 3. Build lookup maps for Directus products (by odoo_id and by SKU)
+      const directusByOdooId = new Map<number, any>();
+      const directusBySku = new Map<string, any>();
 
-      const directusMap = new Map<number, any>();
       for (const dp of directusProducts) {
-        const odooId = dp.odoo_id || dp.id;
-        if (odooId) directusMap.set(odooId, dp);
+        const numId = Number(dp.odoo_id || dp.id);
+        if (numId) directusByOdooId.set(numId, dp);
+        const skuKey = (dp.sku || dp.default_code || '').trim().toLowerCase();
+        if (skuKey) directusBySku.set(skuKey, dp);
       }
 
-      const products = odooProducts || [];
-      let upsertCount = 0;
-      let latestWriteDate = syncState.lastWriteDate || '';
+      const processedDirectus = new Set<any>();
+      const unifiedList: any[] = [];
 
-      for (const op of products) {
-        const directusData = directusMap.get(op.id);
-        const sku = op.default_code || directusData?.sku || '';
-        const uomName = Array.isArray(op.uom_id) && op.uom_id.length > 1
-          ? String(op.uom_id[1]) : (directusData?.uom_name || '');
+      // A. Process Odoo products (merge with Directus when duplicate, PRIORITIZING Directus)
+      for (const op of odooProducts) {
+        const opSku = (op.default_code || '').trim().toLowerCase();
+        const dp = (op.id ? directusByOdooId.get(op.id) : null) || (opSku ? directusBySku.get(opSku) : null);
 
-        await prisma.productCache.upsert({
-          where: { orgId_odooId: { orgId: oid, odooId: op.id } },
-          update: {
-            sku,
-            name: op.name || '',
-            displayName: op.display_name || (sku ? `[${sku}] ${op.name}` : op.name),
-            listPrice: directusData?.wholesale_price || op.list_price || 0,
-            wholesalePrice: directusData?.wholesale_price || op.list_price || 0,
-            retailPrice: directusData?.retail_price || 0,
-            uomName,
-            weight: directusData?.weight || null,
-            specification: directusData?.specification || null,
-            imageUrl: directusData?.image_url || null,
-            description: directusData?.description || null,
-            ingredients: directusData?.ingredients || null,
-            target: directusData?.target || null,
-            preservation: directusData?.preservation || null,
-            isActive: op.active !== false,
-          },
-          create: {
-            orgId: oid,
+        if (dp) {
+          processedDirectus.add(dp);
+          // Prioritize Directus data
+          const sku = dp.sku || dp.default_code || op.default_code || '';
+          const name = dp.name || op.name || '';
+          const uomName = dp.uom_name || (Array.isArray(op.uom_id) && op.uom_id.length > 1 ? String(op.uom_id[1]) : 'Gói');
+          const wholesalePrice = Number(dp.wholesale_price || dp.list_price || op.list_price || 0);
+          const listPrice = Number(dp.list_price || dp.wholesale_price || op.list_price || 0);
+          const retailPrice = Number(dp.retail_price || 0);
+
+          unifiedList.push({
             odooId: op.id,
             sku,
-            name: op.name || '',
-            displayName: op.display_name || (sku ? `[${sku}] ${op.name}` : op.name),
-            listPrice: directusData?.wholesale_price || op.list_price || 0,
-            wholesalePrice: directusData?.wholesale_price || op.list_price || 0,
-            retailPrice: directusData?.retail_price || 0,
+            name,
+            displayName: dp.display_name || (sku ? `[${sku}] ${name}` : (op.display_name || name)),
+            listPrice: listPrice > 0 ? listPrice : wholesalePrice,
+            wholesalePrice,
+            retailPrice,
             uomName,
-            weight: directusData?.weight || null,
-            specification: directusData?.specification || null,
-            imageUrl: directusData?.image_url || null,
-            description: directusData?.description || null,
-            ingredients: directusData?.ingredients || null,
-            target: directusData?.target || null,
-            preservation: directusData?.preservation || null,
+            weight: dp.weight || null,
+            specification: dp.specification || null,
+            imageUrl: dp.image_url || null,
+            description: dp.description || null,
+            ingredients: dp.ingredients || null,
+            target: dp.target || null,
+            preservation: dp.preservation || null,
+            productGroupName: dp.product_group_name || null,
             isActive: op.active !== false,
-          },
-        });
+          });
+        } else {
+          // Odoo only product
+          const sku = op.default_code || '';
+          const name = op.name || '';
+          const uomName = Array.isArray(op.uom_id) && op.uom_id.length > 1 ? String(op.uom_id[1]) : 'Gói';
+          const listPrice = Number(op.list_price || 0);
 
-        if (op.write_date && op.write_date > latestWriteDate) {
-          latestWriteDate = op.write_date;
+          unifiedList.push({
+            odooId: op.id,
+            sku,
+            name,
+            displayName: op.display_name || (sku ? `[${sku}] ${name}` : name),
+            listPrice,
+            wholesalePrice: listPrice,
+            retailPrice: 0,
+            uomName,
+            weight: null,
+            specification: null,
+            imageUrl: null,
+            description: null,
+            ingredients: null,
+            target: null,
+            preservation: null,
+            productGroupName: null,
+            isActive: op.active !== false,
+          });
         }
-        upsertCount++;
+      }
+
+      // B. Process remaining Directus products not matched with any Odoo product
+      for (const dp of directusProducts) {
+        if (processedDirectus.has(dp)) continue;
+
+        const odooId = Number(dp.odoo_id || dp.id);
+        const sku = dp.sku || dp.default_code || '';
+        const name = dp.name || '';
+        const wholesalePrice = Number(dp.wholesale_price || dp.list_price || 0);
+        const listPrice = Number(dp.list_price || dp.wholesale_price || 0);
+        const retailPrice = Number(dp.retail_price || 0);
+
+        unifiedList.push({
+          odooId,
+          sku,
+          name,
+          displayName: dp.display_name || (sku ? `[${sku}] ${name}` : name),
+          listPrice: listPrice > 0 ? listPrice : wholesalePrice,
+          wholesalePrice,
+          retailPrice,
+          uomName: dp.uom_name || 'Gói',
+          weight: dp.weight || null,
+          specification: dp.specification || null,
+          imageUrl: dp.image_url || null,
+          description: dp.description || null,
+          ingredients: dp.ingredients || null,
+          target: dp.target || null,
+          preservation: dp.preservation || null,
+          productGroupName: dp.product_group_name || null,
+          isActive: true,
+        });
+      }
+
+      // 4. Fetch existing database records in ProductCache
+      const existingRows = await prisma.productCache.findMany({
+        where: { orgId: oid },
+      });
+      const existingByOdooId = new Map<number, any>();
+      const existingBySku = new Map<string, any>();
+      for (const row of existingRows) {
+        existingByOdooId.set(row.odooId, row);
+        if (row.sku) existingBySku.set(row.sku.trim().toLowerCase(), row);
+      }
+
+      let createdCount = 0;
+      let updatedCount = 0;
+
+      for (const item of unifiedList) {
+        const itemSkuKey = (item.sku || '').trim().toLowerCase();
+        const existing = existingByOdooId.get(item.odooId) || (itemSkuKey ? existingBySku.get(itemSkuKey) : null);
+
+        if (!existing) {
+          const conflict = await prisma.productCache.findUnique({
+            where: { orgId_odooId: { orgId: oid, odooId: item.odooId } },
+          });
+
+          if (!conflict) {
+            await prisma.productCache.create({
+              data: {
+                orgId: oid,
+                odooId: item.odooId,
+                sku: item.sku || null,
+                name: item.name,
+                displayName: item.displayName || null,
+                listPrice: item.listPrice,
+                wholesalePrice: item.wholesalePrice,
+                retailPrice: item.retailPrice,
+                uomName: item.uomName || null,
+                weight: item.weight || null,
+                specification: item.specification || null,
+                imageUrl: item.imageUrl || null,
+                description: item.description || null,
+                ingredients: item.ingredients || null,
+                target: item.target || null,
+                preservation: item.preservation || null,
+                category: item.productGroupName || null,
+                isActive: item.isActive,
+              },
+            });
+            createdCount++;
+            existingByOdooId.set(item.odooId, item);
+            if (itemSkuKey) existingBySku.set(itemSkuKey, item);
+          }
+        } else {
+          // Check for differences (comparing fields)
+          const hasDiff =
+            (existing.name || '').trim() !== (item.name || '').trim() ||
+            (existing.sku || '').trim() !== (item.sku || '').trim() ||
+            (existing.displayName || '').trim() !== (item.displayName || '').trim() ||
+            Math.abs((existing.listPrice || 0) - (item.listPrice || 0)) > 0.01 ||
+            Math.abs((existing.wholesalePrice || 0) - (item.wholesalePrice || 0)) > 0.01 ||
+            Math.abs((existing.retailPrice || 0) - (item.retailPrice || 0)) > 0.01 ||
+            (existing.uomName || '').trim() !== (item.uomName || '').trim() ||
+            (existing.weight || '').trim() !== (item.weight || '').trim() ||
+            (existing.specification || '').trim() !== (item.specification || '').trim() ||
+            (existing.imageUrl || '').trim() !== (item.imageUrl || '').trim() ||
+            (existing.description || '').trim() !== (item.description || '').trim() ||
+            (existing.ingredients || '').trim() !== (item.ingredients || '').trim() ||
+            (existing.target || '').trim() !== (item.target || '').trim() ||
+            (existing.preservation || '').trim() !== (item.preservation || '').trim() ||
+            existing.isActive !== item.isActive;
+
+          if (hasDiff) {
+            await prisma.productCache.update({
+              where: { id: existing.id },
+              data: {
+                odooId: item.odooId,
+                sku: item.sku || existing.sku,
+                name: item.name,
+                displayName: item.displayName || existing.displayName,
+                listPrice: item.listPrice,
+                wholesalePrice: item.wholesalePrice,
+                retailPrice: item.retailPrice,
+                uomName: item.uomName || existing.uomName,
+                weight: item.weight || existing.weight,
+                specification: item.specification || existing.specification,
+                imageUrl: item.imageUrl || existing.imageUrl,
+                description: item.description || existing.description,
+                ingredients: item.ingredients || existing.ingredients,
+                target: item.target || existing.target,
+                preservation: item.preservation || existing.preservation,
+                isActive: item.isActive,
+              },
+            });
+            updatedCount++;
+          }
+        }
       }
 
       await this.updateSyncState(oid, modelName, {
         status: 'idle',
-        lastWriteDate: latestWriteDate,
-        recordCount: upsertCount,
+        recordCount: unifiedList.length,
       });
 
-      logger.info(`[sync] ${modelName}: Synced ${upsertCount} products (${directusProducts.length} enriched from Directus).`);
-      return upsertCount;
+      const message = createdCount > 0 || updatedCount > 0
+        ? `Đồng bộ thành công: ${createdCount} sản phẩm mới, cập nhật ${updatedCount} sản phẩm.`
+        : `Đồng bộ hoàn tất: Dữ liệu đã là mới nhất (0 sản phẩm mới, 0 cập nhật).`;
+
+      logger.info(`[sync] ${modelName}: ${message} (Total processed: ${unifiedList.length})`);
+      return {
+        createdCount,
+        updatedCount,
+        totalProcessed: unifiedList.length,
+        message,
+      };
     } catch (err: any) {
       await this.updateSyncState(oid, modelName, {
         status: 'error',
@@ -892,7 +1054,8 @@ class OdooSyncService {
       results.customers = await this.syncCustomers(oid);
       const ordersRes = await this.syncOrders(oid);
       results.orders = ordersRes.total;
-      results.products = await this.syncProducts(oid);
+      const prodRes = await this.syncProducts(oid);
+      results.products = prodRes.totalProcessed;
       results.invoices = await this.syncInvoices(oid);
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

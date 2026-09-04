@@ -233,42 +233,72 @@ export async function odooRoutes(app: FastifyInstance) {
       const { prisma } = await import('../../shared/database/prisma-client.js');
       const { randomUUID } = await import('node:crypto');
 
-      // Fetch user to get their linked employee ID
-      const dbUser = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { odooId: true }
-      });
-      const employeeId = dbUser?.odooId ? parseInt(dbUser.odooId) : undefined;
-      
+      // ── Determine salesperson (NV CSKH) for this order ──
+      // Priority: 1) Customer's assigned NV CSKH → 2) Logged-in user → 3) None
       let odooUserId: number | undefined = undefined;
       let salespersonName: string | undefined = undefined;
 
-      // Extract Odoo Salesperson (User) ID from Employee
-      if (employeeId) {
+      // 1. Check if the contact has an assigned NV CSKH with linked Odoo user
+      if (body.contactId) {
         try {
-          const employee = await odooService.getEmployeeById(employeeId);
-          if (employee && employee.user_id && Array.isArray(employee.user_id) && employee.user_id.length > 0) {
-            odooUserId = employee.user_id[0];
-          } else {
-            logger.warn(`[odoo-routes] Employee ${employeeId} does not have a linked user_id in Odoo. Cannot assign salesperson.`);
+          const contact = await prisma.contact.findFirst({
+            where: { id: body.contactId },
+            select: {
+              assignedUserId: true,
+              assignedUser: { select: { odooId: true, fullName: true } },
+            },
+          });
+          if (contact?.assignedUser?.odooId) {
+            odooUserId = parseInt(contact.assignedUser.odooId);
+            salespersonName = contact.assignedUser.fullName;
+            logger.info(`[odoo-routes] Using contact's assigned NV CSKH: ${salespersonName} (Odoo user #${odooUserId})`);
           }
         } catch (err: any) {
-          logger.warn(`[odoo-routes] Failed to fetch employee ${employeeId}:`, err.message);
+          logger.warn('[odoo-routes] Failed to fetch contact assignedUser:', err.message);
         }
       }
 
-      // Check if customer already has a salesperson
-      try {
-        const customer = await odooService.getCustomerById(body.partner_id);
-        if (customer && customer.salesperson) {
-          // Customer already has a salesperson assigned in Odoo, do not override
-          odooUserId = undefined;
+      // 1b. Check if partner_id maps to a contact with assigned NV CSKH, or partner has an existing Odoo salesperson
+      if (!odooUserId && body.partner_id) {
+        try {
+          const contactByPartner = await prisma.contact.findFirst({
+            where: { customerId: String(body.partner_id), orgId: user.orgId },
+            select: {
+              assignedUserId: true,
+              assignedUser: { select: { odooId: true, fullName: true } },
+            },
+          });
+          if (contactByPartner?.assignedUser?.odooId) {
+            odooUserId = parseInt(contactByPartner.assignedUser.odooId);
+            salespersonName = contactByPartner.assignedUser.fullName;
+            logger.info(`[odoo-routes] Using partner's contact assigned NV CSKH: ${salespersonName} (Odoo user #${odooUserId})`);
+          } else {
+            const odooCustomer = await odooService.getCustomerById(body.partner_id);
+            if (odooCustomer?.salespersonId) {
+              odooUserId = odooCustomer.salespersonId;
+              salespersonName = odooCustomer.salesperson;
+              logger.info(`[odoo-routes] Using Odoo partner's existing salesperson: ${salespersonName} (Odoo user #${odooUserId})`);
+            }
+          }
+        } catch (err: any) {
+          logger.warn('[odoo-routes] Failed to check partner salesperson:', err.message);
         }
-      } catch (err: any) {
-        logger.warn('[odoo-routes] Failed to fetch customer to check salesperson:', err.message);
       }
 
-      // Validate odooUserId and get salesperson name
+      // 2. Fallback: use the logged-in user's linked Odoo user ID
+      if (!odooUserId) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { odooId: true, fullName: true }
+        });
+        if (dbUser?.odooId) {
+          odooUserId = parseInt(dbUser.odooId);
+          salespersonName = dbUser.fullName;
+          logger.info(`[odoo-routes] Fallback to logged-in user: ${salespersonName} (Odoo user #${odooUserId})`);
+        }
+      }
+
+      // Validate odooUserId exists in Odoo
       if (odooUserId) {
         try {
           if (!salespersonsCache || Date.now() - salespersonsCacheTime > CACHE_DURATION) {
@@ -283,7 +313,7 @@ export async function odooRoutes(app: FastifyInstance) {
             odooUserId = undefined;
           }
         } catch (err: any) {
-          logger.warn('[odoo-routes] Failed to fetch salespersons cache:', err.message);
+          logger.warn('[odoo-routes] Failed to validate salesperson:', err.message);
           odooUserId = undefined;
         }
       }
@@ -409,6 +439,36 @@ export async function odooRoutes(app: FastifyInstance) {
     } catch (err: any) {
       logger.error('[odoo-routes] get salespersons error:', err);
       return reply.status(500).send({ error: err.message || 'Lỗi lấy danh sách nhân viên Odoo' });
+    }
+  });
+
+  // GET /api/v1/odoo/users — list/search Odoo internal users (res.users)
+  app.get('/api/v1/odoo/users', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { query = '' } = request.query as { query?: string };
+      const users = await odooService.searchOdooUsers(query, 30);
+      return reply.send({ success: true, users });
+    } catch (err: any) {
+      logger.error('[odoo-routes] search odoo users error:', err);
+      return reply.status(500).send({ error: err.message || 'Lỗi tìm kiếm tài khoản Odoo' });
+    }
+  });
+
+  // GET /api/v1/odoo/users/:id — get Odoo user by ID
+  app.get('/api/v1/odoo/users/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id } = request.params as { id: string };
+      if (!id) {
+        return reply.status(400).send({ error: 'Missing user ID' });
+      }
+      const odooUser = await odooService.getOdooUserById(id);
+      if (!odooUser) {
+        return reply.status(404).send({ error: 'Không tìm thấy tài khoản trên Odoo' });
+      }
+      return reply.send({ success: true, user: odooUser });
+    } catch (err: any) {
+      logger.error('[odoo-routes] get odoo user error:', err);
+      return reply.status(500).send({ error: err.message || 'Lỗi truy vấn Odoo' });
     }
   });
 }

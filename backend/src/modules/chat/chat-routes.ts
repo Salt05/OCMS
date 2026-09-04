@@ -214,9 +214,11 @@ export async function chatRoutes(app: FastifyInstance) {
               },
             },
 
-            orderBy: {
-              lastMessageAt: 'desc',
-            },
+            orderBy: [
+              { isPinned: 'desc' },
+              { pinnedAt: 'desc' },
+              { lastMessageAt: 'desc' },
+            ],
 
             skip:
               (parseInt(page) - 1) *
@@ -1098,6 +1100,78 @@ export async function chatRoutes(app: FastifyInstance) {
 
       return {
         success: true,
+      };
+    },
+  );
+
+  // ── Pin / Unpin conversation & sync to Zalo Web ────────────────────────
+  app.post(
+    '/api/v1/conversations/:id/pin',
+    async (
+      request: FastifyRequest,
+      reply: FastifyReply,
+    ) => {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const { pinned } = request.body as { pinned: boolean };
+
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const conv = await prisma.conversation.findFirst({
+        where: { id, orgId: user.orgId },
+      });
+
+      if (!conv) {
+        return reply.status(404).send({ error: 'Conversation not found' });
+      }
+
+      const isPinned = Boolean(pinned);
+      const updated = await prisma.conversation.update({
+        where: { id },
+        data: {
+          isPinned,
+          pinnedAt: isPinned ? new Date() : null,
+        },
+        select: {
+          id: true,
+          isPinned: true,
+          pinnedAt: true,
+          zaloAccountId: true,
+          externalThreadId: true,
+          threadType: true,
+        },
+      });
+
+      // Synchronize with Zalo Web via zca-js if account is connected
+      if (conv.zaloAccountId && conv.externalThreadId) {
+        const zaloApi = zaloPool.getApi(conv.zaloAccountId);
+        if (zaloApi && typeof zaloApi.setPinnedConversations === 'function') {
+          try {
+            // ThreadType: 0 = User, 1 = Group
+            const threadType = conv.threadType === 'group' ? 1 : 0;
+            const cleanThreadId = conv.externalThreadId.replace(/^[ug]/, '');
+            await zaloApi.setPinnedConversations(isPinned, cleanThreadId, threadType);
+            logger.info(`[chat] Synced pin status (${isPinned}) to Zalo Web for thread ${cleanThreadId}`);
+          } catch (zaloErr) {
+            logger.warn(`[chat] Failed to sync pin status to Zalo Web for thread ${conv.externalThreadId}:`, zaloErr);
+          }
+        }
+      }
+
+      // Broadcast real-time event to clients
+      zaloPool.getIO()?.emit('chat:conversation_pinned', {
+        conversationId: id,
+        isPinned: updated.isPinned,
+        pinnedAt: updated.pinnedAt,
+      });
+
+      return {
+        success: true,
+        isPinned: updated.isPinned,
+        pinnedAt: updated.pinnedAt,
       };
     },
   );

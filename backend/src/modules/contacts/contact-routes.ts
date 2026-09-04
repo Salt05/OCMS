@@ -67,6 +67,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         where.OR = [
           { fullName: { contains: search, mode: 'insensitive' } },
           { zaloName: { contains: search, mode: 'insensitive' } },
+          { salutation: { contains: search, mode: 'insensitive' } },
           { phone: { contains: search } },
           { email: { contains: search, mode: 'insensitive' } },
           { customerId: { contains: search, mode: 'insensitive' } },
@@ -317,6 +318,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         data: {
           orgId: user.orgId,
           fullName: body.fullName,
+          salutation: body.salutation !== undefined ? (body.salutation || null) : null,
           zaloName: body.zaloName,
           phone: body.phone,
           email: body.email,
@@ -388,6 +390,10 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         metadata: body.metadata,
       };
 
+      if (body.salutation !== undefined) {
+        updateData.salutation = body.salutation ? String(body.salutation).trim() : null;
+      }
+
       // Only allow updating assignedUserId if admin or assigning to self
       if (['owner', 'admin'].includes(user.role)) {
         updateData.assignedUserId = body.assignedUserId;
@@ -407,11 +413,50 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         where: { id },
         data: updateData,
         include: {
-          assignedUser: { select: { id: true, fullName: true, email: true } },
+          assignedUser: { select: { id: true, fullName: true, email: true, odooId: true } },
           appointments: { orderBy: { appointmentDate: 'desc' }, take: 10 },
           _count: { select: { conversations: true } },
         },
       });
+
+      // ── Sync salesperson to Odoo when assignedUserId changes ──
+      if (body.assignedUserId !== undefined && updated.customerId) {
+        try {
+          const partnerId = parseInt(updated.customerId);
+          if (!isNaN(partnerId) && partnerId > 0) {
+            if (body.assignedUserId) {
+              // User assigned: find their Odoo user ID and sync
+              const assignedUser = await prisma.user.findUnique({
+                where: { id: body.assignedUserId },
+                select: { odooId: true, fullName: true },
+              });
+              if (assignedUser?.odooId) {
+                const odooUserId = parseInt(assignedUser.odooId);
+                if (!isNaN(odooUserId) && odooUserId > 0) {
+                  await odooService.updateCustomer(partnerId, { user_id: odooUserId });
+                  // Update local salesperson name
+                  await prisma.contact.update({
+                    where: { id },
+                    data: { salesperson: assignedUser.fullName },
+                  });
+                  logger.info(`[contacts] Synced salesperson to Odoo: partner #${partnerId} → user #${odooUserId} (${assignedUser.fullName})`);
+                }
+              }
+            } else {
+              // NV CSKH was cleared: clear salesperson on Odoo too
+              await odooService.updateCustomer(partnerId, { user_id: false as any });
+              await prisma.contact.update({
+                where: { id },
+                data: { salesperson: null },
+              });
+              logger.info(`[contacts] Cleared salesperson on Odoo for partner #${partnerId}`);
+            }
+          }
+        } catch (err: any) {
+          logger.warn(`[contacts] Failed to sync salesperson to Odoo: ${err.message}`);
+          // Non-blocking: don't fail the contact update
+        }
+      }
 
       // Clean up any tags with usage count = 0
       await cleanupUnusedTags(user.orgId);

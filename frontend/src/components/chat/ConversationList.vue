@@ -528,11 +528,13 @@
               class="zalo-conv-item d-flex align-center px-3 py-2 cursor-pointer position-relative"
               :class="{
                 'is-active': conv.id === selectedId,
+                'is-pinned': conv.isPinned,
                 'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
                 'needs-confirmation-blink': conv.currentState === 'CONFIRMATION',
                 'needs-handoff-blink': conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId
               }"
               @click="$emit('select', conv.id)"
+              @contextmenu.prevent="openContextMenu($event, conv)"
             >
               <!-- Avatar -->
               <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
@@ -550,17 +552,42 @@
 
               <!-- Conversation Details -->
               <div class="zalo-conv-body flex-grow-1 overflow-hidden d-flex flex-column justify-center">
-                <!-- Top Row: Name + Time -->
+                <!-- Top Row: Name + Time + Pin Icon & Button -->
                 <div class="d-flex align-center justify-space-between mb-1">
-                  <span
-                    class="zalo-conv-title text-truncate"
-                    :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
-                  >
-                    {{ getConversationTitle(conv) }}
-                  </span>
-                  <span class="zalo-conv-time text-caption text-grey ml-2 flex-shrink-0">
-                    {{ formatTime(conv.lastMessageAt) }}
-                  </span>
+                  <div class="d-flex align-center gap-1.5 overflow-hidden flex-grow-1 mr-2">
+                    <v-icon
+                      v-if="conv.isPinned"
+                      size="13"
+                      color="amber-darken-2"
+                      class="flex-shrink-0"
+                      title="Đã ghim lên đầu"
+                    >
+                      lucide-pin
+                    </v-icon>
+                    <span
+                      class="zalo-conv-title text-truncate"
+                      :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
+                    >
+                      {{ getConversationTitle(conv) }}
+                    </span>
+                  </div>
+
+                  <div class="d-flex align-center gap-1 flex-shrink-0">
+                    <button
+                      type="button"
+                      class="zalo-conv-pin-btn"
+                      :class="{ 'is-pinned': conv.isPinned }"
+                      :title="conv.isPinned ? 'Bỏ ghim cuộc trò chuyện' : 'Ghim cuộc trò chuyện lên đầu'"
+                      @click.stop="togglePinConv(conv)"
+                    >
+                      <v-icon size="13" :color="conv.isPinned ? 'amber-darken-2' : 'grey'">
+                        {{ conv.isPinned ? 'lucide-pin-off' : 'lucide-pin' }}
+                      </v-icon>
+                    </button>
+                    <span class="zalo-conv-time text-caption text-grey">
+                      {{ formatTime(conv.lastMessageAt) }}
+                    </span>
+                  </div>
                 </div>
 
                 <!-- Bottom Row: Snippet + Unread Badge -->
@@ -621,11 +648,13 @@
           class="zalo-conv-item d-flex align-center px-3 py-2 cursor-pointer position-relative"
           :class="{
             'is-active': conv.id === selectedId,
+            'is-pinned': conv.isPinned,
             'is-unread': conv.unreadCount > 0 && conv.id !== selectedId,
             'needs-confirmation-blink': conv.currentState === 'CONFIRMATION',
             'needs-handoff-blink': conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId
           }"
           @click="$emit('select', conv.id)"
+          @contextmenu.prevent="openContextMenu($event, conv)"
         >
           <!-- Avatar -->
           <div class="zalo-conv-avatar-wrap mr-3.5 position-relative flex-shrink-0">
@@ -643,17 +672,42 @@
 
           <!-- Conversation Details -->
           <div class="zalo-conv-body flex-grow-1 overflow-hidden d-flex flex-column justify-center">
-            <!-- Top Row: Name + Time -->
+            <!-- Top Row: Name + Time + Pin Icon & Button -->
             <div class="d-flex align-center justify-space-between mb-1">
-              <span
-                class="zalo-conv-title text-truncate"
-                :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
-              >
-                {{ getConversationTitle(conv) }}
-              </span>
-              <span class="zalo-conv-time text-caption text-grey ml-2 flex-shrink-0">
-                {{ formatTime(conv.lastMessageAt) }}
-              </span>
+              <div class="d-flex align-center gap-1.5 overflow-hidden flex-grow-1 mr-2">
+                <v-icon
+                  v-if="conv.isPinned"
+                  size="13"
+                  color="amber-darken-2"
+                  class="flex-shrink-0"
+                  title="Đã ghim lên đầu"
+                >
+                  lucide-pin
+                </v-icon>
+                <span
+                  class="zalo-conv-title text-truncate"
+                  :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
+                >
+                  {{ getConversationTitle(conv) }}
+                </span>
+              </div>
+
+              <div class="d-flex align-center gap-1 flex-shrink-0">
+                <button
+                  type="button"
+                  class="zalo-conv-pin-btn"
+                  :class="{ 'is-pinned': conv.isPinned }"
+                  :title="conv.isPinned ? 'Bỏ ghim cuộc trò chuyện' : 'Ghim cuộc trò chuyện lên đầu'"
+                  @click.stop="togglePinConv(conv)"
+                >
+                  <v-icon size="13" :color="conv.isPinned ? 'amber-darken-2' : 'grey'">
+                    {{ conv.isPinned ? 'lucide-pin-off' : 'lucide-pin' }}
+                  </v-icon>
+                </button>
+                <span class="zalo-conv-time text-caption text-grey">
+                  {{ formatTime(conv.lastMessageAt) }}
+                </span>
+              </div>
             </div>
 
             <!-- Bottom Row: Snippet + Unread Badge -->
@@ -755,6 +809,32 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Context Menu for Pin / Unpin -->
+    <v-menu
+      v-model="contextMenuVisible"
+      :target="contextMenuTarget"
+      location="bottom start"
+      transition="fade-transition"
+    >
+      <v-list density="compact" class="py-1 rounded-lg elevation-4 border bg-surface" min-width="190">
+        <v-list-item
+          v-if="contextMenuConv"
+          density="compact"
+          class="cursor-pointer"
+          @click="handleContextMenuPin"
+        >
+          <template #prepend>
+            <v-icon size="16" :color="contextMenuConv.isPinned ? 'amber-darken-2' : 'medium-emphasis'">
+              {{ contextMenuConv.isPinned ? 'lucide-pin-off' : 'lucide-pin' }}
+            </v-icon>
+          </template>
+          <v-list-item-title class="text-body-2 font-weight-medium">
+            {{ contextMenuConv.isPinned ? 'Bỏ ghim hội thoại' : 'Ghim hội thoại lên đầu' }}
+          </v-list-item-title>
+        </v-list-item>
+      </v-list>
+    </v-menu>
   </div>
 </template>
 
@@ -764,6 +844,7 @@ import type { Conversation } from '@/composables/use-chat';
 import { useTags, type TagGroup } from '@/composables/use-tags';
 import TagGroupDialog from '@/components/common/TagGroupDialog.vue';
 import { api } from '@/api/index';
+import { isCallMessage, getCallInfo } from '@/utils/call-helpers';
 
 const props = defineProps<{
   conversations: Conversation[];
@@ -776,7 +857,32 @@ const emit = defineEmits<{
   select: [id: string];
   'update:search': [value: string];
   'filter-account': [accountId: string | null];
+  'toggle-pin': [payload: { conversationId: string; pinned: boolean }];
 }>();
+
+const contextMenuVisible = ref(false);
+const contextMenuTarget = ref<[number, number]>([0, 0]);
+const contextMenuConv = ref<Conversation | null>(null);
+
+function openContextMenu(e: MouseEvent, conv: Conversation) {
+  contextMenuConv.value = conv;
+  contextMenuTarget.value = [e.clientX, e.clientY];
+  contextMenuVisible.value = true;
+}
+
+function handleContextMenuPin() {
+  if (contextMenuConv.value) {
+    togglePinConv(contextMenuConv.value);
+  }
+  contextMenuVisible.value = false;
+}
+
+function togglePinConv(conv: Conversation) {
+  emit('toggle-pin', {
+    conversationId: conv.id,
+    pinned: !conv.isPinned,
+  });
+}
 
 const { tags, tagGroups, getTagStyle, getTagName, fetchTags, fetchTagGroups, deleteTagGroup } = useTags();
 
@@ -913,9 +1019,17 @@ const zoneGroups = computed<ZoneGroupItem[]>(() => {
   const groups: ZoneGroupItem[] = [];
   map.forEach((convs, zone) => {
     const unread = convs.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+    // Sort pinned conversations first inside zone
+    const sortedConvs = [...convs].sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      return timeB - timeA;
+    });
     groups.push({
       name: zone,
-      conversations: convs,
+      conversations: sortedConvs,
       unreadCount: unread,
     });
   });
@@ -1102,7 +1216,15 @@ const displayedConversations = computed(() => {
       return presenceMode.value === 'include' ? hasMatch : !hasMatch;
     });
   }
-  return list;
+
+  // Always sort pinned conversations to the very top
+  return [...list].sort((a, b) => {
+    if (a.isPinned && !b.isPinned) return -1;
+    if (!a.isPinned && b.isPinned) return 1;
+    const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+    const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+    return timeB - timeA;
+  });
 });
 
 onMounted(async () => {
@@ -1157,6 +1279,10 @@ function lastMessagePreview(conv: Conversation): string {
     return `${contactName} đã thu hồi một tin nhắn`;
   }
 
+  if (msg.contentType === 'call' || isCallMessage(msg)) {
+    return getCallInfo(msg).snippet;
+  }
+
   if (msg.contentType === 'image') return 'Hình ảnh';
   if (msg.contentType === 'video') return 'Video';
   if (msg.contentType === 'sticker') return 'Nhãn dán';
@@ -1166,6 +1292,11 @@ function lastMessagePreview(conv: Conversation): string {
   if (msg.content?.startsWith('{')) {
     try {
       const p = JSON.parse(msg.content);
+
+      // Cuộc gọi thoại / Video
+      if (p.action?.includes('call') || p.action === 'recommened.calltime' || p.title === 'sendBubbleMessage') {
+        return getCallInfo(msg).snippet;
+      }
       
       // Lịch hẹn / Reminder
       if (p.action === 'msginfo.actionlist') return 'Nhắc hẹn';
@@ -1371,8 +1502,35 @@ function formatTime(dateStr: string | null): string {
 .zalo-conv-item:hover {
   background-color: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.04);
 }
+.zalo-conv-item.is-pinned {
+  background-color: rgba(245, 158, 11, 0.035);
+}
+.zalo-conv-item.is-pinned:hover {
+  background-color: rgba(245, 158, 11, 0.07);
+}
 .zalo-conv-item.is-active {
   background-color: rgba(0, 104, 255, 0.1) !important;
+}
+
+.zalo-conv-pin-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.zalo-conv-item:hover .zalo-conv-pin-btn,
+.zalo-conv-pin-btn.is-pinned {
+  opacity: 1;
+}
+.zalo-conv-pin-btn:hover {
+  background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.1);
+  transform: scale(1.15);
 }
 
 .zalo-search-action-btn {

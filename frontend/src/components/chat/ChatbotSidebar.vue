@@ -163,6 +163,7 @@
                               :src="line.product.image_url"
                               :alt="line.product.name"
                               class="chat-product-img-render"
+                              @error="() => { if (line.product) line.product.image_url = undefined; }"
                             />
                             <div v-else class="w-100 h-100 d-flex align-center justify-center text-medium-emphasis">
                               <v-icon size="20" class="opacity-50">lucide-package</v-icon>

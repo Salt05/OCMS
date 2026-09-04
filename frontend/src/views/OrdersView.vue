@@ -1,7 +1,7 @@
 <template>
   <div class="orders-view">
     <!-- Page Header -->
-    <div class="d-flex align-center justify-space-between mb-4 flex-wrap gap-3">
+    <div class="d-flex align-center justify-space-between mb-4 flex-wrap ga-3" style="gap: 16px;">
       <div>
         <h1 class="editorial-heading d-flex align-center gap-2">
           <v-icon color="primary" class="page-icon">lucide-shopping-bag</v-icon>
@@ -9,11 +9,11 @@
         </h1>
       </div>
 
-      <div class="d-flex align-center gap-3">
+      <div class="d-flex align-center flex-wrap ga-3" style="gap: 16px;">
         <!-- Countdown Widget -->
-        <div class="d-flex align-center gap-1.5 text-caption text-medium-emphasis border rounded-lg px-3 py-2 bg-surface">
+        <div class="d-flex align-center ga-2 text-caption text-medium-emphasis border rounded-lg px-3 py-2 bg-surface" style="gap: 8px;">
           <v-icon size="14" color="primary" class="animate-spin-slow">lucide-timer</v-icon>
-          Tự động đồng bộ sau:
+          <span>Tự động đồng bộ sau:</span>
           <span class="font-weight-bold text-primary font-monospace" style="min-width: 24px; display: inline-block; text-align: right;">
             {{ countdown }}s
           </span>

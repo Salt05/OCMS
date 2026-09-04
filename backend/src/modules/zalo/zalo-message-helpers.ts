@@ -5,10 +5,61 @@
 import { prisma } from '../../shared/database/prisma-client.js';
 
 /**
+ * Check if the message is a call event (voice call, video call, missed call) from Zalo.
+ */
+export function isCallEvent(msgType: string | undefined, content: any): boolean {
+  if (msgType && (msgType.includes('call') || msgType.includes('calltime'))) return true;
+  if (!content) return false;
+
+  let parsed = content;
+  if (typeof content === 'string') {
+    if (
+      content.includes('calltime') ||
+      content.includes('recommened.call') ||
+      content.includes('sendBubbleMessage') ||
+      content.includes('calltype')
+    ) {
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
+    if (typeof parsed.action === 'string' && (parsed.action.includes('call') || parsed.action === 'recommened.calltime')) {
+      return true;
+    }
+    if (
+      parsed.title === 'sendBubbleMessage' &&
+      typeof parsed.description === 'string' &&
+      parsed.description.toLowerCase().includes('cuộc gọi')
+    ) {
+      return true;
+    }
+    if (parsed.params) {
+      let p = parsed.params;
+      if (typeof p === 'string') {
+        try { p = JSON.parse(p); } catch {}
+      }
+      if (typeof p === 'object' && p !== null && ('duration' in p || 'calltype' in p || 'isCaller' in p)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * Map zca-js msgType string to a normalized content type label.
  * Falls back to 'text' for unrecognised types or plain-string content.
  */
 export function detectContentType(msgType: string | undefined, content: any): string {
+  if (isCallEvent(msgType, content)) return 'call';
   if (!msgType) return 'text';
   if (msgType.includes('photo') || msgType.includes('image')) return 'image';
   if (msgType.includes('sticker')) return 'sticker';
@@ -42,6 +93,7 @@ export function detectContentType(msgType: string | undefined, content: any): st
  * Extract attachments metadata (image url, thumbnail, dimensions, file info) from rawContent
  */
 export function extractAttachments(msgType: string | undefined, content: any): any[] {
+  if (isCallEvent(msgType, content)) return [];
   const attachments: any[] = [];
   if (!content) return attachments;
 

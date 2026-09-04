@@ -54,6 +54,8 @@ export class PersonaToneExtractor {
     const staffMessages = messages.filter(m => m.senderType === 'self' && m.content);
     const customerMessages = messages.filter(m => m.senderType === 'contact' && m.content);
 
+    const hasFixedCustomerPronoun = Boolean(savedPronoun?.customerPronoun && savedPronoun.customerPronoun !== 'anh/chị');
+
     // 1. Analyze Staff messages for selfPronoun, customerPronoun, tone, and emojis
     for (const msg of staffMessages) {
       const text = (msg.content || '').trim();
@@ -69,34 +71,36 @@ export class PersonaToneExtractor {
         selfPronoun = 'em';
       }
 
-      // Check customer addressing pronouns used by staff
-      const chiMatch = text.match(/\bchị\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
-      const anhMatch = text.match(/\banh\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
-      const coMatch = text.match(/\bcô\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
-      const chuMatch = text.match(/\bchú\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
+      // Check customer addressing pronouns used by staff (only if not fixed)
+      if (!hasFixedCustomerPronoun) {
+        const chiMatch = text.match(/\bchị\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
+        const anhMatch = text.match(/\banh\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
+        const coMatch = text.match(/\bcô\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
+        const chuMatch = text.match(/\bchú\s+([A-ZÀ-Ỹa-zà-ỹ]+)/i);
 
-      if (chiMatch && chiMatch[1] && !['mình', 'em', 'ơi', 'nhé', 'nha', 'ạ', 'gái'].includes(chiMatch[1].toLowerCase())) {
-        customerPronoun = `chị ${chiMatch[1]}`;
-        detectedName = chiMatch[1];
-      } else if (anhMatch && anhMatch[1] && !['mình', 'em', 'ơi', 'nhé', 'nha', 'ạ', 'trai'].includes(anhMatch[1].toLowerCase())) {
-        customerPronoun = `anh ${anhMatch[1]}`;
-        detectedName = anhMatch[1];
-      } else if (coMatch && coMatch[1] && !['mình', 'ơi', 'nhé', 'nha', 'ạ'].includes(coMatch[1].toLowerCase())) {
-        customerPronoun = `cô ${coMatch[1]}`;
-        detectedName = coMatch[1];
-      } else if (chuMatch && chuMatch[1] && !['mình', 'ơi', 'nhé', 'nha', 'ạ'].includes(chuMatch[1].toLowerCase())) {
-        customerPronoun = `chú ${chuMatch[1]}`;
-        detectedName = chuMatch[1];
-      } else if (/\bchị\b/i.test(text)) {
-        customerPronoun = 'chị';
-      } else if (/\banh\b/i.test(text)) {
-        customerPronoun = 'anh';
-      } else if (/\bcô\b/i.test(text)) {
-        customerPronoun = 'cô';
-      } else if (/\bchú\b/i.test(text)) {
-        customerPronoun = 'chú';
-      } else if (/\bbạn\b/i.test(text)) {
-        customerPronoun = 'bạn';
+        if (chiMatch && chiMatch[1] && !['mình', 'em', 'ơi', 'nhé', 'nha', 'ạ', 'gái'].includes(chiMatch[1].toLowerCase())) {
+          customerPronoun = `chị ${chiMatch[1]}`;
+          detectedName = chiMatch[1];
+        } else if (anhMatch && anhMatch[1] && !['mình', 'em', 'ơi', 'nhé', 'nha', 'ạ', 'trai'].includes(anhMatch[1].toLowerCase())) {
+          customerPronoun = `anh ${anhMatch[1]}`;
+          detectedName = anhMatch[1];
+        } else if (coMatch && coMatch[1] && !['mình', 'ơi', 'nhé', 'nha', 'ạ'].includes(coMatch[1].toLowerCase())) {
+          customerPronoun = `cô ${coMatch[1]}`;
+          detectedName = coMatch[1];
+        } else if (chuMatch && chuMatch[1] && !['mình', 'ơi', 'nhé', 'nha', 'ạ'].includes(chuMatch[1].toLowerCase())) {
+          customerPronoun = `chú ${chuMatch[1]}`;
+          detectedName = chuMatch[1];
+        } else if (/\bchị\b/i.test(text)) {
+          customerPronoun = 'chị';
+        } else if (/\banh\b/i.test(text)) {
+          customerPronoun = 'anh';
+        } else if (/\bcô\b/i.test(text)) {
+          customerPronoun = 'cô';
+        } else if (/\bchú\b/i.test(text)) {
+          customerPronoun = 'chú';
+        } else if (/\bbạn\b/i.test(text)) {
+          customerPronoun = 'bạn';
+        }
       }
 
       // Check politeness & friendliness markers
@@ -115,20 +119,22 @@ export class PersonaToneExtractor {
     }
 
     // 2. Cross-check with Customer messages for self-reference (e.g. customer says "Chị ở Cầu Giấy", "Anh cần mua...")
-    for (const msg of customerMessages) {
-      const text = (msg.content || '').trim();
-      if (!text) continue;
+    if (!hasFixedCustomerPronoun) {
+      for (const msg of customerMessages) {
+        const text = (msg.content || '').trim();
+        if (!text) continue;
 
-      if (/^(?:chị|chi)\b/i.test(text) || /\b(?:chị|chi)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
-        customerPronoun = 'chị';
-      } else if (/^(?:anh)\b/i.test(text) || /\b(?:anh)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
-        customerPronoun = 'anh';
-      } else if (/^(?:cô)\b/i.test(text) || /\b(?:cô)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
-        customerPronoun = 'cô';
-      } else if (/^(?:chú|chu)\b/i.test(text) || /\b(?:chú|chu)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
-        customerPronoun = 'chú';
-      } else if (/^(?:mình|em)\b/i.test(text) && customerPronoun === 'anh/chị') {
-        if (/^(?:em)\b/i.test(text)) customerPronoun = 'bạn';
+        if (/^(?:chị|chi)\b/i.test(text) || /\b(?:chị|chi)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
+          customerPronoun = 'chị';
+        } else if (/^(?:anh)\b/i.test(text) || /\b(?:anh)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
+          customerPronoun = 'anh';
+        } else if (/^(?:cô)\b/i.test(text) || /\b(?:cô)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
+          customerPronoun = 'cô';
+        } else if (/^(?:chú|chu)\b/i.test(text) || /\b(?:chú|chu)\s+(?:ở|muốn|cần|lấy|đặt|mua|hỏi)\b/i.test(text)) {
+          customerPronoun = 'chú';
+        } else if (/^(?:mình|em)\b/i.test(text) && customerPronoun === 'anh/chị') {
+          if (/^(?:em)\b/i.test(text)) customerPronoun = 'bạn';
+        }
       }
     }
 
@@ -144,12 +150,11 @@ export class PersonaToneExtractor {
     // 3. Assemble prompt instruction
     const promptInstruction = `
 ================================================================================
-[PHONG CÁCH & XƯNG HÔ KẾ THỪA TỪ NHÂN VIÊN]:
+[CÁCH XƯNG HÔ VỚI KHÁCH HÀNG - BẮT BUỘC TUÂN THỦ 100%]:
 - CÁCH XƯNG HÔ ĐÃ THIẾT LẬP:
   + Tự xưng: "${selfPronoun}"
   + Gọi khách hàng: "${customerPronoun}"
-  + TUYỆT ĐỐI giữ chuẩn cách xưng hô này (ví dụ: "${selfPronoun}" - "${customerPronoun}") để cuộc trò chuyện hoàn toàn liền mạch như chính nhân viên đang tư vấn.
-- GIỌNG ĐIỆU GIAO TIẾP:
+${hasFixedCustomerPronoun ? `  + QUY TẮC BẮT BUỘC TUÂN THỦ: Khách hàng ĐÃ ĐƯỢC THIẾT LẬP CÁCH GỌI CHÍNH THỨC trong hệ thống là "${customerPronoun}". AI BẮT BUỘC xưng "${selfPronoun}" và gọi khách là "${customerPronoun}"${shortName ? ` (hoặc "${customerPronoun} ${shortName}")` : ''} trong MỌI câu chào hỏi, thông báo hay tư vấn. TUYỆT ĐỐI NGHIÊM CẤM xưng "anh/chị" chung chung hoặc tự ý đổi sang cách gọi khác!\n` : `  + TUYỆT ĐỐI giữ chuẩn cách xưng hô này (ví dụ: "${selfPronoun}" - "${customerPronoun}") để cuộc trò chuyện hoàn toàn liền mạch như chính nhân viên đang tư vấn.\n`}- GIỌNG ĐIỆU GIAO TIẾP:
   + Mức độ lịch sự: ${formalityLevel === 'polite' ? 'Rất lịch sự, nhã nhặn, dùng từ đệm "Dạ", "ạ" đúng chỗ.' : 'Lịch sự, chuyên nghiệp, tự nhiên.'}
   + Tính cách: ${friendlinessLevel === 'high' ? 'Thân thiện, niềm nở, dùng từ kết thúc nhẹ nhàng như "nhé ạ", "nha ' + customerPronoun + '".' : 'Nhẹ nhàng, chu đáo, súc tích.'}
   + Sử dụng icon/emoji: ${usesEmoji ? `Có thể chèn biểu cảm nhẹ nhàng, phù hợp ngữ cảnh (${safeEmojis}), không lạm dụng.` : 'Dùng icon tự nhiên, vừa phải (ví dụ: 😊).'}

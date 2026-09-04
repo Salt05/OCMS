@@ -88,15 +88,14 @@ export async function syncRoutes(app: FastifyInstance) {
   app.post('/api/v1/sync/products', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
-      const count = await odooSyncService.syncProducts(user.orgId);
+      const result = await odooSyncService.syncProducts(user.orgId);
       return reply.send({
         success: true,
-        message: `Đã đồng bộ ${count} sản phẩm`,
-        count,
+        ...result,
       });
     } catch (err: any) {
       logger.error('[sync-routes] Product sync error:', err);
-      return reply.status(500).send({ error: err.message || 'Lỗi đồng bộ sản phẩm' });
+      return reply.status(500).send({ success: false, error: err.message || 'Lỗi đồng bộ sản phẩm' });
     }
   });
 

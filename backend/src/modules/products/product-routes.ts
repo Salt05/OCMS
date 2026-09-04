@@ -8,6 +8,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { directusService } from '../directus/directus-service.js';
+import { odooSyncService } from '../sync/odoo-sync-service.js';
 import { logger } from '../../shared/utils/logger.js';
 
 const db = prisma as any;
@@ -121,7 +122,7 @@ export async function productRoutes(app: FastifyInstance) {
         const dp = directusMap.get(p.odooId) || {};
         return {
           ...p,
-          imageUrl: p.imageUrl || dp.image_url || null,
+          imageUrl: directusService.getAssetUrl(p.imageUrl || dp.image_url) || null,
           weight: p.weight || dp.weight || null,
           specification: p.specification || dp.specification || null,
           ingredients: p.ingredients || dp.ingredients || null,
@@ -284,6 +285,21 @@ export async function productRoutes(app: FastifyInstance) {
     } catch (err: any) {
       logger.error('[product-routes] bulk-update error:', err);
       return reply.status(400).send({ success: false, error: err.message });
+    }
+  });
+
+  // ── 5. Sync Products (Directus + Odoo with Directus Priority) ───────────────
+  app.post('/api/v1/products/sync', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    try {
+      const result = await odooSyncService.syncProducts(user.orgId);
+      return reply.send({
+        success: true,
+        ...result,
+      });
+    } catch (err: any) {
+      logger.error('[product-routes] Sync error:', err);
+      return reply.status(500).send({ success: false, error: err.message || 'Lỗi khi đồng bộ sản phẩm' });
     }
   });
 }

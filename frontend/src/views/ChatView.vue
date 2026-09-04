@@ -16,6 +16,7 @@
         v-model:search="searchQuery"
         @select="onSelectConversation"
         @filter-account="onFilterAccount"
+        @toggle-pin="onTogglePin"
       />
       <!-- Resize handle (Desktop only) -->
       <div v-if="!isMobile" class="resize-handle" @mousedown="startResize('left', $event)" />
@@ -38,6 +39,7 @@
         :sending="sendingMsg"
         :is-mobile="isMobile"
         @back="onMobileBack"
+        @toggle-pin="onTogglePin"
         @send="sendMessage"
         @send-attachment="sendAttachment"
         @retry-message="retrySendMessage"
@@ -311,8 +313,13 @@ const {
   loadMoreMessages,
   pauseAi, resumeAi, toggleAi,
   setContextBoundary,
+  togglePin,
   initSocket, destroySocket,
 } = useChat();
+
+function onTogglePin(payload: { conversationId: string; pinned: boolean }) {
+  togglePin(payload.conversationId, payload.pinned);
+}
 
 async function handleSetContextBoundary(payload: { startMessageId?: string | null; endMessageId?: string | null; resetDraft?: boolean }) {
   if (!selectedConvId.value) return;

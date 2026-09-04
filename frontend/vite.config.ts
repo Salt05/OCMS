@@ -19,6 +19,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/api': 'http://localhost:3080',
+      '/uploads': 'http://localhost:3080',
       '/socket.io': {
         target: 'http://localhost:3080',
         ws: true,

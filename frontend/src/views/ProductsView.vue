@@ -1,38 +1,29 @@
 <template>
-  <div class="products-container pa-4 pa-md-6">
-    <!-- ── Page Header ──────────────────────────────────────────────────────── -->
-    <div class="d-flex flex-wrap align-center justify-space-between gap-4 mb-6">
-      <div>
-        <div class="d-flex align-center gap-2">
-          <v-icon size="28" color="primary">lucide-package</v-icon>
-          <h1 class="text-h5 font-weight-bold">Quản lý Sản phẩm (Danh mục Directus)</h1>
-        </div>
-        <p class="text-body-2 text-medium-emphasis mt-1">
-          Quản lý {{ stats.totalAll || 40 }} sản phẩm chính thức từ danh mục Directus. Chỉ cho phép tùy chỉnh Ngành hàng & Thương hiệu.
-        </p>
+  <div class="products-container pa-3 pa-md-6">
+    <!-- ── Page Header (Cleaned up: Title & Icon, Sync Button) ──────────────── -->
+    <div class="d-flex flex-wrap align-center justify-space-between gap-3 mb-4">
+      <div class="d-flex align-center gap-2">
+        <v-icon size="28" color="primary">lucide-package</v-icon>
+        <h1 class="text-h6 text-md-h5 font-weight-bold">Quản lý Sản phẩm (Danh mục Directus)</h1>
       </div>
 
-      <!-- Quick Stats -->
-      <div class="d-flex flex-wrap gap-2">
-        <v-chip color="primary" variant="tonal" class="font-weight-medium">
-          <v-icon start size="16">lucide-layers</v-icon>
-          Directus: {{ stats.totalAll || products.length }}
-        </v-chip>
-        <v-chip color="success" variant="tonal" class="font-weight-medium">
-          <v-icon start size="16">lucide-check-circle-2</v-icon>
-          Đã phân ngành: {{ stats.categorizedCount || 0 }}
-        </v-chip>
-        <v-chip color="warning" variant="tonal" class="font-weight-medium">
-          <v-icon start size="16">lucide-alert-circle</v-icon>
-          Chưa phân ngành: {{ stats.uncategorizedCount || 0 }}
-        </v-chip>
-      </div>
+      <!-- Sync Button -->
+      <v-btn
+        color="primary"
+        variant="elevated"
+        prepend-icon="lucide-refresh-cw"
+        class="text-none font-weight-medium rounded-lg"
+        :loading="syncing"
+        @click="handleSyncProducts"
+      >
+        Đồng bộ dữ liệu
+      </v-btn>
     </div>
 
-    <!-- ── Search & Filter Card ─────────────────────────────────────────────── -->
+    <!-- ── Search & Filter Card (Enhanced Spacing) ───────────────────────────── -->
     <v-card class="elevation-1 rounded-lg mb-4" variant="outlined">
-      <v-card-text class="pa-4">
-        <div class="row-filters d-flex flex-wrap align-center gap-3">
+      <v-card-text class="pa-3 pa-md-4">
+        <div class="row-filters">
           <!-- Search input -->
           <v-text-field
             v-model="searchQuery"
@@ -42,8 +33,7 @@
             prepend-inner-icon="lucide-search"
             hide-details
             clearable
-            class="filter-search flex-grow-1"
-            style="min-width: 260px;"
+            class="filter-search"
             @keyup.enter="handleSearch"
             @click:clear="handleClearSearch"
           />
@@ -58,7 +48,6 @@
             hide-details
             clearable
             class="filter-select"
-            style="min-width: 180px;"
             @update:model-value="fetchProducts(1)"
           />
 
@@ -72,40 +61,38 @@
             hide-details
             clearable
             class="filter-select"
-            style="min-width: 180px;"
             @update:model-value="fetchProducts(1)"
           />
-
-
-          <!-- Refresh button -->
-          <v-btn
-            icon
-            size="small"
-            variant="text"
-            title="Tải lại danh sách"
-            :loading="loading"
-            @click="reloadAll"
-          >
-            <v-icon size="18">lucide-refresh-cw</v-icon>
-          </v-btn>
         </div>
       </v-card-text>
     </v-card>
 
-    <!-- ── Floating Bulk Action Toolbar (appears when items selected) ───────── -->
+    <!-- ── Mobile Touch Helper Tip ─────────────────────────────────────────── -->
+    <div
+      v-if="isMobile && !isSelectMode"
+      class="mobile-touch-tip d-flex align-center gap-2 px-3 py-2 mb-3 rounded-lg border bg-surface text-caption text-medium-emphasis"
+    >
+      <v-icon size="16" color="primary">lucide-info</v-icon>
+      <span>Chạm vào thẻ để xem chi tiết • <strong>Nhấn & giữ</strong> để hiện cột chọn</span>
+    </div>
+
+    <!-- ── Floating Bulk Action Toolbar (appears when items selected or in select mode) ───────── -->
     <v-slide-y-transition>
       <v-card
-        v-if="selectedIds.length > 0"
+        v-if="selectedIds.length > 0 || isSelectMode"
         color="primary"
         theme="dark"
-        class="mb-4 elevation-4 rounded-lg d-flex align-center justify-space-between px-4 py-3"
+        class="mb-4 elevation-4 rounded-lg d-flex flex-wrap align-center justify-space-between px-4 py-3 gap-2"
       >
         <div class="d-flex align-center gap-2">
           <v-icon size="20">lucide-check-square</v-icon>
-          <span class="font-weight-bold">Đã chọn {{ selectedIds.length }} sản phẩm</span>
+          <span class="font-weight-bold text-body-2 text-md-body-1">
+            Đã chọn {{ selectedIds.length }} sản phẩm
+          </span>
         </div>
-        <div class="d-flex align-center gap-2">
+        <div class="d-flex align-center gap-2 flex-wrap">
           <v-btn
+            v-if="selectedIds.length > 0"
             color="white"
             variant="elevated"
             class="text-primary font-weight-bold text-none"
@@ -113,15 +100,25 @@
             @click="openBulkEditModal"
           >
             <v-icon start size="16">lucide-tag</v-icon>
-            Gán Ngành hàng & Thương hiệu hàng loạt
+            Gán Ngành & Thương hiệu
+          </v-btn>
+          <v-btn
+            variant="outlined"
+            color="white"
+            size="small"
+            class="text-none"
+            @click="toggleSelectAll(!isAllSelected)"
+          >
+            {{ isAllSelected ? 'Bỏ chọn hết' : 'Chọn tất cả' }}
           </v-btn>
           <v-btn
             variant="text"
             color="white"
             size="small"
-            @click="selectedIds = []"
+            class="text-none"
+            @click="exitSelectMode"
           >
-            Bỏ chọn
+            Thoát
           </v-btn>
         </div>
       </v-card>
@@ -129,10 +126,11 @@
 
     <!-- ── Products Table ───────────────────────────────────────────────────── -->
     <v-card class="elevation-1 rounded-lg" variant="outlined">
-      <v-table density="comfortable" hover class="products-table">
+      <v-table density="comfortable" hover class="products-table" :class="{ 'mobile-table': isMobile }">
         <thead>
           <tr>
-            <th style="width: 44px;">
+            <!-- Select column (Always on desktop; on mobile only when isSelectMode is active) -->
+            <th v-if="!isMobile || isSelectMode" class="col-select">
               <v-checkbox
                 :model-value="isAllSelected"
                 :indeterminate="isPartiallySelected"
@@ -141,25 +139,43 @@
                 @update:model-value="toggleSelectAll"
               />
             </th>
-            <th style="width: 68px;">Ảnh</th>
-            <th style="min-width: 110px;">Mã SKU</th>
-            <th style="min-width: 240px;">Tên sản phẩm (Directus)</th>
-            <th style="min-width: 170px;">Ngành hàng (Category)</th>
-            <th style="min-width: 140px;">Thương hiệu (Brand)</th>
-            <th style="min-width: 110px;">Quy cách / ĐVT</th>
-            <th style="min-width: 130px; text-align: right;">Giá niêm yết</th>
-            <th style="width: 90px; text-align: center;">Chi tiết</th>
+
+            <!-- Desktop only: Thumbnail -->
+            <th v-if="!isMobile" style="width: 68px;">Ảnh</th>
+
+            <!-- Mã sản phẩm (SKU) -->
+            <th :class="isMobile ? 'col-sku' : ''" :style="!isMobile ? 'min-width: 110px;' : ''">
+              {{ isMobile ? 'Mã SP' : 'Mã SKU' }}
+            </th>
+
+            <!-- Tên sản phẩm -->
+            <th :class="isMobile ? 'col-name' : ''" :style="!isMobile ? 'min-width: 240px;' : ''">
+              {{ isMobile ? 'Tên sản phẩm' : 'Tên sản phẩm (Directus)' }}
+            </th>
+
+            <!-- Desktop only columns -->
+            <th v-if="!isMobile" style="min-width: 170px;">Ngành hàng (Category)</th>
+            <th v-if="!isMobile" style="min-width: 140px;">Thương hiệu (Brand)</th>
+            <th v-if="!isMobile" style="min-width: 110px;">Quy cách / ĐVT</th>
+
+            <!-- Giá -->
+            <th :class="isMobile ? 'col-price' : ''" :style="!isMobile ? 'min-width: 130px; text-align: right;' : ''">
+              {{ isMobile ? 'Giá' : 'Giá niêm yết' }}
+            </th>
+
+            <!-- Desktop only: Action button -->
+            <th v-if="!isMobile" style="width: 90px; text-align: center;">Chi tiết</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading && products.length === 0">
-            <td colspan="9" class="text-center py-8 text-medium-emphasis">
+            <td :colspan="isMobile ? (isSelectMode ? 4 : 3) : 9" class="text-center py-8 text-medium-emphasis">
               <v-progress-circular indeterminate color="primary" class="mr-2" size="24" />
               Đang tải danh mục sản phẩm Directus...
             </td>
           </tr>
           <tr v-else-if="products.length === 0">
-            <td colspan="9" class="text-center py-10 text-medium-emphasis">
+            <td :colspan="isMobile ? (isSelectMode ? 4 : 3) : 9" class="text-center py-10 text-medium-emphasis">
               <v-icon size="40" class="mb-2 d-block mx-auto opacity-50">lucide-package-open</v-icon>
               Không tìm thấy sản phẩm Directus nào phù hợp
             </td>
@@ -167,12 +183,24 @@
           <tr
             v-for="item in products"
             :key="item.id"
-            class="cursor-pointer"
-            :class="{ 'selected-row': selectedIds.includes(item.id) }"
-            @click="openDetailModal(item)"
+            class="product-row cursor-pointer"
+            :class="{
+              'selected-row': selectedIds.includes(item.id),
+              'is-pressing': pressingId === item.id,
+              'mobile-row': isMobile
+            }"
+            @touchstart="onTouchStart(item, $event)"
+            @touchend="onTouchEnd"
+            @touchmove="onTouchMove"
+            @touchcancel="onTouchEnd"
+            @mousedown="onMouseDown(item, $event)"
+            @mousemove="onMouseMove"
+            @mouseup="onMouseUp"
+            @mouseleave="onMouseLeave"
+            @click="onRowClick($event, item)"
           >
             <!-- Checkbox -->
-            <td @click.stop>
+            <td v-if="!isMobile || isSelectMode" class="col-select" @click.stop>
               <v-checkbox
                 :model-value="selectedIds.includes(item.id)"
                 hide-details
@@ -181,8 +209,8 @@
               />
             </td>
 
-            <!-- Thumbnail -->
-            <td>
+            <!-- Thumbnail (Desktop only) -->
+            <td v-if="!isMobile">
               <div class="table-img-box rounded-lg border bg-surface overflow-hidden d-flex align-center justify-center">
                 <img
                   v-if="item.imageUrl"
@@ -190,30 +218,40 @@
                   :alt="item.name"
                   class="w-100 h-100"
                   style="object-fit: cover;"
+                  @error="() => { item.imageUrl = null; }"
                 />
                 <v-icon v-else size="20" color="grey">lucide-package</v-icon>
               </div>
             </td>
 
-            <!-- SKU -->
-            <td>
-              <v-chip size="small" variant="tonal" color="primary" class="font-weight-bold">
+            <!-- SKU / Mã sản phẩm -->
+            <td :class="[isMobile ? 'col-sku' : '', { 'py-3': isMobile }]">
+              <v-chip
+                :size="isMobile ? 'x-small' : 'small'"
+                variant="tonal"
+                color="primary"
+                class="font-weight-bold font-monospace"
+              >
                 {{ item.sku || item.default_code || 'N/A' }}
               </v-chip>
             </td>
 
-            <!-- Name -->
-            <td>
-              <div class="font-weight-medium text-truncate" style="max-width: 320px;" :title="item.name">
+            <!-- Name / Tên sản phẩm -->
+            <td :class="[isMobile ? 'col-name' : '', { 'py-3': isMobile }]">
+              <div
+                class="font-weight-medium"
+                :class="isMobile ? 'product-name-ellipsis' : 'text-truncate'"
+                :title="item.name"
+              >
                 {{ item.name }}
               </div>
-              <div v-if="item.product_group_name" class="text-caption text-secondary font-weight-medium mt-0.5">
+              <div v-if="item.product_group_name && !isMobile" class="text-caption text-secondary font-weight-medium mt-0.5">
                 {{ item.product_group_name }}
               </div>
             </td>
 
-            <!-- Category (Editable Field 1) -->
-            <td>
+            <!-- Category (Desktop only) -->
+            <td v-if="!isMobile">
               <v-chip
                 v-if="item.category"
                 size="small"
@@ -228,8 +266,8 @@
               </span>
             </td>
 
-            <!-- Brand (Editable Field 2) -->
-            <td>
+            <!-- Brand (Desktop only) -->
+            <td v-if="!isMobile">
               <v-chip
                 v-if="item.brand"
                 size="small"
@@ -244,25 +282,25 @@
               </span>
             </td>
 
-            <!-- Unit / Specification -->
-            <td>
+            <!-- Unit / Specification (Desktop only) -->
+            <td v-if="!isMobile">
               <span class="text-caption text-medium-emphasis font-weight-medium">
                 {{ item.specification || item.uomName || item.weight || 'Đơn vị' }}
               </span>
             </td>
 
-            <!-- Price (Odoo Read-Only) -->
-            <td style="text-align: right;">
-              <span class="font-weight-bold text-body-2 text-success">
+            <!-- Price / Giá -->
+            <td :class="[isMobile ? 'col-price' : '', { 'py-3': isMobile }]" :style="!isMobile ? 'text-align: right;' : ''">
+              <span class="font-weight-bold text-success text-no-wrap text-body-2">
                 {{ formatVND(item.listPrice || item.wholesalePrice || 0) }}
               </span>
-              <div v-if="item.retailPrice" class="text-caption text-medium-emphasis">
+              <div v-if="item.retailPrice && !isMobile" class="text-caption text-medium-emphasis">
                 Lẻ: {{ formatVND(item.retailPrice) }}
               </div>
             </td>
 
-            <!-- Actions -->
-            <td style="text-align: center;" @click.stop>
+            <!-- Actions (Desktop only) -->
+            <td v-if="!isMobile" style="text-align: center;" @click.stop>
               <v-btn
                 icon
                 size="small"
@@ -278,26 +316,28 @@
         </tbody>
       </v-table>
 
-      <!-- Pagination Footer -->
+      <!-- Pagination Footer (Full Width, Centered & Evenly Stretched) -->
       <v-divider />
-      <div class="d-flex flex-wrap align-center justify-space-between pa-4 gap-3">
-        <div class="text-caption text-medium-emphasis">
+      <div class="d-flex flex-column pa-4 gap-3">
+        <div class="text-caption text-medium-emphasis text-center text-sm-left">
           Hiển thị <strong>{{ products.length }}</strong> trong tổng số <strong>{{ totalProducts }}</strong> sản phẩm Directus
         </div>
 
-        <v-pagination
-          v-if="totalPages > 1"
-          v-model="currentPage"
-          :length="totalPages"
-          :total-visible="7"
-          density="compact"
-          color="primary"
-          @update:model-value="fetchProducts"
-        />
+        <div v-if="totalPages > 1" class="w-100 pagination-wrapper">
+          <v-pagination
+            v-model="currentPage"
+            :length="totalPages"
+            :total-visible="7"
+            density="comfortable"
+            color="primary"
+            class="full-width-pagination w-100"
+            @update:model-value="fetchProducts"
+          />
+        </div>
       </div>
     </v-card>
 
-    <!-- ── Product Detail & Classification Modal (EXACT popup from ProductPickerDialog) ── -->
+    <!-- ── Product Detail & Classification Modal ── -->
     <v-dialog v-model="detailModalVisible" max-width="540" scrollable>
       <v-card v-if="detailItem" class="rounded-xl overflow-hidden border elevation-8">
         <!-- Detail Header -->
@@ -330,6 +370,7 @@
                 :alt="detailItem.name"
                 class="w-100 h-100"
                 style="object-fit: cover;"
+                @error="() => { detailItem.imageUrl = null; detailItem.image_url = null; }"
               />
               <div v-else class="w-100 h-100 d-flex align-center justify-center text-medium-emphasis">
                 <v-icon size="40" class="opacity-50">lucide-image</v-icon>
@@ -365,7 +406,7 @@
             </div>
           </div>
 
-          <!-- ── 2 EDITABLE FIELDS: NGÀNH HÀNG & THƯƠNG HIỆU (Matching design of other cards) ── -->
+          <!-- ── 2 EDITABLE FIELDS: NGÀNH HÀNG & THƯƠNG HIỆU ── -->
           <!-- Ngành hàng (Category) -->
           <div class="detail-item border rounded-lg pa-3 bg-surface shadow-xs mb-3.5">
             <div class="text-subtitle-2 font-weight-bold text-primary mb-2">
@@ -398,7 +439,7 @@
             />
           </div>
 
-          <!-- Rich Details from Directus (Specification, Ingredients, Nutrition, Target, Preservation, Description) -->
+          <!-- Rich Details from Directus -->
           <div class="d-flex flex-column gap-3.5 text-body-2">
             <!-- Specification -->
             <div v-if="detailItem.specification" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
@@ -540,27 +581,49 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- ── Sync Notification Snackbar ────────────────────────────────────────── -->
+    <v-snackbar
+      v-model="syncSnackbar"
+      :color="syncSuccess ? 'success' : 'error'"
+      :timeout="5000"
+      location="top"
+      rounded="lg"
+      elevation="6"
+    >
+      <div class="d-flex align-center gap-2">
+        <v-icon size="20">{{ syncSuccess ? 'lucide-check-circle' : 'lucide-alert-circle' }}</v-icon>
+        <span class="font-weight-medium">{{ syncMessage }}</span>
+      </div>
+      <template #actions>
+        <v-btn variant="text" size="small" @click="syncSnackbar = false">Đóng</v-btn>
+      </template>
+    </v-snackbar>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
+import { useDisplay } from 'vuetify';
 import { api } from '@/api';
+
+// ── Mobile Responsive Setup ──────────────────────────────────────────────────
+const display = useDisplay();
+const isMobile = computed(() => display.smAndDown.value);
 
 // ── State ────────────────────────────────────────────────────────────────────
 const loading = ref(false);
 const saving = ref(false);
+const syncing = ref(false);
+const syncSnackbar = ref(false);
+const syncMessage = ref('');
+const syncSuccess = ref(true);
+
 const products = ref<any[]>([]);
 const totalProducts = ref(0);
 const totalPages = ref(1);
 const currentPage = ref(1);
 const pageLimit = ref(50);
-
-const stats = reactive({
-  totalAll: 0,
-  categorizedCount: 0,
-  uncategorizedCount: 0,
-});
 
 // Filters
 const searchQuery = ref('');
@@ -571,8 +634,14 @@ const selectedBrandFilter = ref<string | null>(null);
 const suggestedCategories = ref<string[]>([]);
 const suggestedBrands = ref<string[]>([]);
 
-// Selection for bulk actions
+// Selection for bulk actions & mobile select mode
 const selectedIds = ref<string[]>([]);
+const isSelectMode = ref(false);
+const pressingId = ref<string | null>(null);
+
+let pressTimer: ReturnType<typeof setTimeout> | null = null;
+let longPressTriggered = false;
+let startCoords = { x: 0, y: 0 };
 
 // Detail & Edit Modal
 const detailModalVisible = ref(false);
@@ -640,6 +709,99 @@ function toggleSelectItem(id: string) {
   }
 }
 
+function exitSelectMode() {
+  isSelectMode.value = false;
+  selectedIds.value = [];
+}
+
+// ── Long-press (Click & Hold) Handlers ────────────────────────────────────────
+function startPress(item: any, clientX?: number, clientY?: number) {
+  if (isSelectMode.value) return; // In select mode, standard taps toggle selection
+  pressingId.value = item.id;
+  longPressTriggered = false;
+  if (clientX !== undefined && clientY !== undefined) {
+    startCoords = { x: clientX, y: clientY };
+  }
+  if (pressTimer) clearTimeout(pressTimer);
+
+  pressTimer = setTimeout(() => {
+    longPressTriggered = true;
+    pressingId.value = null;
+    isSelectMode.value = true;
+    if (!selectedIds.value.includes(item.id)) {
+      selectedIds.value.push(item.id);
+    }
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try {
+        navigator.vibrate(50);
+      } catch (_) {}
+    }
+  }, 450);
+}
+
+function cancelPress() {
+  pressingId.value = null;
+  if (pressTimer) {
+    clearTimeout(pressTimer);
+    pressTimer = null;
+  }
+}
+
+function onTouchStart(item: any, e: TouchEvent) {
+  if (isSelectMode.value) return;
+  const touch = e.touches[0];
+  startPress(item, touch ? touch.clientX : undefined, touch ? touch.clientY : undefined);
+}
+
+function onTouchMove(e: TouchEvent) {
+  if (pressTimer && e.touches[0]) {
+    const dx = Math.abs(e.touches[0].clientX - startCoords.x);
+    const dy = Math.abs(e.touches[0].clientY - startCoords.y);
+    if (dx > 10 || dy > 10) {
+      cancelPress();
+    }
+  }
+}
+
+function onTouchEnd() {
+  cancelPress();
+}
+
+function onMouseDown(item: any, e: MouseEvent) {
+  if (isSelectMode.value) return;
+  startPress(item, e.clientX, e.clientY);
+}
+
+function onMouseMove(e: MouseEvent) {
+  if (pressTimer) {
+    const dx = Math.abs(e.clientX - startCoords.x);
+    const dy = Math.abs(e.clientY - startCoords.y);
+    if (dx > 10 || dy > 10) {
+      cancelPress();
+    }
+  }
+}
+
+function onMouseUp() {
+  cancelPress();
+}
+
+function onMouseLeave() {
+  cancelPress();
+}
+
+function onRowClick(_e: Event, item: any) {
+  if (longPressTriggered) {
+    longPressTriggered = false;
+    return;
+  }
+  if (isSelectMode.value) {
+    toggleSelectItem(item.id);
+    return;
+  }
+  openDetailModal(item);
+}
+
 // ── API Fetchers ─────────────────────────────────────────────────────────────
 async function fetchSuggestions() {
   try {
@@ -671,9 +833,6 @@ async function fetchProducts(page = currentPage.value) {
       products.value = res.data.products || [];
       totalProducts.value = res.data.total || 0;
       totalPages.value = res.data.totalPages || 1;
-      if (res.data.stats) {
-        Object.assign(stats, res.data.stats);
-      }
     }
   } catch (err: any) {
     console.error('Error fetching products:', err);
@@ -691,9 +850,26 @@ function handleClearSearch() {
   fetchProducts(1);
 }
 
-function reloadAll() {
-  fetchSuggestions();
-  fetchProducts(1);
+async function handleSyncProducts() {
+  syncing.value = true;
+  try {
+    const res = await api.post('/sync/products');
+    if (res.data.success) {
+      syncSuccess.value = true;
+      syncMessage.value = res.data.message ||
+        `Đã lấy được ${res.data.createdCount || 0} sản phẩm mới và cập nhật ${res.data.updatedCount || 0} sản phẩm.`;
+      syncSnackbar.value = true;
+      await Promise.all([fetchSuggestions(), fetchProducts(1)]);
+    } else {
+      throw new Error(res.data.error || 'Đồng bộ thất bại');
+    }
+  } catch (err: any) {
+    syncSuccess.value = false;
+    syncMessage.value = err.response?.data?.error || err.message || 'Lỗi khi đồng bộ sản phẩm';
+    syncSnackbar.value = true;
+  } finally {
+    syncing.value = false;
+  }
 }
 
 // ── Detail & Single Edit Handlers ────────────────────────────────────────────
@@ -791,6 +967,51 @@ onMounted(() => {
   margin: 0 auto;
 }
 
+/* ── SEARCH & FILTER ROW (Distinct Gap & Spacing) ─────────────────────────── */
+.row-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px !important;
+  width: 100%;
+}
+
+.filter-search {
+  flex: 1 1 280px;
+  min-width: 220px;
+}
+
+.filter-select {
+  flex: 0 1 200px;
+  min-width: 170px;
+}
+
+.filter-refresh {
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .row-filters {
+    gap: 12px !important;
+  }
+  .filter-search {
+    flex: 1 1 100%;
+    min-width: 100%;
+  }
+  .filter-select {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 130px;
+  }
+}
+
+@media (max-width: 480px) {
+  .filter-select {
+    flex: 1 1 100%;
+    min-width: 100%;
+  }
+}
+
+/* ── PRODUCT TABLE & ROWS ─────────────────────────────────────────────────── */
 .products-table th {
   font-weight: 600 !important;
   font-size: 0.825rem !important;
@@ -799,8 +1020,74 @@ onMounted(() => {
   color: var(--v-medium-emphasis-opacity);
 }
 
+.product-row {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: background-color 0.15s ease;
+}
+
+.product-row.is-pressing {
+  background-color: rgba(var(--v-theme-primary), 0.12) !important;
+}
+
 .selected-row {
-  background-color: rgba(var(--v-theme-primary), 0.06) !important;
+  background-color: rgba(var(--v-theme-primary), 0.07) !important;
+}
+
+.mobile-row td {
+  padding-top: 11px !important;
+  padding-bottom: 11px !important;
+}
+
+/* ── MOBILE TABLE COLUMN WIDTHS & SPACING ────────────────────────────────── */
+:deep(.mobile-table table) {
+  table-layout: auto !important;
+  width: 100% !important;
+}
+
+.mobile-table .col-select {
+  width: 1% !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  padding-left: 8px !important;
+  padding-right: 6px !important;
+}
+
+.mobile-table .col-sku {
+  width: 1% !important;
+  white-space: nowrap !important;
+  padding-left: 8px !important;
+  padding-right: 12px !important;
+}
+
+.mobile-table .col-name {
+  width: 100% !important;
+  max-width: 0 !important;
+  padding-left: 6px !important;
+  padding-right: 12px !important;
+}
+
+.mobile-table .col-price {
+  width: 1% !important;
+  white-space: nowrap !important;
+  text-align: right !important;
+  padding-left: 8px !important;
+  padding-right: 12px !important;
+}
+
+.product-name-ellipsis {
+  display: block !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 100% !important;
+  font-size: 0.875rem !important;
+  line-height: 1.4 !important;
+}
+
+.text-no-wrap {
+  white-space: nowrap !important;
 }
 
 .table-img-box {
@@ -811,6 +1098,42 @@ onMounted(() => {
 
 .v-theme--dark .table-img-box {
   border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ── FULL WIDTH PAGINATION (Evenly Stretched Across Container) ─────────────── */
+.pagination-wrapper {
+  width: 100%;
+}
+
+:deep(.full-width-pagination) {
+  width: 100% !important;
+}
+
+:deep(.full-width-pagination .v-pagination__list) {
+  width: 100% !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  gap: 6px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+:deep(.full-width-pagination .v-pagination__item),
+:deep(.full-width-pagination .v-pagination__prev),
+:deep(.full-width-pagination .v-pagination__next) {
+  flex: 1 1 0 !important;
+  display: flex !important;
+  justify-content: center !important;
+  margin: 0 !important;
+}
+
+:deep(.full-width-pagination .v-pagination__item .v-btn),
+:deep(.full-width-pagination .v-pagination__prev .v-btn),
+:deep(.full-width-pagination .v-pagination__next .v-btn) {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 38px !important;
+  border-radius: 8px !important;
 }
 
 /* ── EXACT POPUP STYLES MATCHING ProductPickerDialog ──────────────────────── */

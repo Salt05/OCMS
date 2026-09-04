@@ -73,6 +73,7 @@ export class ContextBuilder {
    * Builds the comprehensive System Prompt
    */
   static buildSystemPrompt(params: BuildContextParams): string {
+    const salutation = params.customerPronoun || 'anh/chị';
     const petBlock = this.formatPetFactBlock(params.pet);
     const customerBlock = this.formatCustomerFactBlock(params.customer);
     const draftItems = params.draftOrder?.items || [];
@@ -84,7 +85,6 @@ export class ContextBuilder {
       const subtotal = Number(d.subtotal || 0);
       const discountAmount = Number(d.discountAmount || 0);
       const amountTotal = d.amountTotal !== undefined ? Number(d.amountTotal) : Math.max(0, subtotal - discountAmount);
-      const salutation = params.customerPronoun || 'anh/chị';
       const { itemsListStr } = formatDraftOrderProductList(d, salutation);
 
       draftOrderDetails = `
@@ -272,7 +272,7 @@ ${promoAndPriceStr ? `     Dữ liệu ưu đãi và giá thực tế từ hệ 
 - Đơn hàng đã có đầy đủ danh sách món, số lượng, SĐT, địa chỉ và điều khoản thanh toán: ${pTerm}.${unclearNotice}
 - QUY TẮC BẮT BUỘC:
   1. ĐÂY LÀ LẦN DUY NHẤT ĐƯỢC PHÉP NHẮC LẠI ĐƠN HÀNG ĐỂ KHÁCH XÁC NHẬN CHỐT ĐƠN:
-     "Dạ em xin phép nhắc lại thông tin đơn hàng để Quý khách kiểm tra trước khi tiến hành lên đơn nhé ạ:
+     "Dạ em xin phép nhắc lại thông tin đơn hàng để ${salutation} kiểm tra trước khi tiến hành lên đơn nhé ạ:
      - Danh sách sản phẩm:
        • [Số lượng]x [Mã SKU] [Tên sản phẩm] ([Đơn giá] đ/gói) = [Thành tiền] đ
      - Tổng tiền dự kiến: [Tổng cộng] đ (đã áp dụng giá sỉ ưu đãi)
@@ -280,7 +280,7 @@ ${promoAndPriceStr ? `     Dữ liệu ưu đãi và giá thực tế từ hệ 
      - Địa chỉ nhận hàng: [Địa chỉ nhận hàng từ khách hoặc hồ sơ Odoo]
      - Số điện thoại người nhận: [SĐT nhận hàng]
      
-     Quý khách vui lòng xem lại các thông tin trên và nhắn 'Đồng ý' hoặc 'Xác nhận' giúp em để em gửi đơn cho nhân viên xác nhận nhé ạ!"
+     ${salutation} vui lòng xem lại các thông tin trên và nhắn 'Đồng ý' hoặc 'Xác nhận' giúp em để em gửi đơn cho nhân viên xác nhận nhé ạ!"
   3. NẾU CÓ DÒNG CHƯA RÕ TỪ ẢNH (unclearItems):
      Nhắc khách làm rõ dòng đó trước khi chốt đơn.
   4. XỬ LÝ CẢM NHẬN Ý ĐỊNH KHÁCH HÀNG:
@@ -313,7 +313,7 @@ Tư duy cốt lõi: CUSTOMER-FIRST SUPPORT – Ưu tiên giải quyết thắc m
 ⑦ EMPATHY ĐÚNG LÚC: Đồng cảm CHỈ khi khách lo lắng/phàn nàn thực sự ("lo bé nhỏ có nghẹn không", "sợ bé dị ứng"). Với câu hỏi thông thường ("C28 có gì?") → trả lời luôn, KHÔNG MỞ ĐẦU bằng "Em rất hiểu lo lắng..."
 ⑧ PHẢN BÁC LỊCH SỰ: Nếu khách hiểu sai ("C14 là rawhide phải không?") → chỉnh nhẹ nhàng với dữ liệu ("C14 làm từ da heo, khác với Rawhide da bò sống ạ").
 ⑨ MỞ ĐẦU CUỘC TRÒ CHUYỆN & TIN NHẮN CHƯA RÕ VẤN ĐỀ: Khi bắt đầu một cuộc trò chuyện hoặc khi nhận tin nhắn chào hỏi / tin nhắn ngắn / chưa rõ câu hỏi (như "chào em", "hello", "shop ơi", "alo", ".", "?"):
-  + BẮT BUỘC CHỈ chào hỏi lịch sự và hỏi: "Dạ em chào anh/chị! Em có thể hỗ trợ gì cho mình hôm nay ạ? Mình đang muốn đặt hàng, giải đáp thắc mắc hay cần tư vấn sản phẩm nào ạ?"
+  + BẮT BUỘC CHỈ chào hỏi lịch sự và hỏi: "Dạ em chào ${salutation}! Em có thể hỗ trợ gì cho mình hôm nay ạ? Mình đang muốn đặt hàng, giải đáp thắc mắc hay cần tư vấn sản phẩm nào ạ?"
   + TUYỆT ĐỐI KHÔNG hỏi một lèo dồn dập về giống cún, số tháng tuổi, cân nặng khi khách chưa hỏi tư vấn.
   + TUYỆT ĐỐI KHÔNG tự động tuôn ra chính sách chiết khấu, ưu đãi, quy định công ty hoặc tự suy đoán nhu cầu của khách khi khách chưa hỏi.
 ⑩ QUY TẮC TUYỆT ĐỐI VỀ PHẢN HỒI KẾT QUẢ (KHÔNG ĐƯỢC XIN CHỜ TRONG CÁC TÁC VỤ THÔNG THƯỜNG):

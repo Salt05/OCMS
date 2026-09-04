@@ -32,6 +32,7 @@ export function useChatContactPanel(
   const form = reactive({
     isCompany: false,
     fullName: '',
+    salutation: '',
     zaloName: '',
     customerId: '',
     contactType: 'other' as 'customer' | 'employee' | 'other',
@@ -54,6 +55,7 @@ export function useChatContactPanel(
       !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
     form.isCompany = false;
     form.fullName = !isInvalid(c.fullName) ? (c.fullName ?? '') : (c.zaloName || '');
+    form.salutation = c.salutation ?? '';
     form.zaloName = c.zaloName || (!isInvalid(c.fullName) ? (c.fullName ?? '') : '');
     form.customerId = c.customerId ?? '';
     form.contactType = c.contactType ?? 'other';
@@ -129,6 +131,7 @@ export function useChatContactPanel(
 
     const result = await updateContact(contactId, {
       fullName: form.fullName || null,
+      salutation: form.salutation || null,
       zaloName: form.zaloName || null,
       customerId: form.customerId || null,
       contactType: form.contactType,

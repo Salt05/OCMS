@@ -365,6 +365,15 @@
                 @click="showMobileMoreDrawer = false"
               />
               <v-list-item
+                v-if="authStore.isAdmin"
+                to="/chatbot-test"
+                prepend-icon="lucide-flask-conical"
+                title="Giả lập Chatbot (AI Lab)"
+                rounded="lg"
+                class="mb-1"
+                @click="showMobileMoreDrawer = false"
+              />
+              <v-list-item
                 to="/settings"
                 prepend-icon="lucide-settings"
                 title="Cài đặt hệ thống"
@@ -498,7 +507,7 @@ onMounted(() => {
   setupSocketListeners();
 });
 
-const isFullWidthPage = computed(() => route.path === '/chat' || route.path.startsWith('/ai-assistant'));
+const isFullWidthPage = computed(() => route.path === '/chat' || route.path.startsWith('/ai-assistant') || route.path.startsWith('/chatbot-test'));
 const isChatPage = computed(() => isFullWidthPage.value);
 
 // In Chat view on mobile: if an active chat thread is opened (query.id is present), hide top bar and bottom nav
@@ -530,6 +539,7 @@ const primaryMenuItems = computed(() => {
     { title: 'Ưu đãi & Chiết khấu', icon: 'lucide-percent', path: '/promotions' },
     { title: 'Báo cáo & Thống kê', icon: 'lucide-pie-chart', path: '/reports' },
     { title: 'Trợ lý AI (Chatbot)', icon: 'lucide-bot', path: '/ai-assistant' },
+    ...(authStore.isAdmin ? [{ title: 'Giả lập Chatbot (AI Lab)', icon: 'lucide-flask-conical', path: '/chatbot-test' }] : []),
     { title: 'Tổng quan (Dashboard)', icon: 'lucide-layout-dashboard', path: '/' },
   ];
   return items;
@@ -541,7 +551,7 @@ function isRouteActive(path: string): boolean {
 }
 
 const isMoreMenuRouteActive = computed(() => {
-  const secondaryPaths = ['/', '/zalo-accounts', '/reports', '/ai-assistant', '/settings', '/api-settings'];
+  const secondaryPaths = ['/', '/zalo-accounts', '/reports', '/ai-assistant', '/chatbot-test', '/settings', '/api-settings'];
   return secondaryPaths.some(p => isRouteActive(p) && p !== '/chat' && p !== '/orders' && p !== '/products' && p !== '/promotions' && p !== '/contacts');
 });
 
@@ -556,6 +566,7 @@ const currentPageTitle = computed(() => {
     case 'Promotions': return 'Quản lý ưu đãi & chiết khấu';
     case 'Reports': return 'Báo cáo & Thống kê';
     case 'AIAssistant': return 'Trợ lý AI Phân tích';
+    case 'ChatbotTest': return 'Phòng giả lập Chatbot (AI Training Lab)';
     case 'Settings': return 'Cài đặt hệ thống';
     case 'ApiSettings': return 'Cấu hình API & Webhook';
     default: return '';

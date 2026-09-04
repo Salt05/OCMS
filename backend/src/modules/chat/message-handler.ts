@@ -279,7 +279,7 @@ export async function handleIncomingMessage(
       if (!isAi) {
         chatbotStateMachine.pauseAi(conversation.id, 'Nhân viên trực tiếp gửi tin nhắn', 60).catch(() => {});
       }
-    } else if (msg.threadType === 'user') {
+    } else if (msg.threadType === 'user' && msg.contentType !== 'call') {
       const isImage = msg.contentType === 'image' || (Array.isArray(msg.attachments) && msg.attachments.some((a: any) => a?.type === 'image' || a?.url));
       const hasContent = Boolean(msg.content && msg.content.trim().length > 0);
       if (hasContent || isImage) {

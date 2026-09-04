@@ -122,9 +122,49 @@ class DirectusService {
   private productsCacheTime = 0;
   private readonly CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
+  private isDirectusOnline = false;
+  private lastHealthCheck = 0;
+  private readonly HEALTH_CHECK_TTL = 3 * 60 * 1000; // 3 minutes
+
   constructor() {
     // Automatically pre-load persistent disk cache on service initialization
     this.loadDiskCache();
+  }
+
+  /**
+   * Quick non-blocking health check for Directus server
+   */
+  async checkDirectusHealth(): Promise<boolean> {
+    if (!config.directus.url) {
+      this.isDirectusOnline = false;
+      return false;
+    }
+    const now = Date.now();
+    if (this.lastHealthCheck > 0 && now - this.lastHealthCheck < this.HEALTH_CHECK_TTL) {
+      return this.isDirectusOnline;
+    }
+
+    try {
+      const res = await fetch(`${config.directus.url}/server/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(1000), // 1s quick timeout
+      });
+      this.isDirectusOnline = res.ok;
+    } catch {
+      this.isDirectusOnline = false;
+    }
+    this.lastHealthCheck = now;
+    return this.isDirectusOnline;
+  }
+
+  /**
+   * Extract UUID file ID from directus asset URL or string
+   */
+  extractAssetId(rawUrlOrId?: string): string | undefined {
+    if (!rawUrlOrId) return undefined;
+    const s = String(rawUrlOrId).trim();
+    const match = s.match(/assets\/([0-9a-fA-F-]+)/) || s.match(/^([0-9a-fA-F-]+)$/);
+    return match ? match[1] : undefined;
   }
 
   /**
@@ -184,7 +224,7 @@ class DirectusService {
                 uom_name: item.uom_name || item.specification || 'Gói',
                 weight: item.weight || undefined,
                 specification: item.specification || undefined,
-                image_url: item.image_url || undefined,
+                image_url: this.getAssetUrl(item.image_url || item.directus_file_id) || undefined,
                 description: item.description || undefined,
                 ingredients: item.ingredients || undefined,
                 nutritional_info: item.nutritional_info || undefined,
@@ -289,14 +329,32 @@ class DirectusService {
   }
 
   /**
-   * Format asset image URL from Directus file ID
+   * Format asset image URL safely.
+   * If Directus is offline, unreachable, or URL not configured, returns undefined
+   * to strictly prevent client net::ERR_CONNECTION_TIMED_OUT errors.
    */
-  getAssetUrl(fileId?: string): string | undefined {
-    if (!fileId || !config.directus.url) return undefined;
-    if (fileId.startsWith('http://') || fileId.startsWith('https://')) {
-      return fileId;
+  getAssetUrl(rawUrlOrId?: string): string | undefined {
+    if (!rawUrlOrId) return undefined;
+    const s = String(rawUrlOrId).trim();
+
+    // If external CDN/image (not Directus /assets/), allow as-is
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      if (!s.includes('/assets/')) {
+        return s;
+      }
     }
-    return `${config.directus.url}/assets/${fileId}`;
+
+    // Directus asset: strictly require Directus to be online & URL configured
+    if (!this.isDirectusOnline || !config.directus.url) {
+      return undefined;
+    }
+
+    const fileId = this.extractAssetId(s);
+    if (fileId) {
+      return `${config.directus.url}/assets/${fileId}`;
+    }
+
+    return undefined;
   }
 
   /**
@@ -308,7 +366,18 @@ class DirectusService {
       return this.productsCache;
     }
 
-    // Try fetching fresh data from Directus
+    // Quick health probe to avoid 3000ms timeouts when server is offline
+    await this.checkDirectusHealth();
+
+    // If offline, bypass network call immediately and return disk cache safely
+    if (!this.isDirectusOnline || !config.directus.url) {
+      if (!this.productsCache || this.productsCache.length === 0) {
+        this.loadDiskCache();
+      }
+      return this.productsCache || [];
+    }
+
+    // Try fetching fresh data from Directus (only if confirmed online)
     if (config.directus.url) {
       try {
         const token = await this.getAuthToken();

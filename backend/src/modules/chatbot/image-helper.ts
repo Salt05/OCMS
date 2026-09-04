@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { config } from '../../config/index.js';
 import { logger } from '../../shared/utils/logger.js';
 
 /**
@@ -67,10 +68,14 @@ export async function convertToDataUri(imageUrl: string, maxRetries = 3): Promis
   // Local file path
   if (imageUrl.startsWith('/') || imageUrl.startsWith('C:') || imageUrl.startsWith('.')) {
     try {
-      if (fs.existsSync(imageUrl)) {
-        const ext = path.extname(imageUrl).toLowerCase().replace('.', '') || 'jpeg';
+      let resolvedPath = imageUrl;
+      if (imageUrl.startsWith('/uploads/')) {
+        resolvedPath = path.join(config.uploadDir, imageUrl.replace(/^\/uploads\//, ''));
+      }
+      if (fs.existsSync(resolvedPath)) {
+        const ext = path.extname(resolvedPath).toLowerCase().replace('.', '') || 'jpeg';
         const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-        const fileBuffer = await fs.promises.readFile(imageUrl);
+        const fileBuffer = await fs.promises.readFile(resolvedPath);
         const b64 = fileBuffer.toString('base64');
         return `data:${mime};base64,${b64}`;
       }

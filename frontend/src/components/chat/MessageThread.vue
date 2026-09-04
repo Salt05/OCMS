@@ -124,6 +124,18 @@
           <button
             type="button"
             class="zalo-header-btn"
+            :class="{ 'is-active': conversation.isPinned }"
+            :title="conversation.isPinned ? 'Bỏ ghim cuộc trò chuyện' : 'Ghim cuộc trò chuyện lên đầu'"
+            @click="$emit('toggle-pin', { conversationId: conversation.id, pinned: !conversation.isPinned })"
+          >
+            <v-icon size="18" :color="conversation.isPinned ? 'amber-darken-2' : undefined">
+              {{ conversation.isPinned ? 'lucide-pin-off' : 'lucide-pin' }}
+            </v-icon>
+          </button>
+
+          <button
+            type="button"
+            class="zalo-header-btn"
             :class="{ 'is-active': showContactPanel }"
             @click="$emit('toggle-contact-panel')"
             title="Thông tin hội thoại"
@@ -389,6 +401,33 @@
                 <v-btn size="x-small" variant="tonal" color="warning" class="mt-2" prepend-icon="lucide-calendar-sync" @click="syncAppointment(msg)">
                   Đồng bộ lịch
                 </v-btn>
+              </div>
+              <!-- Call Event (Cuộc gọi thoại / Video / Cuộc gọi nhỡ) -->
+              <div v-else-if="isCallMessage(msg)" class="call-event-card">
+                <div class="d-flex align-center">
+                  <div
+                    class="call-icon-circle d-flex align-center justify-center flex-shrink-0 mr-3"
+                    :style="{ background: getCallInfo(msg).iconBg }"
+                  >
+                    <v-icon :color="getCallInfo(msg).iconColor" size="20">{{ getCallInfo(msg).icon }}</v-icon>
+                  </div>
+                  <div class="call-info flex-grow-1 min-w-0 pr-2">
+                    <div class="d-flex align-center gap-2">
+                      <span class="call-title font-weight-bold text-body-2" :style="{ color: getCallInfo(msg).iconColor }">
+                        {{ getCallInfo(msg).title }}
+                      </span>
+                      <span
+                        v-if="getCallInfo(msg).status === 'connected' && getCallInfo(msg).formattedDuration"
+                        class="call-duration-badge"
+                      >
+                        {{ getCallInfo(msg).formattedDuration }}
+                      </span>
+                    </div>
+                    <div class="call-subtitle text-caption text-grey-darken-1 mt-0.5">
+                      {{ getCallInfo(msg).subtitle }}
+                    </div>
+                  </div>
+                </div>
               </div>
               <!-- Default text -->
               <div v-else class="message-text-content" v-html="parseDisplayContentHtml(msg.content)"></div>
@@ -974,6 +1013,7 @@ import type { Conversation, Message, MessageReactionItem } from '@/composables/u
 import { api } from '@/api/index';
 import logoLight from '@/assets/logo-light.png';
 import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
+import { isCallMessage, getCallInfo } from '@/utils/call-helpers';
 
 const props = defineProps<{
   conversation: Conversation | null;
@@ -1000,6 +1040,7 @@ const emit = defineEmits<{
   'resume-ai': [convId: string];
   'toggle-ai': [convId: string, aiActive: boolean];
   'set-context-boundary': [payload: { startMessageId?: string | null; endMessageId?: string | null; resetDraft?: boolean }];
+  'toggle-pin': [payload: { conversationId: string; pinned: boolean }];
   react: [messageId: string, icon: string];
   back: [];
 }>();
@@ -1868,9 +1909,14 @@ function parseDisplayContentHtml(content: string | null): string {
   if (content.startsWith('{')) {
     try {
       const p = JSON.parse(content);
-      if (p.title && p.href) text = `🔗 ${p.title}`;
-      else if (p.title) text = p.title;
-      else if (p.href) text = `🔗 ${p.description || p.href}`;
+      if (p.action?.includes('call') || p.action === 'recommened.calltime' || isCallMessage({ content })) {
+        const info = getCallInfo({ content });
+        return `${info.title}${info.subtitle ? ` (${info.subtitle})` : ''}`;
+      }
+      if (p.title && p.title !== 'sendBubbleMessage' && p.href) text = `🔗 ${p.title}`;
+      else if (p.title && p.title !== 'sendBubbleMessage') text = p.title;
+      else if (p.description && p.description !== 'Cuộc gọi') text = p.description;
+      else if (p.href) text = `🔗 ${p.href}`;
     } catch {
       text = content;
     }
@@ -2862,6 +2908,43 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 .active-context-marker {
   color: #0068ff !important;
   background-color: rgba(0, 104, 255, 0.1) !important;
+}
+
+/* ── Call Event Card ── */
+.call-event-card {
+  min-width: 200px;
+  max-width: 320px;
+  padding: 4px 2px;
+}
+
+.call-icon-circle {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+
+.call-event-card:hover .call-icon-circle {
+  transform: scale(1.06);
+}
+
+.call-title {
+  font-size: 13.5px;
+  line-height: 1.3;
+}
+
+.call-duration-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.call-subtitle {
+  font-size: 11.5px;
+  line-height: 1.25;
 }
 </style>
 

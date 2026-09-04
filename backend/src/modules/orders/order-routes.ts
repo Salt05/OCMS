@@ -1107,6 +1107,55 @@ export async function orderRoutes(app: FastifyInstance) {
       let officialOrderCode = '';
       let officialTotal = 0;
 
+      // ── Determine salesperson (NV CSKH) for this order ──
+      let salespersonOdooUserId: number | undefined;
+      let salespersonName: string | undefined;
+
+      // 1. Check contact's assigned NV CSKH
+      if (conv.contact?.assignedUserId) {
+        try {
+          const assignedUser = await prisma.user.findUnique({
+            where: { id: conv.contact.assignedUserId },
+            select: { odooId: true, fullName: true },
+          });
+          if (assignedUser?.odooId) {
+            salespersonOdooUserId = parseInt(assignedUser.odooId);
+            salespersonName = assignedUser.fullName;
+          }
+        } catch (err: any) {
+          logger.warn(`[order-routes] Failed to resolve assignedUser salesperson: ${err.message}`);
+        }
+      }
+
+      // 1b. Check Odoo partner's existing salesperson
+      if (!salespersonOdooUserId && conv.contact?.customerId) {
+        try {
+          const odooCust = await odooService.getCustomerById(conv.contact.customerId);
+          if (odooCust?.salespersonId) {
+            salespersonOdooUserId = odooCust.salespersonId;
+            salespersonName = odooCust.salesperson;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // 2. Fallback: logged-in user
+      if (!salespersonOdooUserId) {
+        try {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { odooId: true, fullName: true },
+          });
+          if (dbUser?.odooId) {
+            salespersonOdooUserId = parseInt(dbUser.odooId);
+            salespersonName = dbUser.fullName;
+          }
+        } catch (err: any) {
+          logger.warn(`[order-routes] Failed to resolve logged-in user salesperson: ${err.message}`);
+        }
+      }
+
       // 1. Resolve valid product IDs from ProductCache
       const odooLines: any[] = [];
       const resolvedLines: any[] = [];
@@ -1293,6 +1342,7 @@ export async function orderRoutes(app: FastifyInstance) {
       try {
         const createdId = await odooService.createOrder({
           partner_id: odooPartnerId,
+          user_id: salespersonOdooUserId,
           note: body.customNote || draft.notes || 'Đơn hàng tạo từ Chatbot AI',
           order_line: odooLines,
         });
@@ -1501,6 +1551,41 @@ Em cảm ơn ${partnerDisplayName} đã ủng hộ shop ạ!`.trim();
     if (!syncedOdooId) {
       try {
         const odooPartnerId = order.odooPartnerId || order.customerProfile?.odooPartnerId || 17871;
+
+        // ── Determine salesperson (NV CSKH) for this order ──
+        let orderSalespersonUserId: number | undefined;
+        if (order.customerProfile?.odooPartnerId) {
+          // Find the contact linked to this customer profile
+          const linkedContact = await prisma.contact.findFirst({
+            where: { orgId: user.orgId, customerId: String(order.customerProfile.odooPartnerId) },
+            select: { assignedUser: { select: { odooId: true } } },
+          });
+          if (linkedContact?.assignedUser?.odooId) {
+            orderSalespersonUserId = parseInt(linkedContact.assignedUser.odooId);
+          }
+        }
+        // 1b. Check Odoo partner's existing salesperson
+        if (!orderSalespersonUserId && odooPartnerId) {
+          try {
+            const odooCust = await odooService.getCustomerById(odooPartnerId);
+            if (odooCust?.salespersonId) {
+              orderSalespersonUserId = odooCust.salespersonId;
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+        // Fallback: logged-in user
+        if (!orderSalespersonUserId) {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { odooId: true },
+          });
+          if (dbUser?.odooId) {
+            orderSalespersonUserId = parseInt(dbUser.odooId);
+          }
+        }
+
         const validLines: any[] = [];
         for (const l of (order.lines || [])) {
           let odooPid = l.odooProductId;
@@ -1529,6 +1614,7 @@ Em cảm ơn ${partnerDisplayName} đã ủng hộ shop ạ!`.trim();
         if (validLines.length > 0) {
           const createdOdooId = await odooService.createOrder({
             partner_id: odooPartnerId,
+            user_id: orderSalespersonUserId,
             note: order.note || undefined,
             order_line: validLines,
           });

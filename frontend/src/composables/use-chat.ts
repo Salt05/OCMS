@@ -3,6 +3,7 @@ import { api } from '@/api/index';
 import { io, Socket } from 'socket.io-client';
 import type { Contact } from '@/composables/use-contacts';
 import { useAuthStore } from '@/stores/auth';
+import { isCallMessage, getCallInfo } from '@/utils/call-helpers';
 
 interface ZaloAccount {
   id: string;
@@ -26,6 +27,8 @@ export interface Conversation {
   lastMessageAt: string | null;
   unreadCount: number;
   isReplied: boolean;
+  isPinned?: boolean;
+  pinnedAt?: string | null;
   aiActive?: boolean;
   aiPaused?: boolean;
   pausedUntil?: string | null;
@@ -80,6 +83,16 @@ function sortMessagesChronologically(msgs: Message[]): Message[] {
   return msgs.slice().sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
 }
 
+function sortConversations(list: Conversation[]): Conversation[] {
+  return list.sort((a, b) => {
+    if (a.isPinned && !b.isPinned) return -1;
+    if (!a.isPinned && b.isPinned) return 1;
+    const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+    const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+    return timeB - timeA;
+  });
+}
+
 export function useChat() {
   const conversations = ref<Conversation[]>([]);
   const selectedConvId = ref<string | null>(null);
@@ -107,7 +120,7 @@ export function useChat() {
       const res = await api.get('/conversations', {
         params: { limit: 100, search: searchQuery.value, accountId: accountFilter.value || undefined },
       });
-      conversations.value = res.data.conversations;
+      conversations.value = sortConversations(res.data.conversations || []);
     } catch (err) {
       console.error('Failed to fetch conversations:', err);
     } finally {
@@ -570,7 +583,14 @@ export function useChat() {
           
           if (Notification.permission === 'granted' && document.hidden) {
             const sender = data.message.senderName || 'Tin nhắn mới';
-            const text = data.message.contentType === 'text' ? (data.message.content || 'Đã gửi một tin nhắn') : 'Đã gửi một tệp đính kèm';
+            let text = 'Đã gửi một tin nhắn';
+            if (data.message.contentType === 'call' || isCallMessage(data.message)) {
+              text = getCallInfo(data.message).snippet;
+            } else if (data.message.contentType === 'text') {
+              text = data.message.content || 'Đã gửi một tin nhắn';
+            } else {
+              text = 'Đã gửi một tệp đính kèm';
+            }
             const pushNotif = new Notification(sender, {
               body: text,
               icon: '/favicon.svg'
@@ -642,6 +662,20 @@ export function useChat() {
         if (data.contextStartedAt !== undefined) conv.contextStartedAt = data.contextStartedAt;
         if (data.contextEndedAt !== undefined) conv.contextEndedAt = data.contextEndedAt;
         if (data.currentState) conv.currentState = data.currentState;
+      }
+    });
+
+    // Real-time Pinned status updates
+    socket.on('chat:conversation_pinned', (data: {
+      conversationId: string;
+      isPinned: boolean;
+      pinnedAt?: string | null;
+    }) => {
+      const conv = conversations.value.find(c => c.id === data.conversationId);
+      if (conv) {
+        conv.isPinned = data.isPinned;
+        conv.pinnedAt = data.pinnedAt || null;
+        conversations.value = sortConversations([...conversations.value]);
       }
     });
 
@@ -739,6 +773,34 @@ export function useChat() {
     }
   }
 
+  async function togglePin(convId: string, pinned: boolean) {
+    const conv = conversations.value.find(c => c.id === convId);
+    if (conv) {
+      conv.isPinned = pinned;
+      conv.pinnedAt = pinned ? new Date().toISOString() : null;
+      conversations.value = sortConversations([...conversations.value]);
+    }
+
+    try {
+      const res = await api.post(`/conversations/${convId}/pin`, { pinned });
+      if (conv && res.data) {
+        conv.isPinned = res.data.isPinned;
+        conv.pinnedAt = res.data.pinnedAt;
+        conversations.value = sortConversations([...conversations.value]);
+      }
+      return res.data;
+    } catch (err) {
+      console.error('Failed to update pin status:', err);
+      // Revert if error
+      if (conv) {
+        conv.isPinned = !pinned;
+        conv.pinnedAt = null;
+        conversations.value = sortConversations([...conversations.value]);
+      }
+      throw err;
+    }
+  }
+
   function destroySocket() {
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', handleOnline);
@@ -773,6 +835,7 @@ export function useChat() {
     resumeAi,
     toggleAi,
     setContextBoundary,
+    togglePin,
     initSocket,
     destroySocket,
   };

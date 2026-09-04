@@ -133,6 +133,7 @@ model Contact {
   phone            String?
   email            String?   @map("email")
   fullName         String?   @map("full_name")
+  salutation       String?   @map("salutation") // Cách gọi khách hàng (Anh, Chị, Cô, Chú, Bác, Bạn...)
   avatarUrl        String?   @map("avatar_url")
   source           String?   // FB, TT, GT, CN, etc.
   sourceDate       DateTime? @map("source_date")
@@ -171,6 +172,8 @@ model Conversation {
   lastMessageAt    DateTime? @map("last_message_at")
   unreadCount      Int       @default(0) @map("unread_count")
   isReplied        Boolean   @default(true) @map("is_replied")
+  isPinned         Boolean   @default(false) @map("is_pinned")
+  pinnedAt         DateTime? @map("pinned_at")
   aiActive         Boolean   @default(false) @map("ai_active")
   aiPaused         Boolean   @default(false) @map("ai_paused")
   pausedUntil      DateTime? @map("paused_until")

@@ -100,16 +100,16 @@
               <v-text-field v-model="form.email" label="Email" type="email" class="mb-2" />
               <v-autocomplete
                 v-model="form.odooId"
-                :items="odooEmployees"
-                :loading="loadingOdooEmployees"
-                :item-title="item => item && typeof item === 'object' ? item.name : item"
+                :items="odooUsers"
+                :loading="loadingOdooUsers"
+                :item-title="item => item && typeof item === 'object' ? `${item.name} (${item.login})` : item"
                 item-value="idStr"
-                label="Liên kết với Nhân viên Odoo (Tùy chọn)"
+                label="Liên kết với Tài khoản Odoo (Tùy chọn)"
                 class="mb-2"
-                hint="Tìm kiếm và chọn nhân viên Odoo"
+                hint="Tìm kiếm và chọn tài khoản Odoo (res.users)"
                 persistent-hint
                 clearable
-                @update:search="searchOdooEmployees"
+                @update:search="searchOdooUsers"
               >
                 <template #item="{ props, item }">
                   <v-list-item v-bind="props">
@@ -117,7 +117,7 @@
                       {{ (item.raw || item)?.name || 'Chưa có tên' }}
                     </template>
                     <template v-slot:subtitle>
-                      {{ (item.raw || item)?.work_email || (item.raw || item)?.job_title || 'Không có thông tin' }}
+                      {{ (item.raw || item)?.login || 'Không có email' }}
                     </template>
                   </v-list-item>
                 </template>
@@ -230,8 +230,8 @@ const saving = ref(false);
 const dialogError = ref('');
 const newPassword = ref('');
 const selectedUser = ref<OrgUser | null>(null);
-const odooEmployees = ref<any[]>([]);
-const loadingOdooEmployees = ref(false);
+const odooUsers = ref<any[]>([]);
+const loadingOdooUsers = ref(false);
 let searchOdooTimeout: any = null;
 
 const form = ref({ fullName: '', email: '', password: '', role: 'member', odooId: '', isActive: true });
@@ -279,23 +279,23 @@ function openEdit(user: OrgUser) {
     isActive: user.isActive,
   };
   dialogError.value = '';
-  odooEmployees.value = [];
+  odooUsers.value = [];
   if (form.value.odooId) {
-    fetchOdooEmployee(form.value.odooId);
+    fetchOdooUser(form.value.odooId);
   }
-  searchOdooEmployees('');
+  searchOdooUsers('');
   showEdit.value = true;
 }
 
-async function searchOdooEmployees(query: string) {
+async function searchOdooUsers(query: string) {
   if (query === null || query === undefined) return;
   clearTimeout(searchOdooTimeout);
   searchOdooTimeout = setTimeout(async () => {
-    loadingOdooEmployees.value = true;
+    loadingOdooUsers.value = true;
     try {
-      const res = await api.get(`/odoo/employees?query=${encodeURIComponent(query)}`);
-      if (res.data && res.data.employees) {
-        odooEmployees.value = res.data.employees.map((e: any) => ({
+      const res = await api.get(`/odoo/users?query=${encodeURIComponent(query)}`);
+      if (res.data && res.data.users) {
+        odooUsers.value = res.data.users.map((e: any) => ({
           ...e,
           idStr: String(e.id),
         }));
@@ -303,20 +303,20 @@ async function searchOdooEmployees(query: string) {
     } catch (e) {
       console.error(e);
     } finally {
-      loadingOdooEmployees.value = false;
+      loadingOdooUsers.value = false;
     }
   }, 500);
 }
 
-async function fetchOdooEmployee(id: string) {
+async function fetchOdooUser(id: string) {
   if (!id) return;
   try {
-    const res = await api.get(`/odoo/employees/${id}`);
-    if (res.data && res.data.employee) {
-      const emp = res.data.employee;
-      const idStr = String(emp.id);
-      if (!odooEmployees.value.find(e => e.idStr === idStr)) {
-        odooEmployees.value.push({ ...emp, idStr });
+    const res = await api.get(`/odoo/users/${id}`);
+    if (res.data && res.data.user) {
+      const u = res.data.user;
+      const idStr = String(u.id);
+      if (!odooUsers.value.find(e => e.idStr === idStr)) {
+        odooUsers.value.push({ ...u, idStr });
       }
     }
   } catch (e) {

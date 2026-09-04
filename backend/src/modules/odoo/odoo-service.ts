@@ -19,6 +19,7 @@ export interface OdooCustomer {
   email: string;
   vat: string;
   salesperson: string;
+  salespersonId?: number | null;
   paymentTermId?: number | null;
   paymentTermName?: string;
 }
@@ -156,6 +157,7 @@ class OdooService {
         email: typeof p.email === 'string' ? p.email : '',
         vat: typeof p.vat === 'string' ? p.vat : '',
         salesperson,
+        salespersonId: Array.isArray(p.user_id) && p.user_id.length > 0 ? Number(p.user_id[0]) : null,
         paymentTermId,
         paymentTermName,
       };
@@ -470,6 +472,49 @@ class OdooService {
     } catch (err: any) {
       logger.error('[odoo] getSalespersons error:', err.message);
       return [];
+    }
+  }
+
+  /**
+   * Search Odoo internal users (res.users) for linking OCMS accounts.
+   * Returns all internal users (not portal/public) matching the query.
+   */
+  async searchOdooUsers(query: string = '', limit: number = 30): Promise<any[]> {
+    try {
+      const domain: any[] = [['share', '=', false]];
+      if (query) {
+        domain.push(['name', 'ilike', query]);
+      }
+      const users = await this.executeKw<any[]>('res.users', 'search_read', [domain], {
+        fields: ['id', 'name', 'login', 'lang', 'create_date'],
+        limit,
+      });
+      return users || [];
+    } catch (err: any) {
+      logger.error('[odoo] searchOdooUsers error:', err.message);
+      return [];
+    }
+  }
+
+  /**
+   * Get a single Odoo user (res.users) by ID.
+   */
+  async getOdooUserById(userId: number | string): Promise<any | null> {
+    const numericId = parseInt(String(userId).trim(), 10);
+    if (isNaN(numericId) || numericId <= 0) {
+      return null;
+    }
+    try {
+      const users = await this.executeKw<any[]>('res.users', 'search_read', [
+        [['id', '=', numericId]],
+      ], {
+        fields: ['id', 'name', 'login', 'lang', 'create_date'],
+        limit: 1,
+      });
+      return users && users.length > 0 ? users[0] : null;
+    } catch (err: any) {
+      logger.error(`[odoo] getOdooUserById(${userId}) error:`, err.message);
+      return null;
     }
   }
 

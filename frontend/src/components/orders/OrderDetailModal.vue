@@ -40,7 +40,7 @@
         </div>
       </v-card-item>
 
-      <v-card-text class="pa-6" style="max-height: 75vh;">
+      <v-card-text :class="isMobile ? 'pa-3' : 'pa-6'" style="max-height: 75vh;">
         <!-- Loading State -->
         <div v-if="loading" class="text-center py-12">
           <v-progress-circular indeterminate color="primary" size="48" />
@@ -134,31 +134,40 @@
               <v-table density="compact" class="order-lines-table">
                 <thead>
                   <tr class="bg-surface-variant">
-                    <th style="width: 40px;" class="text-center">#</th>
-                    <th>Sản phẩm</th>
-                    <th style="width: 80px;" class="text-center">ĐVT</th>
-                    <th style="width: 80px;" class="text-right">SL</th>
-                    <th style="width: 120px;" class="text-right">Đơn giá</th>
-                    <th style="width: 80px;" class="text-right">CK %</th>
-                    <th style="width: 130px;" class="text-right">Thành tiền</th>
+                    <th class="text-center" :style="!isMobile ? 'width: 40px;' : ''">#</th>
+                    <th :class="isMobile ? 'text-left' : ''">
+                      {{ isMobile ? 'Mã SP' : 'Sản phẩm' }}
+                    </th>
+                    <th v-if="!isMobile" style="width: 80px;" class="text-center">ĐVT</th>
+                    <th :style="!isMobile ? 'width: 80px;' : ''" class="text-right">SL</th>
+                    <th :style="!isMobile ? 'width: 120px;' : ''" class="text-right">Đơn giá</th>
+                    <th :style="!isMobile ? 'width: 80px;' : ''" class="text-right">CK %</th>
+                    <th :style="!isMobile ? 'width: 130px;' : ''" class="text-right">Thành tiền</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="productLines.length === 0">
-                    <td colspan="7" class="text-center text-medium-emphasis py-6">Không có dữ liệu dòng sản phẩm</td>
+                    <td :colspan="isMobile ? 6 : 7" class="text-center text-medium-emphasis py-6">Không có dữ liệu dòng sản phẩm</td>
                   </tr>
                   <tr v-for="(line, idx) in productLines" :key="line.id">
                     <td class="text-center text-caption text-medium-emphasis">{{ idx + 1 }}</td>
                     <td>
-                      <div class="font-weight-medium text-body-2 line-clamp-1">{{ line.productName }}</div>
-                      <div v-if="line.productSku" class="text-caption text-medium-emphasis font-monospace">
-                        SKU: {{ line.productSku }}
+                      <!-- Desktop: Tên sản phẩm + SKU -->
+                      <div v-if="!isMobile">
+                        <div class="font-weight-medium text-body-2 line-clamp-1">{{ line.productName }}</div>
+                        <div v-if="line.productSku" class="text-caption text-medium-emphasis font-monospace">
+                          SKU: {{ line.productSku }}
+                        </div>
+                      </div>
+                      <!-- Mobile: Chỉ hiển thị mã sản phẩm -->
+                      <div v-else class="font-monospace text-caption font-weight-medium text-primary">
+                        {{ line.productSku || line.productName }}
                       </div>
                     </td>
-                    <td class="text-center text-caption">{{ line.uomName || 'Units' }}</td>
+                    <td v-if="!isMobile" class="text-center text-caption">{{ line.uomName || 'Units' }}</td>
                     <td class="text-right font-weight-medium">{{ line.quantity }}</td>
                     <td class="text-right text-caption">
-                      <div v-if="line.originalPrice && line.originalPrice > line.priceUnit" class="text-caption text-decoration-line-through text-medium-emphasis">
+                      <div v-if="!isMobile && line.originalPrice && line.originalPrice > line.priceUnit" class="text-caption text-decoration-line-through text-medium-emphasis">
                         {{ formatVND(line.originalPrice) }}
                       </div>
                       <div :class="['font-weight-medium', (line.originalPrice && line.originalPrice > line.priceUnit) ? 'text-success font-weight-bold' : '']">
@@ -166,24 +175,8 @@
                       </div>
                     </td>
                     <td class="text-right text-caption">
-                      <div v-if="canEditDiscount(order)" class="d-inline-flex align-center justify-end gap-1">
-                        <input
-                          type="number"
-                          v-model.number="line.discount"
-                          min="0"
-                          max="100"
-                          step="1"
-                          class="discount-edit-input text-right font-weight-bold text-error border rounded px-1.5 py-0.5 bg-surface"
-                          style="width: 58px; font-size: 0.825rem;"
-                          placeholder="0"
-                          @input="onLineDiscountChange(line)"
-                        />
-                        <span class="text-caption text-error font-weight-bold">%</span>
-                      </div>
-                      <template v-else>
-                        <span v-if="line.discount > 0" class="text-error font-weight-medium">-{{ line.discount }}%</span>
-                        <span v-else class="text-medium-emphasis">—</span>
-                      </template>
+                      <span v-if="line.discount > 0" class="text-error font-weight-medium">-{{ line.discount }}%</span>
+                      <span v-else class="text-medium-emphasis">—</span>
                     </td>
                     <td class="text-right font-weight-bold text-body-2">{{ formatVND(line.priceSubtotal) }}</td>
                   </tr>
@@ -292,14 +285,14 @@
 
       <v-divider />
 
-      <v-card-actions class="px-4 px-md-6 py-3 bg-surface d-flex align-center justify-space-between flex-wrap gap-2">
-        <div v-if="order && (order.state === 'draft' || isMobile)" class="d-flex align-center gap-2">
+      <v-card-actions class="px-4 px-md-6 py-3 bg-surface d-flex align-center justify-space-between flex-wrap ga-2" style="gap: 8px;">
+        <div v-if="canApproveOrReject" class="d-flex align-center ga-2" style="gap: 8px;">
           <v-btn
             color="success"
             variant="flat"
             prepend-icon="lucide-check-circle-2"
             class="text-none font-weight-bold"
-            @click="$emit('confirm', order)"
+            @click="$emit('confirm', order!)"
           >
             Duyệt
           </v-btn>
@@ -308,7 +301,7 @@
             variant="outlined"
             prepend-icon="lucide-x-circle"
             class="text-none font-weight-bold"
-            @click="$emit('reject', order)"
+            @click="$emit('reject', order!)"
           >
             Từ chối
           </v-btn>
@@ -409,44 +402,48 @@ function cleanNote(note: string | null | undefined) {
   return cleaned.trim();
 }
 
-function canEditDiscount(order: any): boolean {
-  if (!order) return false;
-  return order.state === 'draft' || order.isAiDraft === true;
-}
-
-function onLineDiscountChange(line: any) {
-  if (line.discount == null || isNaN(line.discount) || line.discount < 0) {
-    line.discount = 0;
-  } else if (line.discount > 100) {
-    line.discount = 100;
+const canApproveOrReject = computed(() => {
+  if (!props.order) return false;
+  // Đơn hàng đã có trên Odoo (đang nằm trong danh sách đơn hàng) -> không hiển thị Duyệt/Từ chối
+  if (props.order.odooOrderId && typeof props.order.odooOrderId === 'number' && props.order.odooOrderId > 0) {
+    return false;
   }
-  const qty = Number(line.quantity) || 0;
-  const unit = Number(line.priceUnit) || 0;
-  const disc = Number(line.discount) || 0;
-  line.priceSubtotal = Math.round(qty * unit * (1 - disc / 100));
-
-  if (props.order) {
-    const untaxed = productLines.value.reduce((sum, l) => sum + (Number(l.priceSubtotal) || 0), 0);
-    props.order.amountUntaxed = untaxed;
-    props.order.amountTotal = untaxed + (Number(props.order.amountTax) || 0);
-    const undiscounted = productLines.value.reduce((sum, l) => {
-      const orig = Number(l.originalPrice) || Number(l.priceUnit) || 0;
-      return sum + ((Number(l.quantity) || 0) * orig);
-    }, 0);
-    props.order.amountUndiscounted = undiscounted;
-  }
-}
+  // Chỉ hiển thị cho đơn nháp AI đang chờ xác nhận
+  return Boolean(props.order.isAiDraft);
+});
 </script>
 
 <style scoped>
 .space-y-2 > * + * {
   margin-top: 8px;
 }
+.order-lines-table {
+  width: 100% !important;
+}
+:deep(.order-lines-table .v-table__wrapper > table) {
+  width: 100% !important;
+  table-layout: auto !important;
+}
 .order-lines-table th {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 600;
+  white-space: nowrap;
+}
+.order-lines-table th,
+.order-lines-table td {
+  white-space: nowrap;
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+@media (max-width: 768px) {
+  .order-lines-table th,
+  .order-lines-table td {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    font-size: 0.75rem;
+  }
 }
 .order-note-content {
   max-height: 120px;
@@ -459,14 +456,5 @@ function onLineDiscountChange(line: any) {
 .order-note-content :deep(a) {
   color: var(--v-theme-primary);
   text-decoration: underline;
-}
-.discount-edit-input {
-  border-color: rgba(var(--v-theme-error), 0.35) !important;
-  outline: none;
-  transition: all 0.2s;
-}
-.discount-edit-input:focus {
-  border-color: rgb(var(--v-theme-error)) !important;
-  box-shadow: 0 0 0 2px rgba(var(--v-theme-error), 0.2);
 }
 </style>
