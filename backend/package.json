@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node dist/app.js",
     "chat:cli": "tsx --env-file=.env src/scripts/cli-chat.ts",
+    "export:products": "tsx --env-file=.env src/scripts/export-odoo-products-excel.ts",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",

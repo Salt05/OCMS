@@ -5,19 +5,21 @@
 import { prisma } from '../../shared/database/prisma-client.js';
 
 /**
- * Check if the message is a call event (voice call, video call, missed call) from Zalo.
+ * Check if the message content represents a video (from video_width, file extension, or video URL).
  */
-export function isCallEvent(msgType: string | undefined, content: any): boolean {
-  if (msgType && (msgType.includes('call') || msgType.includes('calltime'))) return true;
+export function isVideoContent(msgType: string | undefined, content: any): boolean {
+  if (msgType && (msgType.includes('video') || msgType.includes('mp4'))) return true;
   if (!content) return false;
 
   let parsed = content;
   if (typeof content === 'string') {
     if (
-      content.includes('calltime') ||
-      content.includes('recommened.call') ||
-      content.includes('sendBubbleMessage') ||
-      content.includes('calltype')
+      content.startsWith('{') ||
+      content.includes('video_width') ||
+      content.includes('video_original_width') ||
+      content.includes('/video-') ||
+      content.includes('.mp4') ||
+      content.includes('dlmd.me')
     ) {
       try {
         parsed = JSON.parse(content);
@@ -30,7 +32,63 @@ export function isCallEvent(msgType: string | undefined, content: any): boolean 
   }
 
   if (typeof parsed === 'object' && parsed !== null) {
-    if (typeof parsed.action === 'string' && (parsed.action.includes('call') || parsed.action === 'recommened.calltime')) {
+    if (parsed.params) {
+      let p = parsed.params;
+      if (typeof p === 'string') {
+        try { p = JSON.parse(p); } catch {}
+      }
+      if (p && typeof p === 'object') {
+        if (p.video_width || p.video_original_width || p.video_height) return true;
+        const ext = (p.fileExt || '').toLowerCase();
+        if (['mp4', 'mov', 'webm', 'avi', 'mkv', '3gp', 'm4v', 'ogv'].includes(ext)) return true;
+      }
+    }
+    if (parsed.href) {
+      const h = String(parsed.href).toLowerCase();
+      if (h.includes('/video-') || h.includes('.mp4') || h.includes('.mov') || h.includes('.webm') || h.includes('dlmd.me')) {
+        return true;
+      }
+    }
+    if (parsed.title) {
+      const ext = (parsed.title.split('.').pop() || '').toLowerCase();
+      if (['mp4', 'mov', 'webm', 'avi', 'mkv', '3gp', 'm4v', 'ogv'].includes(ext)) return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check if the message is a call event (voice call, video call, missed call) from Zalo.
+ */
+export function isCallEvent(msgType: string | undefined, content: any): boolean {
+  // If it is a video, image, sticker, or voice message, it is NEVER a call!
+  if (isVideoContent(msgType, content)) return false;
+  if (msgType && (msgType.includes('video') || msgType.includes('photo') || msgType.includes('image') || msgType.includes('sticker') || msgType.includes('voice') || msgType.includes('file'))) {
+    return false;
+  }
+  if (msgType && (msgType.includes('calltime') || msgType === 'chat.call')) return true;
+  if (!content) return false;
+
+  let parsed = content;
+  if (typeof content === 'string') {
+    if (
+      content.includes('calltime') ||
+      content.includes('recommened.call') ||
+      (content.includes('sendBubbleMessage') && content.toLowerCase().includes('cuộc gọi'))
+    ) {
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
+    if (typeof parsed.action === 'string' && (parsed.action.includes('calltime') || parsed.action === 'recommened.calltime' || parsed.action.includes('.call'))) {
       return true;
     }
     if (
@@ -45,8 +103,10 @@ export function isCallEvent(msgType: string | undefined, content: any): boolean 
       if (typeof p === 'string') {
         try { p = JSON.parse(p); } catch {}
       }
-      if (typeof p === 'object' && p !== null && ('duration' in p || 'calltype' in p || 'isCaller' in p)) {
-        return true;
+      if (typeof p === 'object' && p !== null) {
+        if (p.isEnableCallback !== undefined || (p.isCaller !== undefined && p.calltype !== undefined)) {
+          return true;
+        }
       }
     }
   }
@@ -59,6 +119,7 @@ export function isCallEvent(msgType: string | undefined, content: any): boolean 
  * Falls back to 'text' for unrecognised types or plain-string content.
  */
 export function detectContentType(msgType: string | undefined, content: any): string {
+  if (isVideoContent(msgType, content)) return 'video';
   if (isCallEvent(msgType, content)) return 'call';
   if (!msgType) return 'text';
   if (msgType.includes('photo') || msgType.includes('image')) return 'image';
@@ -112,17 +173,18 @@ export function extractAttachments(msgType: string | undefined, content: any): a
       const url = item.hdUrl || item.href || item.url || item.thumb || item.normalUrl;
       const thumbUrl = item.thumb || item.url || item.href || item.normalUrl;
       if (url || thumbUrl) {
+        const isVideo = isVideoContent(msgType, item);
         const type =
           item.type ||
-          (msgType?.includes('video') ? 'video' : msgType?.includes('file') ? 'file' : 'image');
+          (isVideo ? 'video' : msgType?.includes('file') ? 'file' : 'image');
         attachments.push({
           type,
           url: url || thumbUrl,
           thumbUrl: thumbUrl || url,
           title: item.title || item.name || '',
           size: item.size || item.fileSize || 0,
-          width: item.width || 0,
-          height: item.height || 0,
+          width: item.width || item.video_width || 0,
+          height: item.height || item.video_height || 0,
         });
       }
     }

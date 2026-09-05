@@ -844,7 +844,7 @@ import type { Conversation } from '@/composables/use-chat';
 import { useTags, type TagGroup } from '@/composables/use-tags';
 import TagGroupDialog from '@/components/common/TagGroupDialog.vue';
 import { api } from '@/api/index';
-import { isCallMessage, getCallInfo } from '@/utils/call-helpers';
+import { isCallMessage, getCallInfo, isVideoPayload } from '@/utils/call-helpers';
 
 const props = defineProps<{
   conversations: Conversation[];
@@ -1279,12 +1279,13 @@ function lastMessagePreview(conv: Conversation): string {
     return `${contactName} đã thu hồi một tin nhắn`;
   }
 
-  if (msg.contentType === 'call' || isCallMessage(msg)) {
+  if (msg.contentType === 'video' || isVideoPayload(msg.content)) return 'Video';
+
+  if (!isVideoPayload(msg.content) && (msg.contentType === 'call' || isCallMessage(msg))) {
     return getCallInfo(msg).snippet;
   }
 
   if (msg.contentType === 'image') return 'Hình ảnh';
-  if (msg.contentType === 'video') return 'Video';
   if (msg.contentType === 'sticker') return 'Nhãn dán';
   if (msg.contentType === 'voice') return 'Tin nhắn thoại';
   if (msg.contentType === 'gif') return 'GIF';
@@ -1293,8 +1294,12 @@ function lastMessagePreview(conv: Conversation): string {
     try {
       const p = JSON.parse(msg.content);
 
-      // Cuộc gọi thoại / Video
-      if (p.action?.includes('call') || p.action === 'recommened.calltime' || p.title === 'sendBubbleMessage') {
+      if (isVideoPayload(p)) {
+        return 'Video';
+      }
+
+      // Cuộc gọi thoại
+      if (p.action?.includes('call') || p.action === 'recommened.calltime' || (p.title === 'sendBubbleMessage' && String(p.description || '').toLowerCase().includes('cuộc gọi'))) {
         return getCallInfo(msg).snippet;
       }
       

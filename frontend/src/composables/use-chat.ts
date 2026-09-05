@@ -3,7 +3,7 @@ import { api } from '@/api/index';
 import { io, Socket } from 'socket.io-client';
 import type { Contact } from '@/composables/use-contacts';
 import { useAuthStore } from '@/stores/auth';
-import { isCallMessage, getCallInfo } from '@/utils/call-helpers';
+import { isCallMessage, getCallInfo, isVideoPayload } from '@/utils/call-helpers';
 
 interface ZaloAccount {
   id: string;
@@ -584,7 +584,9 @@ export function useChat() {
           if (Notification.permission === 'granted' && document.hidden) {
             const sender = data.message.senderName || 'Tin nhắn mới';
             let text = 'Đã gửi một tin nhắn';
-            if (data.message.contentType === 'call' || isCallMessage(data.message)) {
+            if (data.message.contentType === 'video' || isVideoPayload(data.message.content)) {
+              text = 'Đã gửi một video';
+            } else if (!isVideoPayload(data.message.content) && (data.message.contentType === 'call' || isCallMessage(data.message))) {
               text = getCallInfo(data.message).snippet;
             } else if (data.message.contentType === 'text') {
               text = data.message.content || 'Đã gửi một tin nhắn';

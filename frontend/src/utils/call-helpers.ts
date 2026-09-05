@@ -21,10 +21,64 @@ export interface CallInfo {
 }
 
 /**
+ * Check if the payload or content represents a video.
+ */
+export function isVideoPayload(parsedOrContent: any): boolean {
+  if (!parsedOrContent) return false;
+  let parsed = parsedOrContent;
+  if (typeof parsedOrContent === 'string') {
+    if (
+      parsedOrContent.startsWith('{') ||
+      parsedOrContent.includes('video_width') ||
+      parsedOrContent.includes('video_original_width') ||
+      parsedOrContent.includes('/video-') ||
+      parsedOrContent.includes('.mp4') ||
+      parsedOrContent.includes('dlmd.me')
+    ) {
+      try {
+        parsed = JSON.parse(parsedOrContent);
+      } catch {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) return false;
+
+  if (parsed.params) {
+    let p = parsed.params;
+    if (typeof p === 'string') {
+      try { p = JSON.parse(p); } catch {}
+    }
+    if (p && typeof p === 'object') {
+      if (p.video_width || p.video_original_width || p.video_height) return true;
+      const ext = (p.fileExt || '').toLowerCase();
+      if (['mp4', 'mov', 'webm', 'avi', 'mkv', '3gp', 'm4v', 'ogv'].includes(ext)) return true;
+    }
+  }
+  if (parsed.href) {
+    const h = String(parsed.href).toLowerCase();
+    if (h.includes('/video-') || h.includes('.mp4') || h.includes('.mov') || h.includes('.webm') || h.includes('dlmd.me')) {
+      return true;
+    }
+  }
+  if (parsed.title) {
+    const ext = (parsed.title.split('.').pop() || '').toLowerCase();
+    if (['mp4', 'mov', 'webm', 'avi', 'mkv', '3gp', 'm4v', 'ogv'].includes(ext)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Check whether a message represents a Zalo call event.
  */
 export function isCallMessage(msg: { contentType?: string; content?: string | null } | null | undefined): boolean {
   if (!msg) return false;
+  // If content is a video, NEVER treat as call even if contentType was erroneously 'call' in DB
+  if (isVideoPayload(msg.content)) return false;
   if (msg.contentType === 'call') return true;
 
   const content = msg.content;
@@ -34,7 +88,6 @@ export function isCallMessage(msg: { contentType?: string; content?: string | nu
     if (
       content.includes('calltime') ||
       content.includes('recommened.call') ||
-      content.includes('calltype') ||
       (content.includes('sendBubbleMessage') && content.toLowerCase().includes('cuộc gọi'))
     ) {
       try {
@@ -53,7 +106,9 @@ export function isCallMessage(msg: { contentType?: string; content?: string | nu
 
 function isCallPayload(parsed: any): boolean {
   if (!parsed || typeof parsed !== 'object') return false;
-  if (typeof parsed.action === 'string' && (parsed.action.includes('call') || parsed.action === 'recommened.calltime')) {
+  if (isVideoPayload(parsed)) return false;
+
+  if (typeof parsed.action === 'string' && (parsed.action.includes('calltime') || parsed.action === 'recommened.calltime' || parsed.action.includes('.call'))) {
     return true;
   }
   if (
@@ -68,8 +123,10 @@ function isCallPayload(parsed: any): boolean {
     if (typeof p === 'string') {
       try { p = JSON.parse(p); } catch {}
     }
-    if (typeof p === 'object' && p !== null && ('duration' in p || 'calltype' in p || 'isCaller' in p)) {
-      return true;
+    if (typeof p === 'object' && p !== null) {
+      if (p.isEnableCallback !== undefined || (p.isCaller !== undefined && p.calltype !== undefined)) {
+        return true;
+      }
     }
   }
   return false;

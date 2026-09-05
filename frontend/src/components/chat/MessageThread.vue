@@ -403,7 +403,7 @@
                 </v-btn>
               </div>
               <!-- Call Event (Cuộc gọi thoại / Video / Cuộc gọi nhỡ) -->
-              <div v-else-if="isCallMessage(msg)" class="call-event-card">
+              <div v-else-if="!isVideoMessage(msg) && isCallMessage(msg)" class="call-event-card">
                 <div class="d-flex align-center">
                   <div
                     class="call-icon-circle d-flex align-center justify-center flex-shrink-0 mr-3"
@@ -1013,7 +1013,7 @@ import type { Conversation, Message, MessageReactionItem } from '@/composables/u
 import { api } from '@/api/index';
 import logoLight from '@/assets/logo-light.png';
 import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
-import { isCallMessage, getCallInfo } from '@/utils/call-helpers';
+import { isCallMessage, getCallInfo, isVideoPayload } from '@/utils/call-helpers';
 
 const props = defineProps<{
   conversation: Conversation | null;
@@ -1791,6 +1791,7 @@ async function downloadFile(url: string, filename: string) {
 
 /** Extract image URL from JSON content */
 function getImageUrl(msg: Message): string | null {
+  if (isVideoMessage(msg)) return null;
   if (msg.contentType === 'image' && msg.content) {
     if (msg.content.startsWith('http')) return msg.content;
     try { const p = JSON.parse(msg.content); return p.href || p.thumb || p.hdUrl || null; } catch {}
@@ -1832,17 +1833,25 @@ function isUndoSyncMessage(msg: Message): boolean {
 /** Check if message is a video (either contentType === 'video' or file with video extension) */
 function isVideoMessage(msg: Message): boolean {
   if (msg.contentType === 'video') return true;
+  if (isVideoPayload(msg.content)) return true;
   const parsed = getParsedContent(msg);
   if (parsed) {
+    if (isVideoPayload(parsed)) return true;
     let ext = '';
     try {
       const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : parsed.params;
+      if (params?.video_width || params?.video_original_width || params?.video_height) {
+        return true;
+      }
       ext = (params?.fileExt || '').toLowerCase();
     } catch {}
     if (!ext && parsed.title) {
       ext = (parsed.title.split('.').pop() || '').toLowerCase();
     }
     if (['mp4', 'mov', 'webm', 'avi', 'mkv', '3gp', 'm4v', 'ogv'].includes(ext)) {
+      return true;
+    }
+    if (parsed.href && (parsed.href.includes('/video-') || parsed.href.includes('.mp4') || parsed.href.includes('.mov') || parsed.href.includes('dlmd.me'))) {
       return true;
     }
   }
