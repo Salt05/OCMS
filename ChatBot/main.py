@@ -9,11 +9,94 @@ if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
+import asyncio
+import time
+from pathlib import Path
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from typing import AsyncGenerator
 import json
 import traceback
+
+# Cấu hình tự động dọn dẹp file CSV trong vanna_data
+# Mặc định: 3 ngày (259200 giây), quét định kỳ mỗi 1 giờ (3600 giây)
+VANNA_DATA_TTL_SECONDS = int(os.getenv("VANNA_DATA_TTL_SECONDS", str(3 * 24 * 3600)))
+CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "3600"))
+
+def cleanup_old_query_results(directory: str = "./vanna_data", max_age_seconds: int = VANNA_DATA_TTL_SECONDS) -> int:
+    """
+    Quét thư mục directory (bao gồm các thư mục con theo user hash)
+    và xóa các file query_results_*.csv cũ hơn max_age_seconds.
+    Tự động xóa thư mục con nếu rỗng.
+    Trả về số lượng file đã xóa.
+    """
+    base_dir = Path(directory)
+    if not base_dir.exists():
+        return 0
+
+    now = time.time()
+    deleted_count = 0
+
+    for file_path in base_dir.rglob("query_results_*.csv"):
+        try:
+            if not file_path.is_file():
+                continue
+            mtime = file_path.stat().st_mtime
+            age = now - mtime
+            if age >= max_age_seconds:
+                file_path.unlink()
+                deleted_count += 1
+                print(f"[Cleanup] 🗑️ Đã xóa file CSV tạm ({int(age)}s >= {max_age_seconds}s): {file_path}")
+        except Exception as e:
+            print(f"[Cleanup] ⚠️ Lỗi khi xóa {file_path}: {e}")
+
+    # Xóa các thư mục con rỗng nếu không còn file
+    for sub_dir in list(base_dir.iterdir()):
+        try:
+            if sub_dir.is_dir() and not any(sub_dir.iterdir()):
+                sub_dir.rmdir()
+                print(f"[Cleanup] 📁 Đã dọn thư mục rỗng: {sub_dir}")
+        except Exception:
+            pass
+
+    return deleted_count
+
+async def periodic_cleanup_task(
+    directory: str = "./vanna_data",
+    interval: int = CLEANUP_INTERVAL_SECONDS,
+    max_age_seconds: int = VANNA_DATA_TTL_SECONDS
+):
+    """Tiến trình ngầm chạy định kỳ để quét và dọn dẹp các file CSV quá hạn."""
+    while True:
+        try:
+            cleanup_old_query_results(directory, max_age_seconds)
+        except Exception as e:
+            print(f"[Cleanup Task] Lỗi khi thực hiện dọn dẹp: {e}")
+        await asyncio.sleep(interval)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Khởi động background task dọn dẹp file CSV định kỳ
+    cleanup_task = asyncio.create_task(
+        periodic_cleanup_task(
+            directory="./vanna_data",
+            interval=CLEANUP_INTERVAL_SECONDS,
+            max_age_seconds=VANNA_DATA_TTL_SECONDS,
+        )
+    )
+    print(f"🧹 Đã kích hoạt cơ chế tự động dọn dẹp file CSV (TTL: {VANNA_DATA_TTL_SECONDS}s, quét mỗi {CLEANUP_INTERVAL_SECONDS}s)")
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
 
 from vanna import Agent
 from vanna.servers.fastapi.routes import register_chat_routes
@@ -225,7 +308,10 @@ agent = Agent(
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 
-app = FastAPI(title="OCMS AI Data Assistant with Multi-Device Chat History")
+app = FastAPI(
+    title="OCMS AI Data Assistant with Multi-Device Chat History",
+    lifespan=lifespan,
+)
 
 # Cấu hình CORS để frontend từ bất kỳ domain nào cũng có thể gọi API
 app.add_middleware(
@@ -481,6 +567,17 @@ async def delete_conversation_route(
             detail="Conversation not found or not authorized to delete",
         )
     return {"status": "success", "message": "Conversation deleted"}
+
+@app.post("/api/cleanup/csv")
+async def trigger_cleanup_route():
+    """Trigger dọn dẹp thủ công các file query_results_*.csv quá hạn."""
+    count = cleanup_old_query_results("./vanna_data", VANNA_DATA_TTL_SECONDS)
+    return {
+        "status": "success",
+        "deleted_files": count,
+        "ttl_seconds": VANNA_DATA_TTL_SECONDS,
+    }
+
 
 if __name__ == "__main__":
     import uvicorn

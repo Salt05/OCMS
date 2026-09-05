@@ -75,13 +75,11 @@ services:
 
 volumes:
   pg_data:
-    external: true
     name: zalocrm_pg_data
   backend_node_modules:
   frontend_node_modules:
   file_storage:
-    external: true
     name: zalocrm_file_storage
   chatbot_data:
-    external: true
     name: zalocrm_chatbot_data
+

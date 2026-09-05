@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+vanna_data/
+.env
+.env.*
+*.db
+*.sqlite3
+.git/
+.github/
+notebooks/
+tests/
