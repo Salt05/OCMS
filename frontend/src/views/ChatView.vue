@@ -285,6 +285,32 @@
         </div>
       </div>
     </transition>
+
+    <!-- ── Zalo Safety Rate Limit Warning Snackbar ── -->
+    <v-snackbar
+      :model-value="Boolean(rateLimitWarning)"
+      color="amber-darken-3"
+      location="top"
+      :timeout="8000"
+      elevation="6"
+      rounded="lg"
+      @update:model-value="(val) => { if (!val) rateLimitWarning = null; }"
+    >
+      <div class="d-flex align-center">
+        <v-icon class="mr-2" size="20">mdi-alert</v-icon>
+        <div class="text-body-2 font-weight-medium text-white">{{ rateLimitWarning }}</div>
+      </div>
+      <template #actions>
+        <v-btn
+          variant="text"
+          size="small"
+          class="text-white font-weight-bold"
+          @click="rateLimitWarning = null"
+        >
+          Đã hiểu
+        </v-btn>
+      </template>
+    </v-snackbar>
   </div>
 </template>
 
@@ -314,6 +340,7 @@ const {
   pauseAi, resumeAi, toggleAi,
   setContextBoundary,
   togglePin,
+  rateLimitWarning,
   initSocket, destroySocket,
 } = useChat();
 

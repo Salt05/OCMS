@@ -104,6 +104,7 @@ export function useChat() {
   const hasMoreMessages = ref(true);
   const searchQuery = ref('');
   const accountFilter = ref<string | null>(null);
+  const rateLimitWarning = ref<string | null>(null);
   let socket: Socket | null = null;
 
   // In-memory cache of messages per conversation to make switching instantaneous
@@ -348,6 +349,10 @@ export function useChat() {
         { timeout: 30000 }
       );
 
+      if (res.data?.warning) {
+        rateLimitWarning.value = res.data.warning;
+      }
+
       // If note or server returns created message:
       if (res.data?.message) {
         const serverMsg = res.data.message;
@@ -436,7 +441,7 @@ export function useChat() {
       const formData = new FormData();
       formData.append('file', file);
 
-      await api.post(
+      const res = await api.post(
         `/conversations/${convId}/upload`,
         formData,
         {
@@ -444,6 +449,10 @@ export function useChat() {
           timeout: 120000,
         },
       );
+
+      if (res.data?.warning) {
+        rateLimitWarning.value = res.data.warning;
+      }
 
       const idx = messages.value.findIndex(m => m.id === tempId || m.tempId === tempId);
       if (idx !== -1) {
@@ -838,6 +847,7 @@ export function useChat() {
     toggleAi,
     setContextBoundary,
     togglePin,
+    rateLimitWarning,
     initSocket,
     destroySocket,
   };

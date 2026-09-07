@@ -365,27 +365,9 @@
                 @click="showMobileMoreDrawer = false"
               />
               <v-list-item
-                v-if="authStore.isAdmin"
-                to="/chatbot-test"
-                prepend-icon="lucide-flask-conical"
-                title="Giả lập Chatbot (AI Lab)"
-                rounded="lg"
-                class="mb-1"
-                @click="showMobileMoreDrawer = false"
-              />
-              <v-list-item
                 to="/settings"
                 prepend-icon="lucide-settings"
                 title="Cài đặt hệ thống"
-                rounded="lg"
-                class="mb-1"
-                @click="showMobileMoreDrawer = false"
-              />
-              <v-list-item
-                v-if="authStore.isAdmin"
-                to="/api-settings"
-                prepend-icon="lucide-webhook"
-                title="Cấu hình API & Webhook"
                 rounded="lg"
                 class="mb-1"
                 @click="showMobileMoreDrawer = false"
@@ -539,7 +521,6 @@ const primaryMenuItems = computed(() => {
     { title: 'Ưu đãi & Chiết khấu', icon: 'lucide-percent', path: '/promotions' },
     { title: 'Báo cáo & Thống kê', icon: 'lucide-pie-chart', path: '/reports' },
     { title: 'Trợ lý AI (Chatbot)', icon: 'lucide-bot', path: '/ai-assistant' },
-    ...(authStore.isAdmin ? [{ title: 'Giả lập Chatbot (AI Lab)', icon: 'lucide-flask-conical', path: '/chatbot-test' }] : []),
     { title: 'Tổng quan (Dashboard)', icon: 'lucide-layout-dashboard', path: '/' },
   ];
   return items;
@@ -551,7 +532,7 @@ function isRouteActive(path: string): boolean {
 }
 
 const isMoreMenuRouteActive = computed(() => {
-  const secondaryPaths = ['/', '/zalo-accounts', '/reports', '/ai-assistant', '/chatbot-test', '/settings', '/api-settings'];
+  const secondaryPaths = ['/', '/zalo-accounts', '/reports', '/ai-assistant', '/settings'];
   return secondaryPaths.some(p => isRouteActive(p) && p !== '/chat' && p !== '/orders' && p !== '/products' && p !== '/promotions' && p !== '/contacts');
 });
 

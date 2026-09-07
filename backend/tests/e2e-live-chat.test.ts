@@ -13,7 +13,7 @@ async function testLiveFlow() {
   // 1. Setup Organization & Conversation
   let org = await prisma.organization.findFirst();
   if (!org) {
-    org = await prisma.organization.create({ data: { name: 'LA PET Test Org' } });
+    org = await prisma.organization.create({ data: { name: 'Test Org' } });
   }
 
   let user = await prisma.user.findFirst({ where: { orgId: org.id } });
@@ -21,7 +21,7 @@ async function testLiveFlow() {
     user = await prisma.user.create({
       data: {
         orgId: org.id,
-        email: 'test_admin@lapet.vn',
+        email: 'test_admin@example.com',
         passwordHash: 'dummy',
         fullName: 'Admin Test',
         role: 'admin',

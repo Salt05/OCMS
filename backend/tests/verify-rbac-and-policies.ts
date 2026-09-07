@@ -57,13 +57,13 @@ async function runVerification() {
 
   // 2. Generate Tokens for Staff and Admin
   const staffToken = jwt.sign(
-    { id: 'mock-staff-id', orgId: org.id, role: 'member', email: 'staff@lapet.vn' },
+    { id: 'mock-staff-id', orgId: org.id, role: 'member', email: 'staff@example.com' },
     JWT_SECRET,
     { expiresIn: '1h' }
   );
 
   const adminToken = jwt.sign(
-    { id: 'mock-admin-id', orgId: org.id, role: 'admin', email: 'admin@lapet.vn' },
+    { id: 'mock-admin-id', orgId: org.id, role: 'admin', email: 'admin@example.com' },
     JWT_SECRET,
     { expiresIn: '1h' }
   );

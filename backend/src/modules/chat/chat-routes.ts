@@ -85,6 +85,35 @@ export async function getOrResolveActiveZaloInstance(
   return null;
 }
 
+async function emitRateLimitNotification(io: any, userId: string, conversationId: string, warningText: string) {
+  try {
+    const notification = await prisma.notification.create({
+      data: {
+        id: randomUUID(),
+        userId,
+        type: 'rate_limit_warning',
+        title: 'Cảnh báo an toàn Zalo',
+        detail: warningText,
+        conversationId,
+      },
+    });
+
+    io?.emit(`notification:created:${userId}`, {
+      notification: {
+        id: 'db-' + notification.id,
+        type: 'warning',
+        title: notification.title,
+        detail: notification.detail,
+        priority: 'high',
+        createdAt: notification.createdAt.toISOString(),
+        conversationId,
+      },
+    });
+  } catch (err) {
+    logger.warn('[chat] Failed to create rate limit notification:', err);
+  }
+}
+
 export async function chatRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
 
@@ -640,19 +669,11 @@ export async function chatRoutes(app: FastifyInstance) {
       }
       const instance = resolved.instance;
 
-      // Rate limit
+      // Rate limit warning check (do not block)
       const limits =
         zaloRateLimiter.checkLimits(
           conversation.zaloAccountId,
         );
-
-      if (!limits.allowed) {
-        return reply
-          .status(429)
-          .send({
-            error: limits.reason,
-          });
-      }
 
       try {
         const threadId =
@@ -822,8 +843,13 @@ export async function chatRoutes(app: FastifyInstance) {
          * The actual message will be returned to the
          * frontend through Socket.IO by zalo-listener-factory.
          */
+        if (limits.warning) {
+          emitRateLimitNotification((app as any).io, user.id, conversation.id, limits.warning).catch(() => {});
+        }
+
         return {
           success: true,
+          warning: limits.warning,
         };
       } catch (err) {
         logger.error(
@@ -878,11 +904,8 @@ export async function chatRoutes(app: FastifyInstance) {
       }
       const instance = resolved.instance;
 
-      // Rate limit
+      // Rate limit warning check (do not block)
       const limits = zaloRateLimiter.checkLimits(conversation.zaloAccountId);
-      if (!limits.allowed) {
-        return reply.status(429).send({ error: limits.reason });
-      }
 
       // Save file to temp directory preserving original filename
       const originalName = data.filename || `file_${Date.now()}`;
@@ -914,7 +937,11 @@ export async function chatRoutes(app: FastifyInstance) {
          * The actual message will be returned to the
          * frontend through Socket.IO by zalo-listener-factory.
          */
-        return { success: true };
+        if (limits.warning) {
+          emitRateLimitNotification((app as any).io, user.id, conversation.id, limits.warning).catch(() => {});
+        }
+
+        return { success: true, warning: limits.warning };
       } catch (err) {
         logger.error('[chat] Upload/send attachment error:', err);
         return reply.status(500).send({ error: 'Failed to send attachment' });

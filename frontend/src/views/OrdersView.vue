@@ -196,7 +196,7 @@
 
                 <!-- Salesperson -->
                 <td v-if="!isMobile" class="text-left">
-                  <span class="text-caption text-medium-emphasis">{{ o.salesperson || '—' }}</span>
+                  <span class="text-caption text-medium-emphasis">{{ o.customerProfile?.salesperson || o.salesperson || '—' }}</span>
                 </td>
 
                 <!-- Date Order (Single line on desktop) -->
@@ -334,8 +334,8 @@
 
                 <!-- Salesperson (Nhân viên) -->
                 <td class="text-left">
-                  <span class="text-caption text-medium-emphasis text-truncate d-inline-block" :title="o.salesperson || ''">
-                    {{ o.salesperson ? (isMobile ? formatCustomerName(o.salesperson) : o.salesperson) : '—' }}
+                  <span class="text-caption text-medium-emphasis text-truncate d-inline-block" :title="o.customerProfile?.salesperson || o.salesperson || ''">
+                    {{ (o.customerProfile?.salesperson || o.salesperson) ? (isMobile ? formatCustomerName(o.customerProfile?.salesperson || o.salesperson) : (o.customerProfile?.salesperson || o.salesperson)) : '—' }}
                   </span>
                 </td>
 

@@ -17,6 +17,7 @@ import { PricingPromotionEngine } from '../promotions/pricing-promotion-engine.j
 import { extractImageUrls, convertAllToDataUris } from '../chatbot/image-helper.js';
 import { PromotionService } from '../promotions/promotion-service.js';
 import { odooService } from '../odoo/odoo-service.js';
+import { integrationSettingsService } from '../settings/integration-settings-service.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -289,14 +290,21 @@ function buildProductSummaryForPrompt(productCache: ProductCacheRow[], text: str
 
 // ── LLM API call ────────────────────────────────────────────────────────────
 
-async function callGroqChat(systemPrompt: string, userMessage: string | any[]): Promise<string> {
-  const apiKey = config.llm?.apiKey || config.groq.apiKey;
-  if (!apiKey) {
-    throw new Error('Chưa cấu hình API Key cho AI (GEMINI_API_KEY hoặc GROQ_API_KEY). Vui lòng thêm vào biến môi trường.');
+async function callGroqChat(systemPrompt: string, userMessage: string | any[], orgId?: string): Promise<string> {
+  let aiConfig: any = null;
+  if (orgId) {
+    try {
+      aiConfig = await integrationSettingsService.getAiConfig(orgId);
+    } catch {}
   }
 
-  const apiUrl = config.llm?.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-  const modelName = config.llm?.model || config.groq.model || 'gemini-3.5-flash-lite';
+  const apiKey = aiConfig?.apiKey || config.llm?.apiKey || config.groq.apiKey;
+  if (!apiKey) {
+    throw new Error('Chưa cấu hình API Key cho AI (GEMINI_API_KEY hoặc GROQ_API_KEY). Vui lòng cấu hình trong phần Cài đặt Hệ thống trên Web hoặc file .env.');
+  }
+
+  const apiUrl = aiConfig?.baseUrl || config.llm?.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+  const modelName = aiConfig?.model || config.llm?.model || config.groq.model || 'gemini-3.5-flash-lite';
 
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -555,7 +563,7 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
     ];
   }
 
-  const llmResponse = await callGroqChat(systemPrompt, userPayload);
+  const llmResponse = await callGroqChat(systemPrompt, userPayload, orgId);
 
   // 8. Parse LLM output
   let llmData: any;
@@ -939,7 +947,7 @@ TRẢ VỀ JSON DUY NHẤT:
   "missingInfo": []
 }`;
 
-  const llmResponse = await callGroqChat(systemPrompt, `Yêu cầu chỉnh sửa: "${instruction}"`);
+  const llmResponse = await callGroqChat(systemPrompt, `Yêu cầu chỉnh sửa: "${instruction}"`, orgId);
 
   let llmData: any;
   try {

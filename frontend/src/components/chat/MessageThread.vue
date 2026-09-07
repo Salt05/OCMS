@@ -528,7 +528,23 @@
       </div>
 
       <!-- Input -->
-      <div class="chat-input-area bg-surface" style="position: relative;">
+      <div
+        class="chat-input-area bg-surface"
+        :class="{ 'is-drag-over': isDraggingOver }"
+        style="position: relative;"
+        @paste="handlePaste"
+        @dragover="handleDragOver"
+        @dragleave="handleDragLeave"
+        @drop="handleDrop"
+      >
+        <!-- Drag & Drop overlay cue -->
+        <transition name="fade-transition">
+          <div v-if="isDraggingOver" class="chat-drag-overlay d-flex flex-column align-center justify-center">
+            <v-icon size="36" color="primary" class="mb-1">lucide-image-plus</v-icon>
+            <span class="text-subtitle-2 font-weight-bold text-primary">Thả hình ảnh vào đây để đính kèm</span>
+          </div>
+        </transition>
+
         <!-- Mode selection (Reply / Note / Order) -->
         <div class="px-3 pt-2 pb-1 d-flex align-center gap-2 border-b">
           <v-btn
@@ -857,6 +873,7 @@
               @keydown.down.exact.prevent="handleQuickMsgKeyDown"
               @keydown.up.exact.prevent="handleQuickMsgKeyUp"
               @keydown.enter.exact.prevent="handleQuickMsgKeyEnter"
+              @paste="handlePaste"
               class="zalo-input-textarea flex-grow-1"
               :class="{ 'note-mode-textarea': isNoteMode }"
             />
@@ -1079,8 +1096,8 @@ const isNoteMode = ref(false);
 const showSwitchModeDialog = ref(false);
 const placeholderText = computed(() => {
   return isNoteMode.value
-    ? 'Đây là tin nhắn ghi chú'
-    : 'Nhập tin nhắn... (Gõ / để dùng tin nhắn nhanh)';
+    ? 'Đây là tin nhắn ghi chú nội bộ'
+    : 'Nhập tin nhắn, dán ảnh Ctrl+V... (Gõ / để dùng tin nhắn nhanh)';
 });
 
 function switchToReplyMode() {
@@ -1626,17 +1643,133 @@ async function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement;
   if (target.files && target.files.length > 0) {
     const files = Array.from(target.files);
-    for (const file of files) {
-      const type = getAttachmentType(file);
-      pendingAttachments.value.push({
-        id: crypto.randomUUID(),
-        file,
-        name: file.name,
-        type,
-        preview: getFilePreview(file, type),
-      });
-    }
+    processPastedFiles(files);
     target.value = ''; // Reset input
+  }
+}
+
+// ── Clipboard Paste & Drag-Drop Handling ─────────────────────────────────────
+const isDraggingOver = ref(false);
+let dragTimer: any = null;
+let lastProcessedPasteEvent: ClipboardEvent | null = null;
+
+function processPastedFiles(files: File[]) {
+  if (!files || files.length === 0) return;
+
+  // Auto-switch to reply mode if in note mode, because note messages do not send attachments
+  if (isNoteMode.value) {
+    isNoteMode.value = false;
+  }
+
+  let imageCount = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const type = getAttachmentType(file);
+
+    // Generate friendly timestamped filename if generic
+    let fileName = file.name;
+    if (!fileName || fileName === 'image.png' || fileName === 'blob') {
+      const ext = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+      const timeStr = new Date().toTimeString().split(' ')[0].replace(/:/g, '');
+      fileName = `dan_anh_${timeStr}_${i + 1}.${ext}`;
+    }
+    const cleanFile = new File([file], fileName, { type: file.type || 'image/png' });
+
+    pendingAttachments.value.push({
+      id: crypto.randomUUID(),
+      file: cleanFile,
+      name: fileName,
+      type,
+      preview: getFilePreview(cleanFile, type),
+    });
+    if (type === 'image') imageCount++;
+  }
+
+  if (imageCount > 0) {
+    syncSnack.value = {
+      show: true,
+      text: `Đã đính kèm ${imageCount} hình ảnh vào khung chat`,
+      color: 'success',
+    };
+  } else if (files.length > 0) {
+    syncSnack.value = {
+      show: true,
+      text: `Đã đính kèm ${files.length} tệp vào khung chat`,
+      color: 'success',
+    };
+  }
+}
+
+function handlePaste(e: ClipboardEvent) {
+  // Prevent duplicate execution if event bubbles from textarea to parent container
+  if (lastProcessedPasteEvent === e) return;
+  lastProcessedPasteEvent = e;
+
+  const clipboardData = e.clipboardData;
+  if (!clipboardData) return;
+
+  const items = clipboardData.items;
+  const files: File[] = [];
+
+  if (items && items.length > 0) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/') || item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file && (file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(file.name))) {
+          files.push(file);
+        }
+      }
+    }
+  }
+
+  // Fallback to clipboardData.files if items didn't populate files
+  if (files.length === 0 && clipboardData.files && clipboardData.files.length > 0) {
+    for (let i = 0; i < clipboardData.files.length; i++) {
+      const file = clipboardData.files[i];
+      if (file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(file.name)) {
+        files.push(file);
+      }
+    }
+  }
+
+  if (files.length > 0) {
+    // Only prevent default if there is no text being pasted alongside or if the text is just the file name
+    const pastedText = clipboardData.getData('text/plain');
+    if (!pastedText || !pastedText.trim() || files.some(f => f.name === pastedText.trim())) {
+      e.preventDefault();
+    }
+    processPastedFiles(files);
+  }
+}
+
+function handleDragOver(e: DragEvent) {
+  if (e.dataTransfer?.types?.includes('Files')) {
+    e.preventDefault();
+    isDraggingOver.value = true;
+    if (dragTimer) clearTimeout(dragTimer);
+  }
+}
+
+function handleDragLeave(_e?: DragEvent) {
+  if (dragTimer) clearTimeout(dragTimer);
+  dragTimer = setTimeout(() => {
+    isDraggingOver.value = false;
+  }, 100);
+}
+
+function handleDrop(e: DragEvent) {
+  e.preventDefault();
+  isDraggingOver.value = false;
+  if (dragTimer) clearTimeout(dragTimer);
+
+  if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(
+      f => f.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp|pdf|doc|docx|xls|xlsx)$/i.test(f.name)
+    );
+    if (droppedFiles.length > 0) {
+      processPastedFiles(droppedFiles);
+    }
   }
 }
 
@@ -2954,6 +3087,32 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 .call-subtitle {
   font-size: 11.5px;
   line-height: 1.25;
+}
+
+/* ── Chat Drag & Drop Overlay ── */
+.chat-drag-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(var(--v-theme-surface), 0.94);
+  border: 2px dashed rgba(var(--v-theme-primary), 0.8);
+  border-radius: 8px;
+  z-index: 25;
+  pointer-events: none;
+  backdrop-filter: blur(3px);
+  animation: pulse-border 1.5s infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: rgba(var(--v-theme-primary), 0.9);
+  }
+  50% {
+    border-color: rgba(var(--v-theme-primary), 0.4);
+  }
+}
+
+.chat-input-area.is-drag-over {
+  border-color: rgba(var(--v-theme-primary), 0.8) !important;
 }
 </style>
 

@@ -10,7 +10,7 @@
 import jwt from 'jsonwebtoken';
 
 const BASE_URL = 'http://127.0.0.1:3080/api/v1';
-const JWT_SECRET = '834c311ad36e1c0709b11e2f41b3e8e1245084931a1040375a34e0cd003deff0';
+const JWT_SECRET = process.env.JWT_SECRET || 'test-mock-jwt-secret-key-for-local-testing';
 const ORG_ID = 'f4a9d7b5-0181-47cf-948d-5af48a77236e';
 
 const adminToken = jwt.sign(
@@ -18,7 +18,7 @@ const adminToken = jwt.sign(
     id: 'df3e4dc7-3ac6-4053-ada4-e422124ff956',
     orgId: ORG_ID,
     role: 'owner',
-    email: 'admin@gmail.com',
+    email: 'admin@example.com',
   },
   JWT_SECRET,
   { expiresIn: '1h' }

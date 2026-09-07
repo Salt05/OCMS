@@ -23,10 +23,15 @@ docker/logs/
 uploads/
 backend/uploads/
 
-# Prisma
+# Prisma & Databases
 backend/prisma/migrations/
 backend/prisma/dev.db
 backend/prisma/dev.db-journal
+*.db
+*.sqlite3
+*.db-journal
+ChatBot/chatbot.db
+ChatBot/**/*.db
 
 # Python & ChatBot temp
 __pycache__/

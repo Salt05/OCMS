@@ -291,7 +291,12 @@ export async function orderRoutes(app: FastifyInstance) {
     if (state) where.state = state;
     if (invoiceStatus) where.invoiceStatus = invoiceStatus;
     if (deliveryStatus) where.deliveryStatus = deliveryStatus;
-    if (salesperson) where.salesperson = { contains: salesperson, mode: 'insensitive' };
+    if (salesperson) {
+      where.OR = [
+        { salesperson: { contains: salesperson, mode: 'insensitive' } },
+        { customerProfile: { salesperson: { contains: salesperson, mode: 'insensitive' } } },
+      ];
+    }
     if (customerProfileId) where.customerProfileId = customerProfileId;
 
     if (search) {
@@ -300,6 +305,7 @@ export async function orderRoutes(app: FastifyInstance) {
         { partnerName: { contains: search, mode: 'insensitive' } },
         { note: { contains: search, mode: 'insensitive' } },
         { salesperson: { contains: search, mode: 'insensitive' } },
+        { customerProfile: { salesperson: { contains: search, mode: 'insensitive' } } },
       ];
     }
 
@@ -324,6 +330,8 @@ export async function orderRoutes(app: FastifyInstance) {
               phone: true,
               email: true,
               city: true,
+              salesperson: true,
+              salespersonId: true,
             },
           },
           _count: {
@@ -337,8 +345,37 @@ export async function orderRoutes(app: FastifyInstance) {
       prisma.orderHistory.count({ where }),
     ]);
 
+    // Pre-fetch contacts for orders missing customerProfile salesperson
+    const missingPartnerIds = orders
+      .filter((o: any) => !o.customerProfile?.salesperson && o.odooPartnerId)
+      .map((o: any) => String(o.odooPartnerId));
+
+    const contactSalesMap = new Map<string, string>();
+    if (missingPartnerIds.length > 0) {
+      const contacts = await prisma.contact.findMany({
+        where: { orgId: user.orgId, customerId: { in: missingPartnerIds } },
+        select: { customerId: true, salesperson: true, assignedUser: { select: { fullName: true } } },
+      });
+      for (const c of contacts) {
+        if (c.customerId) {
+          const sName = c.salesperson?.trim() || c.assignedUser?.fullName?.trim();
+          if (sName) contactSalesMap.set(c.customerId, sName);
+        }
+      }
+    }
+
+    // Ưu tiên hiển thị nhân viên sale hiện tại của khách hàng đó
+    const formattedOrders = orders.map((o: any) => {
+      const customerSalesperson = o.customerProfile?.salesperson?.trim() ||
+        (o.odooPartnerId ? contactSalesMap.get(String(o.odooPartnerId)) : null);
+      return {
+        ...o,
+        salesperson: customerSalesperson || o.salesperson || '—',
+      };
+    });
+
     return {
-      orders,
+      orders: formattedOrders,
       total,
       page: pageNum,
       limit: take,
@@ -470,29 +507,62 @@ export async function orderRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Không tìm thấy đơn hàng' });
     }
 
-    return { order };
+    // Ưu tiên hiển thị nhân viên sale hiện tại của khách hàng
+    const orderObj = order as any;
+    let currentSalesperson = orderObj.customerProfile?.salesperson?.trim();
+    if (!currentSalesperson && orderObj.odooPartnerId) {
+      const contact = await prisma.contact.findFirst({
+        where: { orgId: user.orgId, customerId: String(orderObj.odooPartnerId) },
+        select: { salesperson: true, assignedUser: { select: { fullName: true } } },
+      });
+      currentSalesperson = contact?.salesperson?.trim() || contact?.assignedUser?.fullName?.trim();
+    }
+
+    return {
+      order: {
+        ...orderObj,
+        salesperson: currentSalesperson || orderObj.salesperson || 'Chưa phân công',
+      },
+    };
   });
 
   // ── Distinct Salespersons for filter dropdown ─────────────────────────────
   app.get('/api/v1/orders/salespersons', async (request: FastifyRequest) => {
     const user = request.user!;
 
-    const salespersons = await prisma.orderHistory.findMany({
-      where: {
-        orgId: user.orgId,
-        salesperson: { not: null },
-        NOT: [
-          { orderCode: { startsWith: 'SO-AI-' } },
-          { orderCode: { startsWith: 'AI-' } },
-          { orderCode: { startsWith: 'ORD-' } },
-        ],
-      },
-      select: { salesperson: true },
-      distinct: ['salesperson'],
-    });
+    const [salespersons, profileSalespersons] = await Promise.all([
+      prisma.orderHistory.findMany({
+        where: {
+          orgId: user.orgId,
+          salesperson: { not: null },
+          NOT: [
+            { orderCode: { startsWith: 'SO-AI-' } },
+            { orderCode: { startsWith: 'AI-' } },
+            { orderCode: { startsWith: 'ORD-' } },
+          ],
+        },
+        select: { salesperson: true },
+        distinct: ['salesperson'],
+      }),
+      prisma.customerProfile.findMany({
+        where: {
+          orgId: user.orgId,
+          salesperson: { not: null },
+        },
+        select: { salesperson: true },
+        distinct: ['salesperson'],
+      }),
+    ]);
+
+    const allNames = Array.from(
+      new Set([
+        ...salespersons.map(s => s.salesperson?.trim()),
+        ...profileSalespersons.map(s => s.salesperson?.trim()),
+      ].filter(Boolean) as string[])
+    ).sort();
 
     return {
-      salespersons: salespersons.map(s => s.salesperson).filter(Boolean),
+      salespersons: allNames,
     };
   });
 
@@ -1111,8 +1181,21 @@ export async function orderRoutes(app: FastifyInstance) {
       let salespersonOdooUserId: number | undefined;
       let salespersonName: string | undefined;
 
-      // 1. Check contact's assigned NV CSKH
-      if (conv.contact?.assignedUserId) {
+      // 1. ƯU TIÊN CAO NHẤT: Kiểm tra trực tiếp từ đối tác Odoo
+      if (conv.contact?.customerId) {
+        try {
+          const odooCust = await odooService.getCustomerById(conv.contact.customerId);
+          if (odooCust?.salespersonId) {
+            salespersonOdooUserId = odooCust.salespersonId;
+            salespersonName = odooCust.salesperson;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // 1b. Kiểm tra contact's assigned NV CSKH trong CRM
+      if (!salespersonOdooUserId && conv.contact?.assignedUserId) {
         try {
           const assignedUser = await prisma.user.findUnique({
             where: { id: conv.contact.assignedUserId },
@@ -1127,17 +1210,14 @@ export async function orderRoutes(app: FastifyInstance) {
         }
       }
 
-      // 1b. Check Odoo partner's existing salesperson
-      if (!salespersonOdooUserId && conv.contact?.customerId) {
+      // 1c. Kiểm tra contact.salesperson text
+      if (!salespersonOdooUserId && conv.contact?.salesperson?.trim()) {
+        salespersonName = conv.contact.salesperson.trim();
         try {
-          const odooCust = await odooService.getCustomerById(conv.contact.customerId);
-          if (odooCust?.salespersonId) {
-            salespersonOdooUserId = odooCust.salespersonId;
-            salespersonName = odooCust.salesperson;
-          }
-        } catch (e) {
-          // ignore
-        }
+          const allSales = await odooService.getSalespersons();
+          const match = allSales.find((s: any) => s.name?.trim().toLowerCase() === salespersonName?.toLowerCase());
+          if (match) salespersonOdooUserId = match.id;
+        } catch (e) {}
       }
 
       // 2. Fallback: logged-in user

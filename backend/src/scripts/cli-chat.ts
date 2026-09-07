@@ -118,9 +118,9 @@ async function setupTestEnvironment() {
     user = await prisma.user.create({
       data: {
         orgId: org.id,
-        email: 'admin@lapet.vn',
+        email: 'admin@example.com',
         passwordHash: 'dummy_hash',
-        fullName: 'Quản trị viên LA PET',
+        fullName: 'Quản trị viên Hệ thống',
         role: 'admin',
       },
     });

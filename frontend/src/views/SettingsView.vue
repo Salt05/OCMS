@@ -11,6 +11,11 @@
       <v-tab value="org">Tổ chức</v-tab>
       <v-tab value="tags">Thẻ & Nhóm tag</v-tab>
       <v-tab value="quick-messages">Tin nhắn mẫu</v-tab>
+      <v-tab value="knowledge">Tài liệu & Chính sách</v-tab>
+      <v-tab v-if="authStore.isAdmin" value="integrations">
+        <v-icon start size="18">lucide-cpu</v-icon>
+        Tích hợp hệ thống
+      </v-tab>
     </v-tabs>
 
     <v-window v-model="tab" :touch="false">
@@ -203,6 +208,16 @@
       <v-window-item value="quick-messages">
         <QuickMessagesTab />
       </v-window-item>
+
+      <!-- Tab 6: Knowledge Base & Policies -->
+      <v-window-item value="knowledge">
+        <KnowledgeBaseTab />
+      </v-window-item>
+
+      <!-- Tab 7: System Integrations (AI, Odoo, Directus) -->
+      <v-window-item v-if="authStore.isAdmin" value="integrations">
+        <IntegrationsSettingsTab />
+      </v-window-item>
     </v-window>
   </div>
 </template>
@@ -216,6 +231,8 @@ import TeamManagement from '@/components/settings/TeamManagement.vue';
 import OrgSettings from '@/components/settings/OrgSettings.vue';
 import TagsSettingsTab from '@/components/settings/TagsSettingsTab.vue';
 import QuickMessagesTab from '@/components/settings/QuickMessagesTab.vue';
+import KnowledgeBaseTab from '@/components/settings/KnowledgeBaseTab.vue';
+import IntegrationsSettingsTab from '@/components/settings/IntegrationsSettingsTab.vue';
 
 const { users, loading, error, fetchUsers, createUser, updateUser, resetPassword, toggleUserActive } = useUsers();
 const authStore = useAuthStore();

@@ -234,87 +234,205 @@ export async function odooRoutes(app: FastifyInstance) {
       const { randomUUID } = await import('node:crypto');
 
       // ── Determine salesperson (NV CSKH) for this order ──
-      // Priority: 1) Customer's assigned NV CSKH → 2) Logged-in user → 3) None
-      let odooUserId: number | undefined = undefined;
-      let salespersonName: string | undefined = undefined;
+      // Quy tắc nghiệp vụ:
+      // 1: Nhân viên 1 tạo đơn, khách A CHƯA CÓ nhân viên Sale -> gán NV 1 (cả đơn hàng và khách hàng)
+      // 2: Nhân viên 1 tạo đơn, khách A ĐÃ CÓ nhân viên Sale (ví dụ NV 2) -> KHÔNG gán/sửa lại cho NV 1, giữ nguyên NV 2 của khách
 
-      // 1. Check if the contact has an assigned NV CSKH with linked Odoo user
+      // Cache danh sách nhân viên Odoo
+      if (!salespersonsCache || Date.now() - salespersonsCacheTime > CACHE_DURATION) {
+        try {
+          salespersonsCache = await odooService.getSalespersons();
+          salespersonsCacheTime = Date.now();
+        } catch (e: any) {
+          logger.warn('[odoo-routes] Failed to refresh salespersons cache:', e.message);
+        }
+      }
+
+      const findOdooUserIdByName = (name?: string | null): number | undefined => {
+        if (!name || !salespersonsCache) return undefined;
+        const trimmed = name.trim().toLowerCase();
+        const found = salespersonsCache.find((s: any) => s.name && s.name.trim().toLowerCase() === trimmed);
+        return found?.id;
+      };
+
+      // 1. Tìm thông tin Contact & Partner hiện tại của khách hàng
+      let contactRecord = null;
       if (body.contactId) {
-        try {
-          const contact = await prisma.contact.findFirst({
-            where: { id: body.contactId },
-            select: {
-              assignedUserId: true,
-              assignedUser: { select: { odooId: true, fullName: true } },
-            },
-          });
-          if (contact?.assignedUser?.odooId) {
-            odooUserId = parseInt(contact.assignedUser.odooId);
-            salespersonName = contact.assignedUser.fullName;
-            logger.info(`[odoo-routes] Using contact's assigned NV CSKH: ${salespersonName} (Odoo user #${odooUserId})`);
-          }
-        } catch (err: any) {
-          logger.warn('[odoo-routes] Failed to fetch contact assignedUser:', err.message);
-        }
-      }
-
-      // 1b. Check if partner_id maps to a contact with assigned NV CSKH, or partner has an existing Odoo salesperson
-      if (!odooUserId && body.partner_id) {
-        try {
-          const contactByPartner = await prisma.contact.findFirst({
-            where: { customerId: String(body.partner_id), orgId: user.orgId },
-            select: {
-              assignedUserId: true,
-              assignedUser: { select: { odooId: true, fullName: true } },
-            },
-          });
-          if (contactByPartner?.assignedUser?.odooId) {
-            odooUserId = parseInt(contactByPartner.assignedUser.odooId);
-            salespersonName = contactByPartner.assignedUser.fullName;
-            logger.info(`[odoo-routes] Using partner's contact assigned NV CSKH: ${salespersonName} (Odoo user #${odooUserId})`);
-          } else {
-            const odooCustomer = await odooService.getCustomerById(body.partner_id);
-            if (odooCustomer?.salespersonId) {
-              odooUserId = odooCustomer.salespersonId;
-              salespersonName = odooCustomer.salesperson;
-              logger.info(`[odoo-routes] Using Odoo partner's existing salesperson: ${salespersonName} (Odoo user #${odooUserId})`);
-            }
-          }
-        } catch (err: any) {
-          logger.warn('[odoo-routes] Failed to check partner salesperson:', err.message);
-        }
-      }
-
-      // 2. Fallback: use the logged-in user's linked Odoo user ID
-      if (!odooUserId) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { odooId: true, fullName: true }
+        contactRecord = await prisma.contact.findFirst({
+          where: { id: body.contactId },
+          select: {
+            id: true,
+            customerId: true,
+            fullName: true,
+            phone: true,
+            email: true,
+            salesperson: true,
+            assignedUserId: true,
+            assignedUser: { select: { id: true, odooId: true, fullName: true } },
+          },
         });
-        if (dbUser?.odooId) {
-          odooUserId = parseInt(dbUser.odooId);
-          salespersonName = dbUser.fullName;
-          logger.info(`[odoo-routes] Fallback to logged-in user: ${salespersonName} (Odoo user #${odooUserId})`);
+      } else if (body.partner_id) {
+        contactRecord = await prisma.contact.findFirst({
+          where: { customerId: String(body.partner_id), orgId: user.orgId },
+          select: {
+            id: true,
+            customerId: true,
+            fullName: true,
+            phone: true,
+            email: true,
+            salesperson: true,
+            assignedUserId: true,
+            assignedUser: { select: { id: true, odooId: true, fullName: true } },
+          },
+        });
+      }
+
+      const partnerIdNum = parseInt(String(body.partner_id || contactRecord?.customerId || 0), 10);
+
+      // Lấy thông tin partner trên Odoo để kiểm tra khách đã có salesperson chưa
+      let odooCustomer: any = null;
+      if (partnerIdNum > 0) {
+        try {
+          odooCustomer = await odooService.getCustomerById(partnerIdNum);
+        } catch (err: any) {
+          logger.warn('[odoo-routes] Failed to fetch customer from Odoo:', err.message);
         }
       }
 
-      // Validate odooUserId exists in Odoo
-      if (odooUserId) {
-        try {
-          if (!salespersonsCache || Date.now() - salespersonsCacheTime > CACHE_DURATION) {
-            salespersonsCache = await odooService.getSalespersons();
-            salespersonsCacheTime = Date.now();
-          }
-          const salespersonInfo = salespersonsCache.find((s: any) => s.id === odooUserId);
-          if (salespersonInfo) {
-            salespersonName = salespersonInfo.name;
-          } else {
-            logger.warn(`[odoo-routes] odooUserId ${odooUserId} not found in Odoo active salespersons. Ignoring.`);
-            odooUserId = undefined;
-          }
-        } catch (err: any) {
-          logger.warn('[odoo-routes] Failed to validate salesperson:', err.message);
-          odooUserId = undefined;
+      // Lấy customerProfile trong DB local nếu có
+      let customerProfile = null;
+      if (partnerIdNum > 0) {
+        customerProfile = await prisma.customerProfile.findFirst({
+          where: { orgId: user.orgId, odooPartnerId: partnerIdNum },
+          select: { salesperson: true, salespersonId: true },
+        });
+      }
+
+      // 2. Xác định xem Khách A đã có nhân viên Sale hay chưa
+      let existingOdooUserId: number | undefined = undefined;
+      let existingSalespersonName: string | undefined = undefined;
+
+      // 2.1. ƯU TIÊN CAO NHẤT: Kiểm tra trực tiếp từ đối tác Odoo (nguồn chuẩn Odoo ERP)
+      if (odooCustomer) {
+        if (odooCustomer.salespersonId) {
+          existingOdooUserId = odooCustomer.salespersonId;
+        }
+        if (odooCustomer.salesperson?.trim()) {
+          existingSalespersonName = odooCustomer.salesperson.trim();
+        }
+        if (!existingOdooUserId && existingSalespersonName) {
+          existingOdooUserId = findOdooUserIdByName(existingSalespersonName);
+        }
+      }
+
+      // 2.2. Kiểm tra từ customerProfile local (nếu Odoo chưa có)
+      if (!existingOdooUserId && customerProfile) {
+        if (customerProfile.salespersonId) {
+          existingOdooUserId = customerProfile.salespersonId;
+        }
+        if (!existingSalespersonName && customerProfile.salesperson?.trim()) {
+          existingSalespersonName = customerProfile.salesperson.trim();
+        }
+        if (!existingOdooUserId && existingSalespersonName) {
+          existingOdooUserId = findOdooUserIdByName(existingSalespersonName);
+        }
+      }
+
+      // 2.3. Kiểm tra từ Contact trong CRM (nếu Odoo và profile đều chưa có)
+      if (!existingOdooUserId && contactRecord) {
+        if (contactRecord.assignedUser?.odooId) {
+          existingOdooUserId = parseInt(contactRecord.assignedUser.odooId, 10);
+        }
+        if (!existingSalespersonName && contactRecord.assignedUser?.fullName) {
+          existingSalespersonName = contactRecord.assignedUser.fullName;
+        }
+        if (!existingSalespersonName && contactRecord.salesperson?.trim()) {
+          existingSalespersonName = contactRecord.salesperson.trim();
+        }
+        if (!existingOdooUserId && existingSalespersonName) {
+          existingOdooUserId = findOdooUserIdByName(existingSalespersonName);
+        }
+      }
+
+      // Nếu trên Odoo đã có thông tin nhân viên sale (ví dụ Huỳnh Thị Thu Thảo) nhưng Contact CRM bị lệch, tự đồng bộ cập nhật lại Contact
+      if (contactRecord && existingSalespersonName && (contactRecord.salesperson !== existingSalespersonName || (contactRecord.assignedUser?.odooId && contactRecord.assignedUser.odooId !== String(existingOdooUserId)))) {
+        let matchingLocalUserId: string | null = null;
+        if (existingOdooUserId) {
+          const matchUser = await prisma.user.findFirst({
+            where: { orgId: user.orgId, odooId: String(existingOdooUserId) },
+            select: { id: true },
+          });
+          if (matchUser) matchingLocalUserId = matchUser.id;
+        }
+        await prisma.contact.update({
+          where: { id: contactRecord.id },
+          data: {
+            salesperson: existingSalespersonName,
+            assignedUserId: matchingLocalUserId,
+          },
+        }).catch(e => logger.warn('[odoo-routes] Failed to sync contact salesperson with Odoo:', e.message));
+      }
+
+      // Đảm bảo customerProfile cũng được lưu/cập nhật với salesperson của Odoo
+      if (partnerIdNum > 0 && existingSalespersonName) {
+        await prisma.customerProfile.upsert({
+          where: { orgId_odooPartnerId: { orgId: user.orgId, odooPartnerId: partnerIdNum } },
+          update: {
+            salesperson: existingSalespersonName,
+            salespersonId: existingOdooUserId || null,
+          },
+          create: {
+            orgId: user.orgId,
+            odooPartnerId: partnerIdNum,
+            name: odooCustomer?.name || contactRecord?.fullName || '',
+            phone: odooCustomer?.phone || contactRecord?.phone || null,
+            email: odooCustomer?.email || contactRecord?.email || null,
+            salesperson: existingSalespersonName,
+            salespersonId: existingOdooUserId || null,
+          },
+        }).catch(e => logger.warn('[odoo-routes] Failed to upsert customerProfile:', e.message));
+      }
+
+      const customerAlreadyHasSalesperson = Boolean(
+        existingOdooUserId ||
+        (existingSalespersonName && existingSalespersonName.trim().length > 0) ||
+        contactRecord?.assignedUserId
+      );
+
+      let orderOdooUserId: number | undefined = undefined;
+      let shouldAssignCustomerToCreator = false;
+      let creatorOdooUserId: number | undefined = undefined;
+      let creatorName = user.email;
+
+      const dbCreator = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { id: true, odooId: true, fullName: true },
+      });
+      if (dbCreator?.odooId) {
+        creatorOdooUserId = parseInt(dbCreator.odooId, 10);
+      }
+      if (dbCreator?.fullName) {
+        creatorName = dbCreator.fullName;
+      }
+
+      if (customerAlreadyHasSalesperson) {
+        // TRƯỜNG HỢP 2: Khách A ĐÃ CÓ nhân viên Sale -> KHÔNG gán lại cho NV 1
+        logger.info(`[odoo-routes] Khách A ĐÃ CÓ nhân viên Sale (${existingSalespersonName || ''} - Odoo #${existingOdooUserId || 'N/A'}). KHÔNG gán khách sang NV tạo đơn (${creatorName}).`);
+        orderOdooUserId = existingOdooUserId;
+        shouldAssignCustomerToCreator = false;
+      } else {
+        // TRƯỜNG HỢP 1: Khách A CHƯA CÓ nhân viên Sale -> Gán cho NV 1 (người tạo đơn)
+        logger.info(`[odoo-routes] Khách A CHƯA CÓ nhân viên Sale -> Gán cho NV tạo đơn: ${creatorName} (Odoo #${creatorOdooUserId})`);
+        orderOdooUserId = creatorOdooUserId;
+        shouldAssignCustomerToCreator = true;
+      }
+
+      // Validate orderOdooUserId in salespersonsCache
+      if (orderOdooUserId) {
+        const isValid = salespersonsCache?.some((s: any) => s.id === orderOdooUserId);
+        if (!isValid) {
+          logger.warn(`[odoo-routes] orderOdooUserId ${orderOdooUserId} not found in Odoo active salespersons list. Set to undefined.`);
+          orderOdooUserId = undefined;
         }
       }
 
@@ -323,7 +441,7 @@ export async function odooRoutes(app: FastifyInstance) {
         validity_date: body.validity_date,
         payment_term_id: body.payment_term_id,
         pricelist_id: body.pricelist_id,
-        user_id: odooUserId,
+        user_id: orderOdooUserId,
         note: body.notes,
         order_line: body.order_line,
       });
@@ -338,12 +456,39 @@ export async function odooRoutes(app: FastifyInstance) {
         totalAmount = odooOrder.amount_total || 0;
       }
 
-      // If user has a valid Odoo ID, link the customer to this salesperson
-      if (odooUserId) {
-        try {
-          await odooService.updateCustomer(body.partner_id, { user_id: odooUserId });
-        } catch (err: any) {
-          logger.warn('[odoo-routes] Failed to update customer salesperson:', err.message);
+      // CHỈ gán khách hàng nếu khách hàng CHƯA CÓ nhân viên sale trước đó (Rule 1)
+      if (shouldAssignCustomerToCreator) {
+        // Gán trên Odoo
+        if (creatorOdooUserId && partnerIdNum > 0) {
+          try {
+            await odooService.updateCustomer(partnerIdNum, { user_id: creatorOdooUserId });
+            logger.info(`[odoo-routes] Đã gán khách hàng #${partnerIdNum} cho NV ${creatorName} (Odoo #${creatorOdooUserId})`);
+          } catch (err: any) {
+            logger.warn('[odoo-routes] Failed to update customer salesperson on Odoo:', err.message);
+          }
+        }
+
+        // Gán trong CRM Contact
+        const targetContactId = body.contactId || contactRecord?.id;
+        if (targetContactId) {
+          await prisma.contact.update({
+            where: { id: targetContactId },
+            data: {
+              assignedUserId: user.id,
+              salesperson: creatorName,
+            },
+          }).catch(e => logger.warn('[odoo-routes] Failed to update local contact assignedUser/salesperson:', e.message));
+        }
+
+        // Cập nhật customerProfile nếu có
+        if (partnerIdNum > 0) {
+          await prisma.customerProfile.updateMany({
+            where: { orgId: user.orgId, odooPartnerId: partnerIdNum },
+            data: {
+              salesperson: creatorName,
+              salespersonId: creatorOdooUserId || null,
+            },
+          }).catch(e => logger.warn('[odoo-routes] Failed to update customerProfile:', e.message));
         }
       }
 
@@ -363,45 +508,14 @@ export async function odooRoutes(app: FastifyInstance) {
           }
         });
 
-        // Insert message record into conversation history
+        // Clear draftOrder in ConversationAiState on order creation success
         if (body.conversationId) {
-          const formattedAmount = Number(totalAmount).toLocaleString('vi-VN');
-          await prisma.message.create({
-            data: {
-              id: randomUUID(),
-              conversationId: body.conversationId,
-              senderType: 'self',
-              senderName: salespersonName || 'Nhân viên',
-              content: `🎉 Đã tạo đơn hàng thành công trên Odoo: ${orderCode} (Tổng tiền: ${formattedAmount} đ)`,
-              contentType: 'text',
-              sentAt: new Date(),
-              repliedByUserId: user.id,
-              isNote: false,
-            }
-          }).catch(e => logger.warn('[odoo-routes] Failed to save order message in conversation:', e.message));
-
-          await prisma.conversation.update({
-            where: { id: body.conversationId },
-            data: {
-              lastMessageAt: new Date(),
-              currentState: 'NEW',
-            }
-          }).catch(e => logger.warn('[odoo-routes] Failed to update conversation lastMessageAt:', e.message));
-
-          // Clear draftOrder in ConversationAiState on order creation success
           await prisma.conversationAiState.update({
             where: { conversationId: body.conversationId },
             data: {
               draftOrder: { items: [] },
             }
           }).catch(e => logger.warn('[odoo-routes] Failed to clear draftOrder in ConversationAiState:', e.message));
-        }
-
-        if (salespersonName) {
-          await prisma.contact.update({
-            where: { id: body.contactId },
-            data: { salesperson: salespersonName }
-          }).catch(e => logger.warn('[odoo-routes] Failed to update local contact salesperson:', e.message));
         }
       }
 

@@ -22,6 +22,7 @@ import { SlotExtractor } from './slot-extractor.js';
 import { NextActionEngine, type NextActionDecision } from './next-action-engine.js';
 import { ContextBuilder } from './context-builder.js';
 import { ClaimValidator } from './claim-validator.js';
+import { integrationSettingsService } from '../settings/integration-settings-service.js';
 import { createConfirmedFact } from './customer-fact-model.js';
 import { PersonaToneExtractor } from './persona-extractor.js';
 import { extractImageUrls, convertAllToDataUris } from './image-helper.js';
@@ -847,13 +848,14 @@ class ChatbotService {
       }
 
       // Call LLM with Tool Calling Loop
-      const apiKey = config.llm?.apiKey || config.groq?.apiKey || process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || '';
+      const aiConfig = await integrationSettingsService.getAiConfig(orgId);
+      const apiKey = aiConfig.apiKey || config.llm?.apiKey || config.groq?.apiKey || process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || '';
       if (!apiKey) {
-        logger.warn('[chatbot-service] LLM API key (GEMINI_API_KEY/GROQ_API_KEY) is not configured in environment!');
+        logger.warn('[chatbot-service] LLM API key (GEMINI_API_KEY/GROQ_API_KEY) is not configured in DB or environment!');
         return;
       }
 
-      let response = await this.callGroqApi(apiKey, messages, scopedTools);
+      let response = await this.callGroqApi(apiKey, messages, scopedTools, 2, aiConfig.baseUrl, aiConfig.model);
       let assistantMsg = response?.choices?.[0]?.message;
 
       let iterations = 0;
@@ -952,7 +954,7 @@ class ChatbotService {
           });
         }
 
-        response = await this.callGroqApi(apiKey, messages, scopedTools);
+        response = await this.callGroqApi(apiKey, messages, scopedTools, 2, aiConfig.baseUrl, aiConfig.model);
         assistantMsg = response?.choices?.[0]?.message;
       }
 
@@ -1239,10 +1241,19 @@ class ChatbotService {
   /**
    * Call LLM OpenAI-compatible Chat Completions API with automatic 429 backoff retry
    */
-  private async callGroqApi(apiKey: string, messages: any[], tools: any[], maxRetries = 2): Promise<any> {
+  private async callGroqApi(
+    apiKey: string,
+    messages: any[],
+    tools: any[],
+    maxRetries = 2,
+    customUrl?: string,
+    customModel?: string
+  ): Promise<any> {
+    const apiUrl = customUrl || this.LLM_API_URL;
+    const model = customModel || this.modelName;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const res = await fetch(this.LLM_API_URL, {
+        const res = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1250,7 +1261,7 @@ class ChatbotService {
           },
           signal: AbortSignal.timeout(75000),
           body: JSON.stringify({
-            model: this.modelName,
+            model,
             messages,
             tools,
             tool_choice: 'auto',

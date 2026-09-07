@@ -39,6 +39,8 @@ export interface OrderItem {
     phone: string | null;
     email: string | null;
     city: string | null;
+    salesperson?: string | null;
+    salespersonId?: number | null;
   } | null;
   dateOrder: string;
   state: 'draft' | 'sent' | 'sale' | 'done' | 'cancel' | string;

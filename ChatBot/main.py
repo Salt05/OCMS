@@ -119,7 +119,7 @@ load_dotenv()
 from vanna.integrations.postgres import PostgresRunner
 
 DB_USER = os.getenv("DB_USER", "crmuser")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "zalocrm_secure_password")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5433")
 DB_NAME = os.getenv("DB_NAME", "zalocrm")
@@ -143,38 +143,126 @@ loaded_tables_summary = [
 ]
 
 # ==============================================================================
-# 2. CẤU HÌNH VÀ TẠO AGENT VANNA
+# 2. CẤU HÌNH VÀ TẠO AGENT VANNA (ĐỒNG BỘ ĐỘNG TỪ BẢNG APP_SETTINGS TRONG CSDL)
 # ==============================================================================
-provider = os.getenv("LLM_PROVIDER", "groq").lower()
+def get_db_ai_config():
+    """
+    Đọc cấu hình AI động từ bảng app_settings trong CSDL PostgreSQL.
+    Tự động fallback về file .env nếu chưa có trong DB.
+    """
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+    model = os.getenv("MODEL_NAME", "gemini-flash-lite-latest")
+    base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 
-if provider in ["gemini", "google"]:
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        print("CẢNH BÁO: Chưa cấu hình GEMINI_API_KEY trong file .env")
-    
-    llm = OpenAILlmService(
-        model=os.getenv("MODEL_NAME", "gemini-3.5-flash-lite"),
-        api_key=api_key,
-        base_url=os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"),
-        temperature=0.1
-    )
-elif provider == "groq":
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key or api_key == "your_groq_api_key_here":
-        print("CẢNH BÁO: Chưa cấu hình GROQ_API_KEY trong file .env")
-    
-    llm = OpenAILlmService(
-        model=os.getenv("MODEL_NAME", "openai/gpt-oss-120b"),
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1",
-        temperature=0.1
-    )
-else:
-    llm = OpenAILlmService(
-        model=os.getenv("MODEL_NAME", "gpt-4o"),
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.1
-    )
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            port=int(DB_PORT),
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            connect_timeout=3
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT setting_key, value_plain FROM app_settings WHERE setting_key IN ('ai_provider', 'ai_api_key', 'ai_model', 'ai_base_url');")
+            rows = cur.fetchall()
+            kv = {r[0]: r[1] for r in rows if r[1]}
+
+            db_provider = kv.get("ai_provider")
+            if db_provider:
+                provider = db_provider.strip().lower()
+
+            db_model = kv.get("ai_model")
+            if db_model:
+                model = db_model.strip()
+
+            db_key = kv.get("ai_api_key")
+            if db_key and not db_key.startswith("••••"):
+                api_key = db_key.strip()
+            else:
+                if provider in ["gemini", "google"]:
+                    api_key = os.getenv("GEMINI_API_KEY") or api_key
+                elif provider == "groq":
+                    api_key = os.getenv("GROQ_API_KEY") or api_key
+
+            db_base_url = kv.get("ai_base_url")
+            if db_base_url:
+                base_url = db_base_url.strip()
+            elif provider in ["gemini", "google"]:
+                base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+            elif provider == "groq":
+                base_url = "https://api.groq.com/openai/v1"
+
+        conn.close()
+    except Exception as e:
+        print(f"[get_db_ai_config] ⚠️ Không thể tải từ app_settings, dùng fallback .env: {e}")
+
+    if base_url:
+        base_url = base_url.removesuffix("/chat/completions").removesuffix("/chat/completions/")
+        if not base_url.endswith("/"):
+            base_url += "/"
+
+    return {
+        "provider": provider,
+        "api_key": api_key,
+        "model": model,
+        "base_url": base_url,
+    }
+
+class DynamicOpenAILlmService(OpenAILlmService):
+    """
+    LLM Service tự động đồng bộ cấu hình (Model, API Key, Base URL)
+    từ trang Cài đặt (bảng app_settings trong CSDL PostgreSQL) theo thời gian thực.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._last_checked = 0
+        self._current_cfg = None
+
+    def _sync_config_if_needed(self):
+        now = time.time()
+        # Đồng bộ lại từ CSDL định kỳ mỗi 3 giây nếu có thay đổi
+        if now - self._last_checked < 3:
+            return
+        self._last_checked = now
+        try:
+            cfg = get_db_ai_config()
+            if cfg != self._current_cfg:
+                self._current_cfg = cfg
+                print(f"[DynamicOpenAILlmService] 🔄 Cập nhật LLM từ app_settings: provider={cfg['provider']}, model={cfg['model']}, base_url={cfg['base_url']}")
+                self.model = cfg["model"]
+                from openai import OpenAI
+                self._client = OpenAI(
+                    api_key=cfg["api_key"],
+                    base_url=cfg["base_url"]
+                )
+        except Exception as e:
+            print(f"[DynamicOpenAILlmService] ⚠️ Lỗi khi đồng bộ cấu hình AI: {e}")
+
+    async def send_request(self, request):
+        self._sync_config_if_needed()
+        return await super().send_request(request)
+
+    async def stream_request(self, request):
+        self._sync_config_if_needed()
+        async for chunk in super().stream_request(request):
+            yield chunk
+
+    def validate_tools(self, tools):
+        self._sync_config_if_needed()
+        return super().validate_tools(tools)
+
+init_ai_cfg = get_db_ai_config()
+print(f"-> Khởi tạo Chatbot AI với cấu hình CSDL: provider={init_ai_cfg['provider']}, model={init_ai_cfg['model']}")
+
+llm = DynamicOpenAILlmService(
+    model=init_ai_cfg["model"],
+    api_key=init_ai_cfg["api_key"],
+    base_url=init_ai_cfg["base_url"],
+    temperature=0.1
+)
 
 from vanna.tools import RunSqlTool, VisualizeDataTool
 from vanna.tools.agent_memory import SearchSavedCorrectToolUsesTool, SaveQuestionToolArgsTool

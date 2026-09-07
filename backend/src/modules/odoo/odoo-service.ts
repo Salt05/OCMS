@@ -4,6 +4,7 @@
  */
 import { config } from '../../config/index.js';
 import { logger } from '../../shared/utils/logger.js';
+import { integrationSettingsService } from '../settings/integration-settings-service.js';
 
 export interface OdooCustomer {
   id: number;
@@ -28,13 +29,20 @@ class OdooService {
   private uid: number | null = null;
   private authPromise: Promise<number | null> | null = null;
 
+  resetConnection(): void {
+    this.uid = null;
+    this.authPromise = null;
+    logger.info('[odoo] Connection session reset due to configuration update');
+  }
+
   async authenticate(): Promise<number | null> {
     if (this.uid) return this.uid;
     if (this.authPromise) return this.authPromise;
 
     this.authPromise = (async () => {
       try {
-        const { url, db, user, apiKey } = config.odoo;
+        const odooConfig = await integrationSettingsService.getOdooConfig();
+        const { url, db, user, apiKey } = odooConfig;
         const endpoint = `${url.replace(/\/+$/, '')}/jsonrpc`;
 
         const res = await fetch(endpoint, {
@@ -87,7 +95,8 @@ class OdooService {
       throw new Error('Không thể xác thực với máy chủ Odoo');
     }
 
-    const { url, db, apiKey } = config.odoo;
+    const odooConfig = await integrationSettingsService.getOdooConfig();
+    const { url, db, apiKey } = odooConfig;
     const endpoint = `${url.replace(/\/+$/, '')}/jsonrpc`;
 
     const res = await fetch(endpoint, {

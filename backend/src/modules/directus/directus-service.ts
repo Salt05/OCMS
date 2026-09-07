@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../../config/index.js';
 import { logger } from '../../shared/utils/logger.js';
+import { integrationSettingsService } from '../settings/integration-settings-service.js';
 
 export interface DirectusProductItem {
   id: number;
@@ -125,6 +126,7 @@ class DirectusService {
   private isDirectusOnline = false;
   private lastHealthCheck = 0;
   private readonly HEALTH_CHECK_TTL = 3 * 60 * 1000; // 3 minutes
+  private activeUrl: string = config.directus.url;
 
   constructor() {
     // Automatically pre-load persistent disk cache on service initialization
@@ -135,7 +137,10 @@ class DirectusService {
    * Quick non-blocking health check for Directus server
    */
   async checkDirectusHealth(): Promise<boolean> {
-    if (!config.directus.url) {
+    const directusConfig = await integrationSettingsService.getDirectusConfig();
+    const url = directusConfig.url || config.directus.url;
+    this.activeUrl = url;
+    if (!url) {
       this.isDirectusOnline = false;
       return false;
     }
@@ -145,7 +150,7 @@ class DirectusService {
     }
 
     try {
-      const res = await fetch(`${config.directus.url}/server/health`, {
+      const res = await fetch(`${url}/server/health`, {
         method: 'GET',
         signal: AbortSignal.timeout(1000), // 1s quick timeout
       });
@@ -285,8 +290,9 @@ class DirectusService {
    * Authenticate and get/refresh access token
    */
   async getAuthToken(): Promise<string | null> {
-    if (config.directus.token) {
-      return config.directus.token;
+    const directusConfig = await integrationSettingsService.getDirectusConfig();
+    if (directusConfig.token) {
+      return directusConfig.token;
     }
 
     const now = Date.now();
@@ -294,18 +300,23 @@ class DirectusService {
       return this.accessToken;
     }
 
-    if (!config.directus.url || !config.directus.email || !config.directus.password) {
+    const url = directusConfig.url || config.directus.url;
+    const email = directusConfig.email || config.directus.email;
+    const password = directusConfig.password || config.directus.password;
+    this.activeUrl = url;
+
+    if (!url || !email || !password) {
       return null;
     }
 
     try {
-      const res = await fetch(`${config.directus.url}/auth/login`, {
+      const res = await fetch(`${url}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(3000),
         body: JSON.stringify({
-          email: config.directus.email,
-          password: config.directus.password,
+          email,
+          password,
         }),
       });
 
@@ -351,7 +362,8 @@ class DirectusService {
 
     const fileId = this.extractAssetId(s);
     if (fileId) {
-      return `${config.directus.url}/assets/${fileId}`;
+      const baseUrl = this.activeUrl || config.directus.url;
+      return `${baseUrl}/assets/${fileId}`;
     }
 
     return undefined;
@@ -377,8 +389,9 @@ class DirectusService {
       return this.productsCache || [];
     }
 
-    // Try fetching fresh data from Directus (only if confirmed online)
-    if (config.directus.url) {
+    const directusConfig = await integrationSettingsService.getDirectusConfig();
+    const directusUrl = directusConfig.url || config.directus.url;
+    if (directusUrl) {
       try {
         const token = await this.getAuthToken();
         const headers: Record<string, string> = {};
@@ -386,8 +399,8 @@ class DirectusService {
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const collection = config.directus.productCollection || 'products';
-        const url = `${config.directus.url}/items/${collection}?limit=-1&fields=*,images.*,product_groups.*,product_groups.product_groups_id.*`;
+        const collection = directusConfig.productCollection || config.directus.productCollection || 'products';
+        const url = `${directusUrl}/items/${collection}?limit=-1&fields=*,images.*,product_groups.*,product_groups.product_groups_id.*`;
         const res = await fetch(url, { headers, signal: AbortSignal.timeout(3000) });
 
         if (res.ok) {

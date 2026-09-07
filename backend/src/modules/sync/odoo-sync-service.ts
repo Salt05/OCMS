@@ -304,11 +304,15 @@ class OdooSyncService {
       // Pre-fetch customer profile mapping for fast lookup
       const customerProfiles = await prisma.customerProfile.findMany({
         where: { orgId: oid },
-        select: { id: true, odooPartnerId: true },
+        select: { id: true, odooPartnerId: true, salesperson: true, salespersonId: true },
       });
-      const customerMap = new Map<number, string>();
+      const customerMap = new Map<number, { id: string; salesperson: string | null; salespersonId: number | null }>();
       for (const cp of customerProfiles) {
-        customerMap.set(cp.odooPartnerId, cp.id);
+        customerMap.set(cp.odooPartnerId, {
+          id: cp.id,
+          salesperson: cp.salesperson,
+          salespersonId: cp.salespersonId,
+        });
       }
 
       // Batch fetch all order lines from Odoo in chunks of 400
@@ -355,7 +359,11 @@ class OdooSyncService {
         const pricelistName = Array.isArray(order.pricelist_id) && order.pricelist_id.length > 1
           ? String(order.pricelist_id[1]) : null;
 
-        const customerProfileId = customerMap.get(partnerId) || null;
+        const cpInfo = customerMap.get(partnerId);
+        const customerProfileId = cpInfo?.id || null;
+        // Ưu tiên hiển thị nhân viên sale hiện tại của khách hàng
+        const effectiveSalesperson = cpInfo?.salesperson?.trim() || salesperson;
+        const effectiveSalespersonId = cpInfo?.salespersonId || salespersonId;
 
         const orderData = {
           orderCode: order.name || `ODOO-${order.id}`,
@@ -374,8 +382,8 @@ class OdooSyncService {
           deliveryStatus: typeof order.delivery_status === 'string' ? order.delivery_status : null,
           warehouseName,
           pricelistName,
-          salesperson,
-          salespersonId,
+          salesperson: effectiveSalesperson,
+          salespersonId: effectiveSalespersonId,
           expectedDate: order.expected_date ? new Date(order.expected_date) : null,
           validityDate: order.validity_date ? new Date(order.validity_date) : null,
           activitySummary: typeof order.activity_summary === 'string' ? order.activity_summary : null,

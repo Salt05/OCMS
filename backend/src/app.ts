@@ -38,12 +38,13 @@ import { notificationRoutes } from './modules/notifications/notification-routes.
 import { startZaloHealthCheck } from './modules/zalo/zalo-health-check.js';
 import { publicApiRoutes } from './modules/api/public-api-routes.js';
 import { webhookSettingsRoutes } from './modules/api/webhook-settings-routes.js';
+import { integrationSettingsRoutes } from './modules/settings/integration-settings-routes.js';
 import { orderRoutes } from './modules/orders/order-routes.js';
 import { tagRoutes } from './modules/tags/tag-routes.js';
 import { quickMessageRoutes } from './modules/quick-messages/quick-message-routes.js';
 import { odooRoutes } from './modules/odoo/odoo-routes.js';
 import { syncRoutes } from './modules/sync/sync-routes.js';
-import { chatbotRoutes } from './modules/chatbot/chatbot-routes.js';
+import { chatbotRoutes, knowledgeRoutes } from './modules/chatbot/chatbot-routes.js';
 import { chatbotTestRoutes } from './modules/chatbot-test/chatbot-test-routes.js';
 import { promotionRoutes } from './modules/promotions/promotion-routes.js';
 import { productRoutes } from './modules/products/product-routes.js';
@@ -183,6 +184,7 @@ async function bootstrap() {
   await app.register(notificationRoutes);
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
+  await app.register(integrationSettingsRoutes);
   await app.register(orderRoutes);
   await app.register(tagRoutes);
   await app.register(quickMessageRoutes);
@@ -190,6 +192,7 @@ async function bootstrap() {
   await app.register(syncRoutes);
   await app.register(promotionRoutes);
   await app.register(productRoutes);
+  await app.register(knowledgeRoutes, { prefix: '/api/v1/knowledge' });
   await app.register(chatbotRoutes, { prefix: '/api/v1/chatbot' });
   await app.register(chatbotTestRoutes);
 

@@ -207,57 +207,8 @@ export const chatbotRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     }
   });
 
-  // 5. KnowledgeBase List
-  app.get('/knowledge', async (req: any, reply) => {
-    try {
-      const orgId = req.user?.orgId || req.query.orgId;
-      if (!orgId) return reply.status(400).send({ error: 'orgId is required' });
-
-      const items = await knowledgeService.listKnowledge(orgId, {
-        category: req.query.category,
-      });
-      return reply.send(items);
-    } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
-    }
-  });
-
-  // 6. KnowledgeBase Create
-  app.post('/knowledge', async (req: any, reply) => {
-    try {
-      const orgId = req.user?.orgId || req.body.orgId;
-      if (!orgId) return reply.status(400).send({ error: 'orgId is required' });
-
-      const item = await knowledgeService.createKnowledge(orgId, req.body);
-      return reply.status(201).send(item);
-    } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
-    }
-  });
-
-  // 7. KnowledgeBase Update
-  app.put('/knowledge/:id', async (req: any, reply) => {
-    try {
-      const orgId = req.user?.orgId || req.body.orgId;
-      const { id } = req.params;
-      await knowledgeService.updateKnowledge(id, orgId, req.body);
-      return reply.send({ success: true });
-    } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
-    }
-  });
-
-  // 8. KnowledgeBase Delete
-  app.delete('/knowledge/:id', async (req: any, reply) => {
-    try {
-      const orgId = req.user?.orgId || req.query.orgId;
-      const { id } = req.params;
-      await knowledgeService.deleteKnowledge(id, orgId);
-      return reply.send({ success: true });
-    } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
-    }
-  });
+  // 5. Register knowledgeRoutes within chatbotRoutes
+  await app.register(knowledgeRoutes);
 
   // 9. AI Analytics & Audit Logs
   app.get('/analytics', async (req: any, reply) => {
@@ -283,4 +234,88 @@ export const chatbotRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       return reply.status(500).send({ error: err.message });
     }
   });
+};
+
+// KnowledgeBase sub-plugin: supports mounting at /api/v1/knowledge or inside /api/v1/chatbot
+export const knowledgeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  app.addHook('preHandler', authMiddleware);
+
+  const getKnowledge = async (req: any, reply: any) => {
+    try {
+      const orgId = req.user?.orgId || req.query.orgId;
+      if (!orgId) return reply.status(400).send({ error: 'orgId is required' });
+
+      // Seed default policies/guides if none exist yet for this org
+      await knowledgeService.seedDefaultKnowledgeIfEmpty(orgId);
+
+      const items = await knowledgeService.listKnowledge(orgId, {
+        category: req.query.category,
+      });
+      return reply.send(items);
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  };
+
+  const createKnowledge = async (req: any, reply: any) => {
+    try {
+      const currentUser = req.user;
+      if (!['owner', 'admin'].includes(currentUser?.role)) {
+        return reply.status(403).send({ error: 'Chỉ Quản trị viên mới có quyền tạo tài liệu / chính sách' });
+      }
+
+      const orgId = currentUser?.orgId || req.body.orgId;
+      if (!orgId) return reply.status(400).send({ error: 'orgId is required' });
+
+      const item = await knowledgeService.createKnowledge(orgId, req.body);
+      return reply.status(201).send(item);
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  };
+
+  const updateKnowledge = async (req: any, reply: any) => {
+    try {
+      const currentUser = req.user;
+      if (!['owner', 'admin'].includes(currentUser?.role)) {
+        return reply.status(403).send({ error: 'Chỉ Quản trị viên mới có quyền chỉnh sửa tài liệu / chính sách' });
+      }
+
+      const orgId = currentUser?.orgId || req.body.orgId;
+      const { id } = req.params;
+      await knowledgeService.updateKnowledge(id, orgId, req.body);
+      return reply.send({ success: true });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  };
+
+  const deleteKnowledge = async (req: any, reply: any) => {
+    try {
+      const currentUser = req.user;
+      if (!['owner', 'admin'].includes(currentUser?.role)) {
+        return reply.status(403).send({ error: 'Chỉ Quản trị viên mới có quyền xóa tài liệu / chính sách' });
+      }
+
+      const orgId = currentUser?.orgId || req.query.orgId;
+      const { id } = req.params;
+      await knowledgeService.deleteKnowledge(id, orgId);
+      return reply.send({ success: true });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  };
+
+  // Support directly mounted route '/' and sub-path '/knowledge'
+  app.get('/', getKnowledge);
+  app.get('/knowledge', getKnowledge);
+
+  app.post('/', createKnowledge);
+  app.post('/knowledge', createKnowledge);
+
+  app.put('/:id', updateKnowledge);
+  app.put('/knowledge/:id', updateKnowledge);
+
+  app.delete('/:id', deleteKnowledge);
+  app.delete('/knowledge/:id', deleteKnowledge);
 };

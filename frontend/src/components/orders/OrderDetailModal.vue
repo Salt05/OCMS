@@ -98,7 +98,7 @@
                 <v-card-text class="pa-4 text-body-2 space-y-2">
                   <div class="d-flex justify-space-between">
                     <span class="text-medium-emphasis">Nhân viên phụ trách:</span>
-                    <span class="font-weight-medium text-primary">{{ order.salesperson || 'Chưa phân công' }}</span>
+                    <span class="font-weight-medium text-primary">{{ order.customerProfile?.salesperson || order.salesperson || 'Chưa phân công' }}</span>
                   </div>
                   <div class="d-flex justify-space-between">
                     <span class="text-medium-emphasis">Kho xuất hàng:</span>

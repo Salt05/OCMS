@@ -147,33 +147,38 @@ export const chatbotTestRoutes: FastifyPluginAsync = async (app: FastifyInstance
       } else {
         const testUid = `test_${randomUUID().slice(0, 8)}`;
         
-        // Fetch or default Odoo Profile 17871
+        // Dynamically get an existing customer profile from DB, or fallback to safe generic test mock
         const odooProf = await prisma.customerProfile.findFirst({
-          where: { orgId, odooPartnerId: 17871 },
+          where: { orgId },
+          orderBy: { totalOrders: 'desc' },
         });
+
+        const defaultPartnerId = odooProf?.odooPartnerId || 10001;
+        const defaultName = odooProf?.name || contactName || 'Khách hàng Thử nghiệm';
+        const defaultSalesperson = odooProf?.salesperson || 'Nhân viên CSKH';
 
         const testContact = await prisma.contact.create({
           data: {
             id: randomUUID(),
             orgId,
             zaloUid: testUid,
-            fullName: odooProf?.name || contactName || 'Phạm Minh Phát',
-            salutation: salutation || 'Anh',
-            zaloName: odooProf?.name || contactName || 'Phạm Minh Phát',
-            phone: odooProf?.phone || phone || '0355785209',
-            email: odooProf?.email || 'pminhphathi@gmail.com',
-            address: odooProf?.fullAddress || 'Rung Sen, My Hanh Bac, HCM - Q10',
-            zone: odooProf?.zone || 'HCM - Q10',
-            customerId: '17871',
-            salesperson: odooProf?.salesperson || 'Võ Tấn Dũng',
+            fullName: defaultName,
+            salutation: salutation || 'Anh/Chị',
+            zaloName: defaultName,
+            phone: odooProf?.phone || phone || '0900000000',
+            email: odooProf?.email || 'customer@example.com',
+            address: odooProf?.fullAddress || '123 Đường Mẫu, TP. Hồ Chí Minh',
+            zone: odooProf?.zone || 'HCM',
+            customerId: String(defaultPartnerId),
+            salesperson: defaultSalesperson,
             contactType: 'customer',
             source: 'test_lab',
             assignedUserId: req.user.id,
             metadata: {
               isTestContact: true,
-              odooPartnerId: 17871,
-              salesperson: 'Võ Tấn Dũng',
-              personaDescription: personaDescription || 'Khách hàng Odoo 17871 - Phạm Minh Phát',
+              odooPartnerId: defaultPartnerId,
+              salesperson: defaultSalesperson,
+              personaDescription: personaDescription || `Khách hàng thử nghiệm - ${defaultName}`,
               initialPetInfo: { petType, breed, ageMonths, allergies },
             },
           },
