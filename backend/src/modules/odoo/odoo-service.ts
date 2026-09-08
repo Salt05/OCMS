@@ -495,16 +495,29 @@ class OdooService {
    * Search Odoo internal users (res.users) for linking OCMS accounts.
    * Returns all internal users (not portal/public) matching the query.
    */
-  async searchOdooUsers(query: string = '', limit: number = 30): Promise<any[]> {
+  async searchOdooUsers(query: string = '', limit: number = 50): Promise<any[]> {
     try {
       const domain: any[] = [['share', '=', false]];
-      if (query) {
-        domain.push(['name', 'ilike', query]);
+      if (query && query.trim()) {
+        const q = query.trim();
+        domain.push('|', ['name', 'ilike', q], ['login', 'ilike', q]);
       }
-      const users = await this.executeKw<any[]>('res.users', 'search_read', [domain], {
+      let users = await this.executeKw<any[]>('res.users', 'search_read', [domain], {
         fields: ['id', 'name', 'login', 'lang', 'create_date'],
         limit,
       });
+
+      // If empty and a query was passed, try searching without share=false in case of custom Odoo setup
+      if ((!users || users.length === 0) && query && query.trim()) {
+        const q = query.trim();
+        users = await this.executeKw<any[]>('res.users', 'search_read', [
+          ['|', ['name', 'ilike', q], ['login', 'ilike', q]]
+        ], {
+          fields: ['id', 'name', 'login', 'lang', 'create_date'],
+          limit,
+        });
+      }
+
       return users || [];
     } catch (err: any) {
       logger.error('[odoo] searchOdooUsers error:', err.message);

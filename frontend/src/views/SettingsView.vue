@@ -114,7 +114,8 @@
                 hint="Tìm kiếm và chọn tài khoản Odoo (res.users)"
                 persistent-hint
                 clearable
-                @update:search="searchOdooUsers"
+                :no-filter="true"
+                @update:search="onSearchOdooUsers"
               >
                 <template #item="{ props, item }">
                   <v-list-item v-bind="props">
@@ -296,33 +297,36 @@ function openEdit(user: OrgUser) {
     isActive: user.isActive,
   };
   dialogError.value = '';
-  odooUsers.value = [];
   if (form.value.odooId) {
     fetchOdooUser(form.value.odooId);
   }
-  searchOdooUsers('');
+  fetchOdooUsersList('');
   showEdit.value = true;
 }
 
-async function searchOdooUsers(query: string) {
+async function fetchOdooUsersList(query: string = '') {
+  loadingOdooUsers.value = true;
+  try {
+    const res = await api.get(`/odoo/users?query=${encodeURIComponent(query.trim())}`);
+    if (res.data && res.data.users) {
+      odooUsers.value = res.data.users.map((e: any) => ({
+        ...e,
+        idStr: String(e.id),
+      }));
+    }
+  } catch (e) {
+    console.error('[SettingsView] Error loading odoo users:', e);
+  } finally {
+    loadingOdooUsers.value = false;
+  }
+}
+
+function onSearchOdooUsers(query: string) {
   if (query === null || query === undefined) return;
   clearTimeout(searchOdooTimeout);
-  searchOdooTimeout = setTimeout(async () => {
-    loadingOdooUsers.value = true;
-    try {
-      const res = await api.get(`/odoo/users?query=${encodeURIComponent(query)}`);
-      if (res.data && res.data.users) {
-        odooUsers.value = res.data.users.map((e: any) => ({
-          ...e,
-          idStr: String(e.id),
-        }));
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      loadingOdooUsers.value = false;
-    }
-  }, 500);
+  searchOdooTimeout = setTimeout(() => {
+    fetchOdooUsersList(query);
+  }, 300);
 }
 
 async function fetchOdooUser(id: string) {
