@@ -235,14 +235,42 @@ export class IntegrationSettingsService {
 
     await Promise.all(upserts);
     this.clearCache(orgId);
+
+    // If Odoo configuration was updated, reset cached connection so changes take effect immediately
+    if (payload.odoo) {
+      import('../odoo/odoo-service.js')
+        .then(({ odooService }) => {
+          odooService.resetConnection();
+          logger.info('[integration-settings] Reset Odoo connection cache following settings update');
+        })
+        .catch((err) => {
+          logger.warn('[integration-settings] Could not reset Odoo connection:', err);
+        });
+    }
+
     logger.info(`[integration-settings] Successfully updated integration settings for org ${orgId}`);
+  }
+
+  /**
+   * Helper to resolve target orgId if not provided (e.g. from singleton services like odooService)
+   */
+  async resolveOrgId(orgId?: string): Promise<string | null> {
+    if (orgId) return orgId;
+    try {
+      const org = await prisma.organization.findFirst({ select: { id: true } });
+      return org?.id || null;
+    } catch (e: any) {
+      logger.warn('[integration-settings] Failed to resolve default organization:', e?.message);
+      return null;
+    }
   }
 
   /**
    * Get dynamic AI config for Chatbot or Order Extraction
    */
   async getAiConfig(orgId?: string): Promise<{ provider: string; apiKey: string; model: string; baseUrl: string }> {
-    if (!orgId) {
+    const targetOrgId = await this.resolveOrgId(orgId);
+    if (!targetOrgId) {
       return {
         provider: config.llm.provider,
         apiKey: config.llm.apiKey,
@@ -250,30 +278,60 @@ export class IntegrationSettingsService {
         baseUrl: config.llm.baseUrl,
       };
     }
-    const s = await this.getRawSettings(orgId);
-    return s.ai;
+    const s = await this.getRawSettings(targetOrgId);
+    if (s.ai.apiKey) {
+      return s.ai;
+    }
+    return {
+      provider: s.ai.provider || config.llm.provider,
+      apiKey: s.ai.apiKey || config.llm.apiKey,
+      model: s.ai.model || config.llm.model,
+      baseUrl: s.ai.baseUrl || config.llm.baseUrl,
+    };
   }
 
   /**
-   * Get dynamic Odoo config
+   * Get dynamic Odoo config.
+   * Resolves default organization from DB when orgId is omitted,
+   * prioritizing custom database settings before falling back to .env.
    */
   async getOdooConfig(orgId?: string): Promise<{ url: string; db: string; user: string; apiKey: string }> {
-    if (!orgId) {
+    const targetOrgId = await this.resolveOrgId(orgId);
+    if (!targetOrgId) {
       return config.odoo;
     }
-    const s = await this.getRawSettings(orgId);
-    return s.odoo;
+    const s = await this.getRawSettings(targetOrgId);
+    if (s.odoo.url && s.odoo.db && s.odoo.user) {
+      return s.odoo;
+    }
+    return {
+      url: s.odoo.url || config.odoo.url || '',
+      db: s.odoo.db || config.odoo.db || '',
+      user: s.odoo.user || config.odoo.user || '',
+      apiKey: s.odoo.apiKey || config.odoo.apiKey || '',
+    };
   }
 
   /**
-   * Get dynamic Directus config
+   * Get dynamic Directus config.
+   * Resolves default organization from DB when orgId is omitted.
    */
   async getDirectusConfig(orgId?: string): Promise<{ url: string; token: string; email: string; password: string; productCollection: string }> {
-    if (!orgId) {
+    const targetOrgId = await this.resolveOrgId(orgId);
+    if (!targetOrgId) {
       return config.directus;
     }
-    const s = await this.getRawSettings(orgId);
-    return s.directus;
+    const s = await this.getRawSettings(targetOrgId);
+    if (s.directus.url && (s.directus.token || (s.directus.email && s.directus.password))) {
+      return s.directus;
+    }
+    return {
+      url: s.directus.url || config.directus.url || '',
+      token: s.directus.token || config.directus.token || '',
+      email: s.directus.email || config.directus.email || '',
+      password: s.directus.password || config.directus.password || '',
+      productCollection: s.directus.productCollection || config.directus.productCollection || 'products',
+    };
   }
 
   // ── TEST CONNECTION IMPLEMENTATIONS ──────────────────────────────────────────
@@ -288,8 +346,9 @@ export class IntegrationSettingsService {
     const startTime = Date.now();
     try {
       let currentSettings: AiSettings | undefined;
-      if (orgId) {
-        const raw = await this.getRawSettings(orgId);
+      const targetOrgId = await this.resolveOrgId(orgId);
+      if (targetOrgId) {
+        const raw = await this.getRawSettings(targetOrgId);
         currentSettings = raw.ai;
       }
 
@@ -372,8 +431,9 @@ export class IntegrationSettingsService {
   ): Promise<{ success: boolean; message?: string; uid?: number; error?: string }> {
     try {
       let currentSettings: OdooSettings | undefined;
-      if (orgId) {
-        const raw = await this.getRawSettings(orgId);
+      const targetOrgId = await this.resolveOrgId(orgId);
+      if (targetOrgId) {
+        const raw = await this.getRawSettings(targetOrgId);
         currentSettings = raw.odoo;
       }
 
@@ -456,8 +516,9 @@ export class IntegrationSettingsService {
   ): Promise<{ success: boolean; message?: string; isOnline?: boolean; error?: string }> {
     try {
       let currentSettings: DirectusSettings | undefined;
-      if (orgId) {
-        const raw = await this.getRawSettings(orgId);
+      const targetOrgId = await this.resolveOrgId(orgId);
+      if (targetOrgId) {
+        const raw = await this.getRawSettings(targetOrgId);
         currentSettings = raw.directus;
       }
 
@@ -567,8 +628,9 @@ export class IntegrationSettingsService {
     orgId?: string
   ): Promise<{ success: boolean; models: { id: string; name: string; description?: string }[]; error?: string }> {
     let currentSettings: AiSettings | undefined;
-    if (orgId) {
-      const raw = await this.getRawSettings(orgId);
+    const targetOrgId = await this.resolveOrgId(orgId);
+    if (targetOrgId) {
+      const raw = await this.getRawSettings(targetOrgId);
       currentSettings = raw.ai;
     }
 

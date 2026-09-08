@@ -43,6 +43,10 @@ class OdooService {
       try {
         const odooConfig = await integrationSettingsService.getOdooConfig();
         const { url, db, user, apiKey } = odooConfig;
+        if (!url || !db || !user || !apiKey) {
+          logger.warn('[odoo] Missing Odoo configuration parameters (URL, DB, User, or API Key). Please configure in Settings > Integrations.');
+          return null;
+        }
         const endpoint = `${url.replace(/\/+$/, '')}/jsonrpc`;
 
         const res = await fetch(endpoint, {
@@ -92,11 +96,14 @@ class OdooService {
   ): Promise<T | null> {
     const uid = await this.authenticate();
     if (!uid) {
-      throw new Error('Không thể xác thực với máy chủ Odoo');
+      throw new Error('Không thể xác thực với máy chủ Odoo. Vui lòng kiểm tra lại thông tin kết nối trong Cài đặt -> Tích hợp Odoo.');
     }
 
     const odooConfig = await integrationSettingsService.getOdooConfig();
     const { url, db, apiKey } = odooConfig;
+    if (!url || !db || !apiKey) {
+      throw new Error('Cấu hình Odoo chưa hoàn tất (thiếu URL, Database hoặc API Key).');
+    }
     const endpoint = `${url.replace(/\/+$/, '')}/jsonrpc`;
 
     const res = await fetch(endpoint, {
@@ -664,7 +671,7 @@ class OdooService {
     try {
       const uid = await this.authenticate();
       if (!uid) {
-        throw new Error('Không thể xác thực với máy chủ Odoo');
+        throw new Error('Không thể xác thực với máy chủ Odoo. Vui lòng kiểm tra lại thông tin kết nối trong Cài đặt -> Tích hợp Odoo.');
       }
 
       // 1. Find mail template with report_template_ids for sale.order
