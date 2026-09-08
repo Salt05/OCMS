@@ -22,6 +22,33 @@
           Hủy chọn
         </v-btn>
 
+        <!-- Bulk message button -->
+        <v-btn
+          v-if="selected.length > 0"
+          color="primary"
+          variant="flat"
+          size="small"
+          prepend-icon="lucide-message-square"
+          class="text-none font-weight-bold"
+          :loading="bulkOpeningChat"
+          @click="handleToolbarBulkChat"
+        >
+          Nhắn tin ({{ selected.length }})
+        </v-btn>
+
+        <!-- Bulk edit button (when 2+ contacts are selected) -->
+        <v-btn
+          v-if="selected.length >= 2"
+          color="teal"
+          variant="tonal"
+          size="small"
+          prepend-icon="lucide-edit"
+          class="text-none font-weight-medium"
+          @click="openBulkEditDialog"
+        >
+          Sửa ({{ selected.length }})
+        </v-btn>
+
         <!-- Merge button (when 2+ contacts are selected) -->
         <v-btn
           v-if="selected.length >= 2"
@@ -190,6 +217,7 @@
     <ContactDetailDialog
       v-model="showDialog"
       :contact="selectedContact"
+      :selected-contact-ids="selected"
       @saved="onSaved"
       @deleted="onDeleted"
     />
@@ -297,25 +325,28 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useDisplay } from 'vuetify';
 import ContactFilters from '@/components/contacts/ContactFilters.vue';
 import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
 import { useContacts, STATUS_OPTIONS } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 
+const router = useRouter();
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
 
 const {
   contacts, total, loading, filters, pagination,
   fetchContacts, deleteContacts, mergeContacts,
-  toggleContactAi,
+  toggleContactAi, bulkOpenChat,
 } = useContacts();
 
 const showDialog = ref(false);
 const selected = ref<string[]>([]);
 const selectedContact = ref<Contact | null>(null);
 const isSelectMode = ref(false);
+const bulkOpeningChat = ref(false);
 
 // Merge dialog state
 const showMergeDialog = ref(false);
@@ -464,11 +495,43 @@ function onRowClick(_event: Event, item: Contact) {
     toggleSelectItem(item.id);
     return;
   }
+  // When multi-select is active, clicking any contact opens bulk edit mode
+  if (selected.value.length > 1 && !selected.value.includes(item.id)) {
+    selected.value.push(item.id);
+  }
   selectedContact.value = item;
   showDialog.value = true;
 }
 
+function openBulkEditDialog() {
+  if (selected.value.length === 0) return;
+  const target = contacts.value.find((c) => selected.value.includes(c.id)) || contacts.value[0];
+  selectedContact.value = target || null;
+  showDialog.value = true;
+}
+
+async function handleToolbarBulkChat() {
+  if (selected.value.length === 0) return;
+  bulkOpeningChat.value = true;
+  try {
+    const res = await bulkOpenChat(selected.value);
+    if (res?.success) {
+      router.push({ path: '/chat' });
+    }
+  } catch (err) {
+    console.error('Failed to open bulk chat from toolbar:', err);
+  } finally {
+    bulkOpeningChat.value = false;
+  }
+}
+
 function onSaved() {
+  if (selected.value.length > 1) {
+    selected.value = [];
+    isSelectMode.value = false;
+    snackbarText.value = 'Đã cập nhật hàng loạt thành công!';
+    showSnackbar.value = true;
+  }
   fetchContacts();
 }
 

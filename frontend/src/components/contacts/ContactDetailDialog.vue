@@ -17,15 +17,18 @@
           </v-btn>
           <div>
             <h2 class="text-subtitle-1 font-weight-bold mb-0">
-              Chi tiết khách hàng
+              {{ isBulk ? `Chỉnh sửa hàng loạt (${props.selectedContactIds?.length} khách hàng)` : 'Chi tiết khách hàng' }}
             </h2>
-            <span v-if="form.customerId" class="text-caption text-primary font-weight-medium">
+            <span v-if="isBulk" class="text-caption text-primary font-weight-medium">
+              Đang chọn {{ props.selectedContactIds?.length }} khách hàng
+            </span>
+            <span v-else-if="form.customerId" class="text-caption text-primary font-weight-medium">
               Mã KH: #{{ form.customerId }}
             </span>
           </div>
           <v-spacer />
           <v-btn
-            v-if="!isNew"
+            v-if="!isNew || isBulk"
             color="primary"
             variant="flat"
             size="small"
@@ -34,10 +37,10 @@
             :loading="openingChat"
             @click="goToChat"
           >
-            Nhắn tin
+            {{ isBulk ? `Nhắn tin (${props.selectedContactIds?.length})` : 'Nhắn tin' }}
           </v-btn>
           <v-btn
-            v-if="!isNew"
+            v-if="!isNew && !isBulk"
             color="error"
             variant="text"
             size="small"
@@ -52,8 +55,18 @@
           </v-btn>
         </div>
 
+        <!-- Banner when editing bulk contacts -->
+        <div v-if="isBulk" class="px-4 py-3 border-b flex-shrink-0 bg-primary-lighten-5 d-flex align-center gap-2">
+          <v-avatar color="primary" size="32" variant="tonal">
+            <v-icon size="18" color="primary">lucide-users</v-icon>
+          </v-avatar>
+          <div class="text-caption text-primary-darken-1 font-weight-medium" style="line-height: 1.4;">
+            Đang áp dụng thay đổi đồng loạt cho <strong>{{ props.selectedContactIds?.length }}</strong> khách hàng được chọn. Các trường duy nhất (Tên, SĐT, Email, v.v.) được giữ nguyên riêng biệt cho từng người.
+          </div>
+        </div>
+
         <!-- Quick Profile Card (when editing existing contact) -->
-        <div v-if="!isNew" class="px-4 py-3 border-b flex-shrink-0 profile-summary-card">
+        <div v-if="!isNew && !isBulk" class="px-4 py-3 border-b flex-shrink-0 profile-summary-card">
           <div class="d-flex align-center justify-space-between gap-3">
             <!-- Left: Avatar & Name -->
             <div class="d-flex align-center gap-3 overflow-hidden">
@@ -106,8 +119,8 @@
           </div>
         </div>
 
-        <!-- Tabs Navigation -->
-        <v-tabs v-model="activeTab" color="primary" class="border-b px-2 flex-shrink-0 panel-tabs" :grow="$vuetify.display.smAndDown" show-arrows>
+        <!-- Tabs Navigation (Only shown for single contact) -->
+        <v-tabs v-if="!isBulk" v-model="activeTab" color="primary" class="border-b px-2 flex-shrink-0 panel-tabs" :grow="$vuetify.display.smAndDown" show-arrows>
           <v-tab value="profile">Thông tin</v-tab>
           <v-tab v-if="!isNew" value="system">Dữ liệu hệ thống</v-tab>
         </v-tabs>
@@ -154,8 +167,8 @@
                   </v-alert>
                 </v-col>
 
-                <!-- ID Customer -->
-                <v-col cols="12" sm="6">
+                <!-- ID Customer (Hidden in bulk mode) -->
+                <v-col v-if="!isBulk" cols="12" sm="6">
                   <v-text-field
                     v-model="form.customerId"
                     label="ID Customer"
@@ -232,8 +245,8 @@
                   />
                 </v-col>
 
-                <!-- Tên khách hàng (Customer Name odoo) -->
-                <v-col cols="12" sm="6">
+                <!-- Tên khách hàng (Customer Name odoo - Hidden in bulk mode) -->
+                <v-col v-if="!isBulk" cols="12" sm="6">
                   <v-text-field
                     v-model="form.fullName"
                     label="Tên khách hàng"
@@ -263,8 +276,8 @@
                   />
                 </v-col>
 
-                <!-- Tên liên lạc (Tên Zalo ban đầu - Đặt đối xứng với Tên khách hàng) -->
-                <v-col cols="12" sm="6">
+                <!-- Tên liên lạc (Tên Zalo ban đầu - Hidden in bulk mode) -->
+                <v-col v-if="!isBulk" cols="12" sm="6">
                   <v-text-field
                     :model-value="form.zaloName || contact?.zaloName || contact?.fullName || 'Khách hàng Zalo'"
                     label="Tên liên lạc"
@@ -277,8 +290,8 @@
                   />
                 </v-col>
 
-                <!-- Số điện thoại (sdt odoo mới nhập) -->
-                <v-col cols="12" sm="6">
+                <!-- Số điện thoại (sdt odoo mới nhập - Hidden in bulk mode) -->
+                <v-col v-if="!isBulk" cols="12" sm="6">
                   <v-text-field
                     v-model="form.phone"
                     label="Số điện thoại"
@@ -291,8 +304,8 @@
                   />
                 </v-col>
 
-                <!-- Email -->
-                <v-col cols="12" sm="6">
+                <!-- Email (Hidden in bulk mode) -->
+                <v-col v-if="!isBulk" cols="12" sm="6">
                   <v-text-field
                     v-model="form.email"
                     label="Email"
@@ -406,8 +419,8 @@
               </v-row>
             </v-card>
 
-            <!-- 2. Card TRA CỨU DỮ LIỆU TỪ ODOO -->
-            <v-card variant="outlined" class="rounded-xl pa-3 odoo-lookup-card">
+            <!-- 2. Card TRA CỨU DỮ LIỆU TỪ ODOO (Hidden in bulk mode) -->
+            <v-card v-if="!isBulk" variant="outlined" class="rounded-xl pa-3 odoo-lookup-card">
               <div class="d-flex align-center justify-space-between mb-3 pb-2 border-b">
                 <div class="d-flex align-center gap-2">
                   <div class="card-icon-badge">
@@ -532,8 +545,8 @@
             </v-card>
           </div>
 
-        <!-- TAB 2: DỮ LIỆU HỆ THỐNG & KÊNH ZALO -->
-        <div v-show="activeTab === 'system'">
+        <!-- TAB 2: DỮ LIỆU HỆ THỐNG & KÊNH ZALO (Hidden in bulk mode) -->
+        <div v-show="!isBulk && activeTab === 'system'">
           <v-card variant="outlined" class="rounded-lg mb-3">
             <v-list density="compact">
               <v-list-item>
@@ -583,7 +596,7 @@
         <v-btn variant="outlined" @click="close">Đóng</v-btn>
         <v-spacer />
         <v-btn color="primary" prepend-icon="lucide-check" :loading="saving" @click="onSave">
-          Lưu thay đổi
+          {{ isBulk ? `Lưu thay đổi (${props.selectedContactIds?.length} KH)` : 'Lưu thay đổi' }}
         </v-btn>
       </div>
       </div>
@@ -604,6 +617,7 @@ import TagSelector from '@/components/common/TagSelector.vue';
 const props = defineProps<{
   modelValue: boolean;
   contact: Contact | null;
+  selectedContactIds?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -612,8 +626,10 @@ const emit = defineEmits<{
   deleted: [id: string];
 }>();
 
+const isBulk = computed(() => (props.selectedContactIds?.length || 0) > 1);
+
 const router = useRouter();
-const { saving, deleting, createContact, updateContact, deleteContact, fetchContact } = useContacts();
+const { saving, deleting, createContact, updateContact, deleteContact, fetchContact, bulkUpdateContacts, bulkOpenChat } = useContacts();
 const { users, fetchUsers } = useUsers();
 const authStore = useAuthStore();
 const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role || ''));
@@ -632,6 +648,22 @@ const fullContactDetail = ref<Contact | null>(null);
 const openingChat = ref(false);
 
 async function goToChat() {
+  if (isBulk.value && props.selectedContactIds?.length) {
+    openingChat.value = true;
+    try {
+      const res = await bulkOpenChat(props.selectedContactIds);
+      if (res?.success) {
+        close();
+        router.push({ path: '/chat' });
+      }
+    } catch (err) {
+      console.error('Failed to open bulk chat:', err);
+    } finally {
+      openingChat.value = false;
+    }
+    return;
+  }
+
   if (!props.contact) return;
   openingChat.value = true;
   try {
@@ -908,6 +940,33 @@ function formatDateShort(dateStr?: string | null) {
 }
 
 async function onSave() {
+  if (isBulk.value && props.selectedContactIds?.length) {
+    saving.value = true;
+    try {
+      const bulkPayload: any = {
+        contactType: form.value.contactType,
+        salutation: form.value.salutation || null,
+        address: form.value.address || null,
+        zone: form.value.zone || null,
+        source: form.value.source || null,
+        status: form.value.status || null,
+        assignedUserId: form.value.assignedUserId || null,
+        notes: form.value.notes || null,
+        tags: form.value.tags,
+      };
+      const ok = await bulkUpdateContacts(props.selectedContactIds, bulkPayload);
+      if (ok) {
+        emit('saved', props.contact!);
+        close();
+      }
+    } catch (err) {
+      console.error('Failed to bulk update contacts:', err);
+    } finally {
+      saving.value = false;
+    }
+    return;
+  }
+
   const payload: Partial<Contact> = {
     fullName: form.value.fullName || null,
     salutation: form.value.salutation || null,

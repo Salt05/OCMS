@@ -226,12 +226,40 @@ export function useContacts() {
     }
   }
 
+  async function bulkUpdateContacts(contactIds: string[], data: any): Promise<boolean> {
+    if (!contactIds.length) return false;
+    saving.value = true;
+    try {
+      const res = await api.post('/contacts/bulk-update', { contactIds, data });
+      await fetchContacts();
+      return res.data?.success ?? true;
+    } catch (err) {
+      console.error('Failed to bulk update contacts:', err);
+      return false;
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  async function bulkOpenChat(contactIds: string[]): Promise<{ success: boolean; count?: number; conversationIds?: string[] } | null> {
+    if (!contactIds.length) return null;
+    try {
+      const res = await api.post('/contacts/bulk-open-chat', { contactIds });
+      return res.data;
+    } catch (err) {
+      console.error('Failed to bulk open chat:', err);
+      return null;
+    }
+  }
+
   return {
     contacts, total, loading, saving, deleting,
     filters, pagination,
     fetchContacts, fetchContact,
     createContact, updateContact, deleteContact, deleteContacts,
     mergeContacts,
+    bulkUpdateContacts,
+    bulkOpenChat,
     toggleContactAi,
     resetFilters,
   };

@@ -4,12 +4,14 @@
  * All routes require JWT auth and are scoped to user's org.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { randomUUID } from 'crypto';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { ensureTagsExist, cleanupUnusedTags } from '../tags/tag-routes.js';
 import { mergeContacts } from './contact-merge-service.js';
 import { odooService } from '../odoo/odoo-service.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
 
 type QueryParams = Record<string, string>;
 
@@ -544,6 +546,217 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] Merge error:', err);
       return reply.status(500).send({ error: 'Lỗi gộp khách hàng: ' + String(err) });
+    }
+  });
+
+  // ── POST /api/v1/contacts/bulk-update — Bulk update non-unique fields ────────
+  app.post<{
+    Body: {
+      contactIds: string[];
+      data: {
+        contactType?: 'customer' | 'employee' | 'other';
+        salutation?: string | null;
+        address?: string | null;
+        zone?: string | null;
+        assignedUserId?: string | null;
+        status?: string | null;
+        source?: string | null;
+        tags?: string[];
+        notes?: string | null;
+      };
+    };
+  }>('/api/v1/contacts/bulk-update', async (request, reply) => {
+    try {
+      const user = request.user!;
+      const { contactIds, data } = request.body || {};
+
+      if (!Array.isArray(contactIds) || contactIds.length === 0) {
+        return reply.status(400).send({ error: 'Danh sách contactIds không hợp lệ' });
+      }
+
+      if (!data || typeof data !== 'object') {
+        return reply.status(400).send({ error: 'Dữ liệu cập nhật không hợp lệ' });
+      }
+
+      const where: any = {
+        id: { in: contactIds },
+        orgId: user.orgId,
+      };
+
+      // Staff (member) can only update contacts assigned to them
+      if (user.role === 'member') {
+        where.assignedUserId = user.id;
+      }
+
+      const updateData: any = {};
+
+      if (data.contactType !== undefined) {
+        updateData.contactType = data.contactType;
+      }
+      if (data.salutation !== undefined) {
+        updateData.salutation = data.salutation ? data.salutation.trim() : null;
+      }
+      if (data.address !== undefined) {
+        updateData.address = data.address ? data.address.trim() : null;
+      }
+      if (data.zone !== undefined) {
+        updateData.zone = data.zone ? data.zone.trim() : null;
+      }
+      if (data.status !== undefined) {
+        updateData.status = data.status || 'new';
+      }
+      if (data.source !== undefined) {
+        updateData.source = data.source ? data.source.trim() : null;
+      }
+      if (data.notes !== undefined) {
+        updateData.notes = data.notes ? data.notes.trim() : null;
+      }
+
+      // Member cannot reassign staff
+      if (data.assignedUserId !== undefined && ['owner', 'admin'].includes(user.role)) {
+        updateData.assignedUserId = data.assignedUserId || null;
+      }
+
+      if (Array.isArray(data.tags)) {
+        await ensureTagsExist(user.orgId, data.tags);
+        updateData.tags = data.tags;
+      }
+
+      const result = await prisma.contact.updateMany({
+        where,
+        data: updateData,
+      });
+
+      if (Array.isArray(data.tags)) {
+        await cleanupUnusedTags(user.orgId);
+      }
+
+      return {
+        success: true,
+        count: result.count,
+        message: `Đã cập nhật thành công ${result.count} khách hàng`,
+      };
+    } catch (err: any) {
+      logger.error('[contacts] Bulk update error:', err);
+      return reply.status(500).send({ error: 'Lỗi cập nhật hàng loạt: ' + err.message });
+    }
+  });
+
+  // ── POST /api/v1/contacts/bulk-open-chat — Activate/create conversations for multiple contacts ──
+  app.post<{
+    Body: {
+      contactIds: string[];
+    };
+  }>('/api/v1/contacts/bulk-open-chat', async (request, reply) => {
+    try {
+      const user = request.user!;
+      const { contactIds } = request.body || {};
+
+      if (!Array.isArray(contactIds) || contactIds.length === 0) {
+        return reply.status(400).send({ error: 'Vui lòng cung cấp danh sách contactIds' });
+      }
+
+      // 1. Find connected or primary Zalo account
+      const accs = await prisma.zaloAccount.findMany({
+        where: { orgId: user.orgId },
+        select: { id: true },
+      });
+      const targetAccountId = accs.find((a) => zaloPool.getStatus(a.id) === 'connected')?.id || accs[0]?.id;
+
+      if (!targetAccountId) {
+        return reply.status(400).send({ error: 'Chưa có tài khoản Zalo nào được kết nối trong hệ thống' });
+      }
+
+      // 2. Fetch contacts
+      const contacts = await prisma.contact.findMany({
+        where: {
+          id: { in: contactIds },
+          orgId: user.orgId,
+        },
+        include: {
+          conversations: {
+            select: { id: true, externalThreadId: true },
+          },
+        },
+      });
+
+      let activatedCount = 0;
+      const conversationIds: string[] = [];
+
+      for (const contact of contacts) {
+        // Ensure contactType is not 'other' so /chat displays them
+        if (contact.contactType === 'other') {
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: { contactType: 'customer' },
+          });
+        }
+
+        // If contact already has a conversation, touch lastMessageAt to bring it to top
+        if (contact.conversations && contact.conversations.length > 0) {
+          const existingConv = contact.conversations[0];
+          await prisma.conversation.update({
+            where: { id: existingConv.id },
+            data: { lastMessageAt: new Date() },
+          });
+          conversationIds.push(existingConv.id);
+          activatedCount++;
+          continue;
+        }
+
+        // Contact doesn't have a conversation yet. Resolve UID:
+        let uid = contact.zaloUid || '';
+        if (!uid && contact.phone) {
+          const cleanPhone = contact.phone.replace(/[\s.-]/g, '').trim();
+          let formattedPhone = cleanPhone;
+          if (formattedPhone.startsWith('+84')) formattedPhone = '84' + formattedPhone.slice(3);
+          else if (formattedPhone.startsWith('0')) formattedPhone = '84' + formattedPhone.slice(1);
+
+          const api = zaloPool.getApi(targetAccountId);
+          if (api?.findUser) {
+            try {
+              const resFind = await api.findUser(formattedPhone);
+              if (resFind?.uid) {
+                uid = String(resFind.uid);
+                await prisma.contact.update({
+                  where: { id: contact.id },
+                  data: { zaloUid: uid },
+                });
+              }
+            } catch {}
+          }
+        }
+
+        // Fallback to phone or contact.id if UID is not known yet
+        const threadId = uid || contact.phone || `contact_${contact.id}`;
+
+        const newConv = await prisma.conversation.create({
+          data: {
+            id: randomUUID(),
+            orgId: user.orgId,
+            zaloAccountId: targetAccountId,
+            contactId: contact.id,
+            threadType: 'user',
+            externalThreadId: threadId,
+            lastMessageAt: new Date(),
+            unreadCount: 0,
+            isReplied: true,
+          },
+        });
+
+        conversationIds.push(newConv.id);
+        activatedCount++;
+      }
+
+      return {
+        success: true,
+        count: activatedCount,
+        conversationIds,
+        message: `Đã kích hoạt hiển thị ${activatedCount} khách hàng trên màn hình Chat!`,
+      };
+    } catch (err: any) {
+      logger.error('[contacts] Bulk open chat error:', err);
+      return reply.status(500).send({ error: 'Lỗi kích hoạt cuộc trò chuyện: ' + err.message });
     }
   });
 }
