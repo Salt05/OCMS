@@ -188,12 +188,14 @@ export async function handleIncomingMessage(
       }
     }
 
-    if (msg.isSelf) {
-      // Deduplicate: check if there is an existing self message with matching content within 30 seconds
-      const recentSelfMessage = await prisma.message.findFirst({
+    if (msg.isSelf && msg.msgId) {
+      // Only link to an existing message if it was created locally without a Zalo ID (zaloMsgId is null).
+      // If previous messages already have a zaloMsgId, this is a distinct new message (e.g. repeated emoji or quick messages).
+      const unconfirmedSelfMessage = await prisma.message.findFirst({
         where: {
           conversationId: conversation.id,
           senderType: 'self',
+          zaloMsgId: null,
           content: msg.content || '',
           sentAt: {
             gte: new Date(Date.now() - 30000),
@@ -201,14 +203,12 @@ export async function handleIncomingMessage(
         },
       });
 
-      if (recentSelfMessage) {
-        if (!recentSelfMessage.zaloMsgId && msg.msgId) {
-          await prisma.message.update({
-            where: { id: recentSelfMessage.id },
-            data: { zaloMsgId: msg.msgId },
-          });
-        }
-        logger.info(`[message-handler] Deduplicated recent self message: ${msg.msgId}`);
+      if (unconfirmedSelfMessage) {
+        await prisma.message.update({
+          where: { id: unconfirmedSelfMessage.id },
+          data: { zaloMsgId: String(msg.msgId) },
+        });
+        logger.info(`[message-handler] Linked zaloMsgId ${msg.msgId} to unconfirmed self message: ${unconfirmedSelfMessage.id}`);
         return null;
       }
     }

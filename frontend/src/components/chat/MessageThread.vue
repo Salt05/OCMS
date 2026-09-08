@@ -1032,6 +1032,17 @@ import logoLight from '@/assets/logo-light.png';
 import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
 import { isCallMessage, getCallInfo, isVideoPayload } from '@/utils/call-helpers';
 
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 const props = defineProps<{
   conversation: Conversation | null;
   messages: Message[];
@@ -1470,7 +1481,7 @@ function selectQuickMessage(msg: any) {
   if (imageObj?.url) {
     const fileName = imageObj.url.split('/').pop()?.split('?')[0] || 'image.jpg';
     pendingAttachments.value.push({
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       url: imageObj.url,
       name: fileName,
       type: 'image',
@@ -1676,7 +1687,7 @@ function processPastedFiles(files: File[]) {
     const cleanFile = new File([file], fileName, { type: file.type || 'image/png' });
 
     pendingAttachments.value.push({
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       file: cleanFile,
       name: fileName,
       type,

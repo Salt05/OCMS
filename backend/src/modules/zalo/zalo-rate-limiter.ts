@@ -7,7 +7,7 @@
 
 export const DAILY_LIMIT = 200;
 export const WARNING_INTERVAL = 10; // Cách 10 tin nhắn hiển thị thông báo 1 lần sau khi đạt giới hạn
-export const BURST_LIMIT = 5;       // Tối đa 5 tin trong BURST_WINDOW_MS
+export const BURST_LIMIT = 15;      // Tăng thêm 10 (từ 5 -> 15): Tối đa 15 tin trong BURST_WINDOW_MS
 export const BURST_WINDOW_MS = 30_000; // 30 seconds
 
 export interface RateLimitCheckResult {

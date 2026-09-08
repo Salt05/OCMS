@@ -1329,8 +1329,39 @@ export async function chatRoutes(app: FastifyInstance) {
           logger.error(`[chat] addReaction Zalo API error:`, apiErr);
         }
 
+        // Immediately persist reaction and broadcast via Socket.IO
+        let updatedReactions = message.reactions;
+        try {
+          const reactionResult = await handleMessageReaction({
+            accountId: conversation.zaloAccountId,
+            msgId: message.zaloMsgId,
+            cliMsgId,
+            threadId,
+            isGroup: conversation.threadType === 'group',
+            icon,
+            rType,
+            senderUid: user.id,
+            senderName: user.email,
+            isSelf: true,
+          });
+          if (reactionResult) {
+            updatedReactions = reactionResult.reactions as any;
+            const io = (request.server as any).io;
+            io?.emit('chat:reaction', {
+              accountId: conversation.zaloAccountId,
+              conversationId: reactionResult.conversationId,
+              messageId: reactionResult.messageId,
+              zaloMsgId: reactionResult.zaloMsgId,
+              reactions: reactionResult.reactions,
+            });
+          }
+        } catch (handleErr) {
+          logger.error('[chat] handleMessageReaction direct call error:', handleErr);
+        }
+
         return {
           success: true,
+          reactions: updatedReactions,
         };
       } catch (err: any) {
         logger.error('[chat] Add reaction error:', err);

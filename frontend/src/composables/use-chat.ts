@@ -78,9 +78,19 @@ export interface Message {
   errorMessage?: string;
   pendingFile?: File;
 }
-/** Helper to sort messages chronologically (oldest first, newest at bottom) */
 function sortMessagesChronologically(msgs: Message[]): Message[] {
   return msgs.slice().sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
+}
+
+/** Helper to extract sticker ID from message content for reliable comparison */
+function extractStickerId(raw: any): string {
+  if (!raw) return '';
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return String(parsed.id || parsed.stickerId || parsed.sticker_id || '');
+  } catch {
+    return String(raw).trim();
+  }
 }
 
 function sortConversations(list: Conversation[]): Conversation[] {
@@ -216,6 +226,11 @@ export function useChat() {
             if (f.id === opt.id) return true;
             if (f.senderType === 'self' && Math.abs(new Date(f.sentAt).getTime() - new Date(opt.sentAt).getTime()) < 60000) {
               if (f.content === opt.content) return true;
+              if (f.contentType === 'sticker' && opt.contentType === 'sticker') {
+                const s1 = extractStickerId(f.content);
+                const s2 = extractStickerId(opt.content);
+                if (s1 && s2 && s1 === s2) return true;
+              }
               if ((f.contentType === 'image' || f.contentType === 'file') && (opt.contentType === 'image' || opt.contentType === 'file')) return true;
             }
             return false;
@@ -509,44 +524,67 @@ export function useChat() {
       // Add to messages if viewing this conversation
       if (data.conversationId === selectedConvId.value) {
         const incoming = data.message;
-        // Look for matching optimistic message
+        // Look for matching optimistic message waiting for confirmation
         const optIndex = messages.value.findIndex(m => {
           if (m.id === incoming.id) return true;
+          if (m.zaloMsgId && incoming.zaloMsgId && m.zaloMsgId === incoming.zaloMsgId) return true;
+
+          // An unconfirmed optimistic message has tempId, or opt- id, or null zaloMsgId
+          const isOptimistic = (!!m.tempId || m.id.startsWith('opt-') || (!m.isNote && !m.zaloMsgId)) && m.senderType === 'self';
+          if (!isOptimistic || incoming.senderType !== 'self') return false;
+
           // 1. Text / Note match:
           if (
-            (m.status === 'sending' || m.status === 'sent') &&
-            m.senderType === 'self' &&
-            incoming.senderType === 'self' &&
-            m.content === incoming.content &&
+            (m.contentType === 'text' || !m.contentType) &&
+            (incoming.contentType === 'text' || !incoming.contentType) &&
+            m.content?.trim() === incoming.content?.trim() &&
             Boolean(m.isNote) === Boolean(incoming.isNote)
           ) {
             return true;
           }
-          // 2. Attachment / Image / File match:
+
+          // 2. Sticker match:
+          if (m.contentType === 'sticker' && incoming.contentType === 'sticker') {
+            const id1 = extractStickerId(m.content);
+            const id2 = extractStickerId(incoming.content);
+            if (id1 && id2 && id1 === id2) {
+              return true;
+            }
+            return Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000;
+          }
+
+          // 3. Attachment / Image / File match:
           if (
-            (m.status === 'sending' || m.status === 'sent') &&
-            m.senderType === 'self' &&
-            incoming.senderType === 'self' &&
             (m.contentType === 'image' || m.contentType === 'file') &&
             (incoming.contentType === 'image' || incoming.contentType === 'file') &&
             Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000
           ) {
             return true;
           }
+
+          // 4. General fallback: same content type within 60s
+          if (
+            m.contentType === incoming.contentType &&
+            Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000
+          ) {
+            return true;
+          }
+
           return false;
         });
 
         if (optIndex !== -1) {
-          messages.value[optIndex] = { ...incoming, status: 'sent' };
+          messages.value[optIndex] = {
+            ...incoming,
+            status: 'sent',
+            tempId: undefined, // Cleared so it won't match future incoming messages
+          };
           messages.value = [...messages.value];
         } else {
-          // Extra deduplication: Don't add if identical message was already added in the last 15s
+          // Extra deduplication: Only drop if exact same message ID or zaloMsgId already exists
           const isDuplicate = messages.value.some(m =>
             m.id === incoming.id ||
-            (m.senderType === incoming.senderType &&
-             m.content === incoming.content &&
-             Boolean(m.isNote) === Boolean(incoming.isNote) &&
-             Math.abs(new Date(m.sentAt).getTime() - new Date(incoming.sentAt).getTime()) < 15000)
+            (m.zaloMsgId && incoming.zaloMsgId && m.zaloMsgId === incoming.zaloMsgId)
           );
           if (!isDuplicate) {
             messages.value = sortMessagesChronologically([...messages.value, { ...incoming, status: 'sent' }]);
@@ -560,10 +598,7 @@ export function useChat() {
         if (cached) {
           const isDuplicate = cached.some(m =>
             m.id === data.message.id ||
-            (m.senderType === data.message.senderType &&
-             m.content === data.message.content &&
-             Boolean(m.isNote) === Boolean(data.message.isNote) &&
-             Math.abs(new Date(m.sentAt).getTime() - new Date(data.message.sentAt).getTime()) < 15000)
+            (m.zaloMsgId && data.message.zaloMsgId && m.zaloMsgId === data.message.zaloMsgId)
           );
           if (!isDuplicate) {
             messagesCache.set(data.conversationId, sortMessagesChronologically([...cached, data.message]));
@@ -701,15 +736,62 @@ export function useChat() {
 
   async function sendReaction(messageId: string, icon: string) {
     if (!selectedConvId.value) return;
+
+    // Optimistic UI update: show reaction instantly without waiting for network roundtrip
+    const msg = messages.value.find(m => m.id === messageId || m.zaloMsgId === messageId);
+    if (msg) {
+      const authStore = useAuthStore();
+      const currentUserId = authStore.user?.id || 'self';
+      const currentUserName = authStore.user?.fullName || authStore.user?.email || 'Bạn';
+
+      let currentReactions = Array.isArray(msg.reactions) ? [...msg.reactions] : [];
+      currentReactions = currentReactions.filter(r => !r.isSelf);
+
+      if (icon) {
+        const emojiMap: Record<string, string> = {
+          '/-heart': '❤️',
+          '/-strong': '👍',
+          ':>': '😆',
+          ':o': '😲',
+          ':-((': '😭',
+          ':-h': '😡',
+          ':-*': '😘',
+          ":')": '😂',
+          '/-rose': '🌹',
+          '/-break': '💔',
+          '/-weak': '👎',
+          ';xx': '😍',
+          ';-)': '😉',
+          '/-bd': '🎂',
+          '/-bome': '💣',
+          '/-ok': '👌',
+          '/-thanks': '🙏',
+          ':))': '😁',
+          '/-loveu': '🤟',
+        };
+        const emoji = emojiMap[icon] || icon;
+        currentReactions.push({
+          icon,
+          emoji,
+          rType: 0,
+          uid: currentUserId,
+          userName: currentUserName,
+          isSelf: true,
+          count: 1,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      msg.reactions = currentReactions;
+      messages.value = [...messages.value];
+    }
+
     try {
       const res = await api.post(`/conversations/${selectedConvId.value}/messages/${messageId}/reaction`, {
         icon,
       });
-      if (res.data?.reactions) {
-        const msg = messages.value.find(m => m.id === messageId || m.zaloMsgId === messageId);
-        if (msg) {
-          msg.reactions = res.data.reactions;
-        }
+      if (res.data?.reactions && msg) {
+        msg.reactions = res.data.reactions;
+        messages.value = [...messages.value];
       }
     } catch (err) {
       console.error('Failed to send reaction:', err);
