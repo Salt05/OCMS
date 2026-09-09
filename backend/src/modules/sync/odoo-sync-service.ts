@@ -74,9 +74,18 @@ class OdooSyncService {
       errorMessage?: string | null;
     },
   ) {
-    await prisma.odooSyncState.update({
+    await prisma.odooSyncState.upsert({
       where: { orgId_modelName: { orgId, modelName } },
-      data: {
+      create: {
+        orgId,
+        modelName,
+        lastSyncedAt: new Date(),
+        lastWriteDate: data.lastWriteDate,
+        recordCount: data.recordCount ?? 0,
+        status: data.status,
+        errorMessage: data.errorMessage ?? null,
+      },
+      update: {
         lastSyncedAt: new Date(),
         lastWriteDate: data.lastWriteDate,
         recordCount: data.recordCount,
