@@ -266,6 +266,7 @@
 
                   <v-divider class="my-2" />
 
+                  <!-- Tổng thanh toán -->
                   <div class="d-flex justify-space-between align-center">
                     <span class="text-subtitle-1 font-weight-bold">Tổng thanh toán:</span>
                     <span class="text-h6 font-weight-bold text-primary font-monospace">{{ formatVND(order.amountTotal) }}</span>
