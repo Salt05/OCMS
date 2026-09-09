@@ -270,12 +270,6 @@
                     <span class="text-subtitle-1 font-weight-bold">Tổng thanh toán:</span>
                     <span class="text-h6 font-weight-bold text-primary font-monospace">{{ formatVND(order.amountTotal) }}</span>
                   </div>
-
-                  <!-- Margin breakdown (for manager/sales) -->
-                  <div v-if="order.margin > 0" class="pt-2 border-t mt-2 d-flex justify-space-between text-caption text-teal font-weight-medium">
-                    <span>Lợi nhuận gộp (Margin):</span>
-                    <span>{{ formatVND(order.margin) }} ({{ (order.marginPercent * 100).toFixed(1) }}%)</span>
-                  </div>
                 </div>
               </v-card>
             </v-col>
