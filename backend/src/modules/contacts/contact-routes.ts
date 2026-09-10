@@ -31,12 +31,20 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         assignedUserId = '',
         tags = '',
         contactType = '',
+        zaloAccountId = '',
       } = request.query as QueryParams;
 
       const where: any = { orgId: user.orgId };
       if (source) where.source = source;
       if (status) where.status = status;
       if (contactType) where.contactType = contactType;
+      if (zaloAccountId) {
+        where.conversations = {
+          some: {
+            zaloAccountId,
+          },
+        };
+      }
 
       // Staff (member) CAN ONLY see contacts assigned directly to them by Admin
       if (user.role === 'member') {
@@ -85,7 +93,15 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           include: {
             assignedUser: { select: { id: true, fullName: true, email: true } },
             conversations: {
-              select: { id: true, aiActive: true, aiPaused: true, pausedUntil: true, currentState: true },
+              select: {
+                id: true,
+                zaloAccountId: true,
+                zaloAccount: { select: { id: true, displayName: true, avatarUrl: true, phone: true, zaloUid: true } },
+                aiActive: true,
+                aiPaused: true,
+                pausedUntil: true,
+                currentState: true,
+              },
               orderBy: { createdAt: 'desc' },
               take: 1,
             },
@@ -97,7 +113,12 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         prisma.contact.count({ where }),
       ]);
 
-      return { contacts, total, page: pageNum, limit: limitNum };
+      const mappedContacts = contacts.map((c) => ({
+        ...c,
+        zaloAccount: c.conversations?.[0]?.zaloAccount || null,
+      }));
+
+      return { contacts: mappedContacts, total, page: pageNum, limit: limitNum };
     } catch (err) {
       logger.error('[contacts] List error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contacts' });

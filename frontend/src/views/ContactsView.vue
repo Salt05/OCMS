@@ -139,8 +139,14 @@
             <!-- Full name -->
             <td class="text-left" :style="isMobile ? (isSelectMode ? 'width: 34%;' : 'width: 38%;') : ''">
               <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="getContactDisplayName(item)">
-                <span v-if="item.salutation" class="text-primary font-weight-bold mr-1">[{{ item.salutation }}]</span>
-                {{ formatCustomerName(getContactDisplayName(item)) }}
+                <div>
+                  <span v-if="item.salutation" class="text-primary font-weight-bold mr-1">[{{ item.salutation }}]</span>
+                  {{ formatCustomerName(getContactDisplayName(item)) }}
+                </div>
+                <div v-if="item.zaloAccount || item.conversations?.[0]?.zaloAccount" class="text-caption text-primary d-flex align-center mt-0.5" style="font-size: 11px !important;">
+                  <v-icon size="11" class="mr-0.5">lucide-message-circle</v-icon>
+                  {{ (item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.displayName || 'Zalo' }}
+                </div>
               </div>
               <div v-else class="d-flex align-center gap-1.5 flex-nowrap" :title="getContactDisplayName(item)">
                 <span class="font-weight-bold text-caption text-high-emphasis">{{ getContactDisplayName(item) }}</span>
@@ -177,6 +183,20 @@
               >
                 {{ statusLabel(item.status) }}
               </v-chip>
+              <span v-else class="text-caption text-medium-emphasis">—</span>
+            </td>
+
+            <!-- Zalo Account / Tài khoản Zalo (Desktop only) -->
+            <td v-if="!isMobile" class="text-left">
+              <div v-if="item.zaloAccount || item.conversations?.[0]?.zaloAccount" class="d-flex align-center gap-1.5 flex-nowrap">
+                <v-avatar size="20" class="flex-shrink-0">
+                  <v-img v-if="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.avatarUrl" :src="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)!.avatarUrl!" />
+                  <v-icon v-else size="14" color="primary">lucide-message-circle</v-icon>
+                </v-avatar>
+                <span class="text-caption font-weight-medium text-high-emphasis text-truncate" style="max-width: 140px;" :title="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.displayName || ''">
+                  {{ (item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.displayName || (item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.phone || 'Zalo' }}
+                </span>
+              </div>
               <span v-else class="text-caption text-medium-emphasis">—</span>
             </td>
 
@@ -461,6 +481,7 @@ const headers = computed(() => {
     { title: 'SĐT', key: 'phone', sortable: false },
     { title: 'Email', key: 'email', sortable: false },
     { title: 'Trạng thái', key: 'status', sortable: false, align: 'center' as const },
+    { title: 'Tài khoản Zalo', key: 'zaloAccount', sortable: false },
     { title: 'Sale', key: 'assignedUser', sortable: false },
     { title: 'AI Chatbot', key: 'aiStatus', sortable: false, width: '100px', align: 'center' as const },
   ];

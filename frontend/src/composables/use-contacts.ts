@@ -27,11 +27,12 @@ export interface Contact {
   tags: string[];
   assignedUserId?: string | null;
   assignedUser?: { id?: string; fullName: string; email?: string } | null;
+  zaloAccount?: { id: string; displayName: string | null; avatarUrl?: string | null; phone?: string | null } | null;
   createdAt?: string;
   updatedAt?: string;
   firstContactDate?: string | null;
   appointments?: Array<{ id: string; appointmentDate: string; appointmentTime?: string | null; notes?: string | null; status?: string }>;
-  conversations?: Array<{ id: string; aiActive: boolean; aiPaused: boolean; pausedUntil?: string | null; currentState?: string }>;
+  conversations?: Array<{ id: string; zaloAccountId?: string; zaloAccount?: { id: string; displayName: string | null; avatarUrl?: string | null; phone?: string | null }; aiActive: boolean; aiPaused: boolean; pausedUntil?: string | null; currentState?: string }>;
   _count?: { conversations?: number; appointments?: number };
 }
 
@@ -42,6 +43,7 @@ export interface ContactFilters {
   tags: string[];
   contactType: string;
   assignedUserId: string;
+  zaloAccountId: string;
 }
 
 export const SALUTATION_OPTIONS = ['Anh', 'Chị', 'Bạn', 'Cô', 'Chú', 'Bác', 'Em'];
@@ -81,6 +83,7 @@ export function useContacts() {
     tags: [],
     contactType: '',
     assignedUserId: '',
+    zaloAccountId: '',
   });
 
   const pagination = reactive({ page: 1, limit: 20 });
@@ -102,6 +105,7 @@ export function useContacts() {
           tags: filters.tags?.length ? filters.tags.join(',') : undefined,
           contactType: filters.contactType || undefined,
           assignedUserId: filters.assignedUserId || undefined,
+          zaloAccountId: filters.zaloAccountId || undefined,
         },
       });
       contacts.value = res.data.contacts ?? (Array.isArray(res.data) ? res.data : []);
@@ -188,6 +192,7 @@ export function useContacts() {
     filters.tags = [];
     filters.contactType = '';
     filters.assignedUserId = '';
+    filters.zaloAccountId = '';
     pagination.page = 1;
     fetchContacts();
   }

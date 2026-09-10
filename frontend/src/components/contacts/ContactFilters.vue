@@ -44,7 +44,7 @@
       </v-btn>
     </div>
 
-    <!-- Expandable Filter Section: Trạng thái, Loại tài khoản, Tags (Hidden by default) -->
+    <!-- Expandable Filter Section: Trạng thái, Loại tài khoản, Tags, Tài khoản Zalo (Hidden by default) -->
     <v-expand-transition>
       <div v-if="showFilters" class="mt-2.5 pa-3 bg-surface-variant rounded-lg border">
         <v-row dense class="align-center">
@@ -113,24 +113,20 @@
             </v-autocomplete>
           </v-col>
 
-          <!-- User filter (Admin only) -->
-          <v-col cols="12" sm="6" md="3" v-if="isAdmin">
-            <v-autocomplete
-              v-model="filters.assignedUserId"
-              :items="userItems"
-              item-title="fullName"
-              item-value="id"
+          <!-- Zalo Account filter (Thay thế Sale phụ trách) -->
+          <v-col cols="12" sm="6" md="3">
+            <v-select
+              v-model="filters.zaloAccountId"
+              :items="accountOptions"
+              item-title="text"
+              item-value="value"
+              label="Tất cả Zalo"
               density="compact"
               variant="outlined"
-              label="Sale phụ trách"
               clearable
               hide-details
               @update:model-value="emit('search')"
-            >
-              <template #item="{ props, item }">
-                <v-list-item v-bind="props" :title="((item as any).raw || item as any).fullName" :subtitle="((item as any).raw || item as any).email" />
-              </template>
-            </v-autocomplete>
+            />
           </v-col>
         </v-row>
       </div>
@@ -143,8 +139,7 @@ import { ref, computed, onMounted } from 'vue';
 import type { ContactFilters } from '@/composables/use-contacts';
 import { STATUS_OPTIONS, CONTACT_TYPE_OPTIONS } from '@/composables/use-contacts';
 import { useTags } from '@/composables/use-tags';
-import { useAuthStore } from '@/stores/auth';
-import { useUsers } from '@/composables/use-users';
+import { useZaloAccounts } from '@/composables/use-zalo-accounts';
 
 const props = defineProps<{ filters: ContactFilters }>();
 const emit = defineEmits<{ search: [] }>();
@@ -157,20 +152,20 @@ const typeOptions = CONTACT_TYPE_OPTIONS;
 const { tags, fetchTags } = useTags();
 const tagItems = computed(() => tags.value);
 
-const authStore = useAuthStore();
-const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role || ''));
-
-const { users, fetchUsers } = useUsers();
-const userItems = computed(() => {
-  return [{ id: 'unassigned', fullName: 'Chưa phân công', email: '' }, ...users.value];
+const { accounts, fetchAccounts } = useZaloAccounts();
+const accountOptions = computed(() => {
+  return accounts.value.map((a: any) => ({
+    text: a.displayName || a.phone || a.zaloUid || 'Tài khoản Zalo',
+    value: a.id,
+  }));
 });
 
 const activeFilterCount = computed(() => {
   let count = 0;
   if (props.filters.status) count++;
   if (props.filters.contactType) count++;
+  if (props.filters.zaloAccountId) count++;
   if (props.filters.tags && props.filters.tags.length > 0) count++;
-  if (props.filters.assignedUserId) count++;
   return count;
 });
 
@@ -185,16 +180,14 @@ function resetFilters() {
   props.filters.search = '';
   props.filters.status = '';
   props.filters.contactType = '';
+  props.filters.zaloAccountId = '';
   props.filters.tags = [];
-  props.filters.assignedUserId = '';
   emit('search');
 }
 
 onMounted(() => {
   fetchTags();
-  if (isAdmin.value) {
-    fetchUsers();
-  }
+  fetchAccounts();
 });
 </script>
 
