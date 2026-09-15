@@ -356,69 +356,9 @@ export async function extractOrderFromConversation(
   orgId: string,
   conversationId: string,
   additionalInstruction?: string,
+  extraImageUrls?: string[],
 ): Promise<AiOrderDraft> {
-  // 1. Fetch today's messages from the conversation (ignoring messages before the last order was placed)
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-
-  const latestOrder = await prisma.order.findFirst({
-    where: { conversationId, orgId },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  const queryStart = latestOrder ? latestOrder.createdAt : todayStart;
-
-  let messages = await prisma.message.findMany({
-    where: {
-      conversationId,
-      sentAt: { gte: queryStart },
-      isDeleted: false,
-      contentType: { in: ['text', 'image', 'photo', 'rich'] },
-    },
-    orderBy: { sentAt: 'asc' },
-    select: {
-      senderType: true,
-      senderName: true,
-      content: true,
-      contentType: true,
-      attachments: true,
-      sentAt: true,
-    },
-  });
-
-  // Fallback: If no messages today, fetch the last 30 messages in the thread (recent history from past days)
-  if (messages.length === 0) {
-    const recentMessages = await prisma.message.findMany({
-      where: {
-        conversationId,
-        isDeleted: false,
-        contentType: { in: ['text', 'image', 'photo', 'rich'] },
-      },
-      orderBy: { sentAt: 'desc' },
-      take: 30,
-      select: {
-        senderType: true,
-        senderName: true,
-        content: true,
-        contentType: true,
-        attachments: true,
-        sentAt: true,
-      },
-    });
-    messages = recentMessages.reverse();
-  }
-
-  if (messages.length === 0) {
-    return {
-      customer: { name: null, phone: null, shippingAddress: null },
-      items: [],
-      notes: null,
-      paymentTerm: null,
-      missingInfo: ['Không tìm thấy tin nhắn nào trong cuộc trò chuyện này.'],
-    };
-  }
-
-  // 2. Fetch the contact info for context
+  // 1. Fetch conversation info including contact and AI context boundary
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
     include: {
@@ -435,7 +375,132 @@ export async function extractOrderFromConversation(
     },
   });
 
-  // 3. Fetch product catalog for this org
+  // Resolve Context Boundary (Start / End markers)
+  const cAny = conversation as any;
+  let sentAtGte: Date | undefined = cAny?.contextStartedAt || undefined;
+  let sentAtLte: Date | undefined = cAny?.contextEndedAt || undefined;
+
+  if (cAny?.contextStartMsgId && !sentAtGte) {
+    const startMsg = await prisma.message.findFirst({
+      where: {
+        conversationId,
+        OR: [{ id: cAny.contextStartMsgId }, { zaloMsgId: cAny.contextStartMsgId }],
+      },
+      select: { sentAt: true },
+    });
+    if (startMsg) sentAtGte = startMsg.sentAt;
+  }
+
+  if (cAny?.contextEndMsgId && !sentAtLte) {
+    const endMsg = await prisma.message.findFirst({
+      where: {
+        conversationId,
+        OR: [{ id: cAny.contextEndMsgId }, { zaloMsgId: cAny.contextEndMsgId }],
+      },
+      select: { sentAt: true },
+    });
+    if (endMsg) sentAtLte = endMsg.sentAt;
+  }
+
+  const hasContextBoundary = !!(sentAtGte || sentAtLte);
+  let messages: any[] = [];
+
+  if (hasContextBoundary) {
+    // A. Explicit Context Boundary set by user: strictly respect the boundaries
+    const msgWhere: any = {
+      conversationId,
+      isDeleted: false,
+      contentType: { in: ['text', 'image', 'photo', 'rich', 'file'] },
+    };
+    if (sentAtGte && sentAtLte) {
+      msgWhere.sentAt = { gte: sentAtGte, lte: sentAtLte };
+    } else if (sentAtGte) {
+      msgWhere.sentAt = { gte: sentAtGte };
+    } else if (sentAtLte) {
+      msgWhere.sentAt = { lte: sentAtLte };
+    }
+
+    messages = await prisma.message.findMany({
+      where: msgWhere,
+      orderBy: { sentAt: 'asc' },
+      take: 100,
+      select: {
+        senderType: true,
+        senderName: true,
+        content: true,
+        contentType: true,
+        attachments: true,
+        sentAt: true,
+      },
+    });
+  } else {
+    // B. Default behavior: Fetch today's messages (ignoring messages before the last order was placed)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const latestOrder = await prisma.order.findFirst({
+      where: { conversationId, orgId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const queryStart = latestOrder ? latestOrder.createdAt : todayStart;
+
+    messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        sentAt: { gte: queryStart },
+        isDeleted: false,
+        contentType: { in: ['text', 'image', 'photo', 'rich', 'file'] },
+      },
+      orderBy: { sentAt: 'asc' },
+      select: {
+        senderType: true,
+        senderName: true,
+        content: true,
+        contentType: true,
+        attachments: true,
+        sentAt: true,
+      },
+    });
+
+    // Fallback: If no messages today, fetch the last 30 messages in the thread (recent history from past days)
+    if (messages.length === 0) {
+      const recentMessages = await prisma.message.findMany({
+        where: {
+          conversationId,
+          isDeleted: false,
+          contentType: { in: ['text', 'image', 'photo', 'rich', 'file'] },
+        },
+        orderBy: { sentAt: 'desc' },
+        take: 30,
+        select: {
+          senderType: true,
+          senderName: true,
+          content: true,
+          contentType: true,
+          attachments: true,
+          sentAt: true,
+        },
+      });
+      messages = recentMessages.reverse();
+    }
+  }
+
+  if (messages.length === 0 && (!extraImageUrls || extraImageUrls.length === 0)) {
+    return {
+      customer: { name: null, phone: null, shippingAddress: null },
+      items: [],
+      notes: null,
+      paymentTerm: null,
+      missingInfo: [
+        hasContextBoundary
+          ? 'Không tìm thấy tin nhắn nào trong phạm vi mốc ngữ cảnh AI đã đặt.'
+          : 'Không tìm thấy tin nhắn nào trong cuộc trò chuyện này.',
+      ],
+    };
+  }
+
+  // 2. Fetch product catalog for this org
   const productCache = await prisma.productCache.findMany({
     where: { orgId, isActive: true },
     select: {
@@ -453,10 +518,16 @@ export async function extractOrderFromConversation(
     },
   });
 
-  // 4. Extract image URLs and format text transcript
+  // 3. Extract image URLs and format text transcript
   const imageUrls: string[] = [];
+  if (extraImageUrls && Array.isArray(extraImageUrls)) {
+    for (const u of extraImageUrls) {
+      if (u && typeof u === 'string') imageUrls.push(u);
+    }
+  }
+  const maxMessages = hasContextBoundary ? 50 : 30;
   const chatTranscript = messages
-    .slice(-30) // Take up to 30 most recent messages
+    .slice(-maxMessages) // Take relevant messages within context bound
     .map((m) => {
       const isStaff = m.senderType === 'self';
       const senderRole = isStaff ? '[Nhân viên]' : `[Khách hàng - ${m.senderName || conversation?.contact?.fullName || 'Khách'}]`;
@@ -470,7 +541,16 @@ export async function extractOrderFromConversation(
       }
 
       const imgTag = m.contentType === 'image' || msgImages.length > 0 ? ' [Hình ảnh/Đính kèm]' : '';
-      const cleanContent = m.content && m.content.startsWith('{') ? '[Gửi hình ảnh]' : (m.content || '');
+      let cleanContent = m.content || '';
+      if (cleanContent.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(cleanContent);
+          const textParts = [parsed.title, parsed.description].filter(Boolean);
+          cleanContent = textParts.length > 0 ? `[Gửi hình ảnh: ${textParts.join(' - ')}]` : '[Gửi hình ảnh]';
+        } catch {
+          cleanContent = '[Gửi hình ảnh]';
+        }
+      }
       return `${dateStr} ${timeStr} ${senderRole}${imgTag}: ${cleanContent}`;
     })
     .join('\n');
@@ -496,7 +576,11 @@ QUY TẮC PHÂN BIỆT VAI TRÒ VÀ TÍNH TOÁN ĐƠN HÀNG:
 1. PHÂN BIỆT RÕ RÀNG VAI TRÒ:
    - "[Khách hàng - ...]": Là người mua hàng. Hãy lấy các sản phẩm, số lượng, địa chỉ giao hàng và ghi chú từ các câu nói hoặc hình ảnh do Khách hàng gửi.
    - "[Nhân viên]": Là người bán hàng tư vấn. Nếu nhân viên gửi tin nhắn báo giá hoặc đề xuất đơn mà khách hàng đồng ý/xác nhận sau đó thì lấy; nếu khách chưa phản hồi thì ghi chú vào missingInfo.
-2. XỬ LÝ HÌNH ẢNH DANH SÁCH ĐƠN HÀNG (IMAGE-TO-ORDER - QUY TẮC BẮT BUỘC):
+2. XỬ LÝ HÌNH ẢNH VÀ KẾT HỢP VĂN BẢN (MULTIMODAL - QUY TẮC BẮT BUỘC):
+   - ĐỐI CHIẾU HÌNH ẢNH VỚI VĂN BẢN:
+     • Khi cuộc trò chuyện có cả hình ảnh (danh sách đơn, hóa đơn, bảng kê, ảnh sản phẩm) và tin nhắn văn bản, BẮT BUỘC đọc và kết hợp cả hai.
+     • Nếu khách gửi ảnh đơn hàng rồi nhắn thêm/bớt (ví dụ: "lấy theo hình này", "thêm 5 gói A", "bỏ món B trong hình", "món C trong hình lấy gấp đôi"), bạn PHẢI áp dụng chính xác các điều chỉnh này từ văn bản để ra đơn hàng cuối cùng.
+     • Bóc tách đầy đủ cả sản phẩm từ hình ảnh VÀ các sản phẩm được nhắn thêm bằng chữ.
    - ĐỌC CHÍNH XÁC MÃ SKU VÀ ĐỐI CHIẾU DANH MỤC:
      • Nếu trong ảnh có cột Mã (như C10, C28, B03, E01, DB01...), BẮT BUỘC dùng chính xác mã SKU đó.
      • Tuyệt đối KHÔNG nhầm lẫn giữa C10 (Thịt xiên que Single Kaboz) với C10-1 (Double Kaboz) hay C10-2.
@@ -549,14 +633,19 @@ TRẢ VỀ JSON theo đúng cấu trúc sau:
 `;
 
   // 7. Call LLM (multimodal if images exist)
-  const promptText = `ĐÂY LÀ ĐOẠN HỘI THOẠI ZALO VÀ YÊU CẦU ĐẶT HÀNG:\n\n${chatTranscript}${additionalInstruction && additionalInstruction.trim() ? `\n\nYÊU CẦU / GHI CHÚ BỔ SUNG:\n${additionalInstruction.trim()}` : ''}`;
+  const uniqueImageUrls = Array.from(new Set(imageUrls.filter(Boolean)));
+  const base64Urls = await convertAllToDataUris(uniqueImageUrls);
+  const hasImages = base64Urls.length > 0;
+
+  const promptText = messages.length > 0
+    ? `ĐÂY LÀ ĐOẠN HỘI THOẠI ZALO VÀ YÊU CẦU ĐẶT HÀNG:\n\n${chatTranscript}${hasImages ? '\n\n[LƯU Ý ĐẶC BIỆT VỀ HÌNH ẢNH]: Trong cuộc trò chuyện có gửi kèm hình ảnh (ví dụ: ảnh danh sách sản phẩm, hóa đơn, bảng kê, ảnh chụp sản phẩm). Bạn PHẢI quan sát kỹ hình ảnh kết hợp với nội dung chat để trích xuất đầy đủ sản phẩm và số lượng tương ứng.' : ''}${additionalInstruction && additionalInstruction.trim() ? `\n\nYÊU CẦU / GHI CHÚ BỔ SUNG:\n${additionalInstruction.trim()}` : ''}`
+    : `YÊU CẦU ĐẶT HÀNG TỪ HÌNH ẢNH ĐÍNH KÈM:\n${additionalInstruction && additionalInstruction.trim() ? additionalInstruction.trim() : 'Trích xuất toàn bộ sản phẩm và số lượng từ hình ảnh đính kèm.'}`;
   let userPayload: string | any[] = promptText;
 
-  const base64Urls = await convertAllToDataUris(imageUrls);
-  if (base64Urls.length > 0) {
+  if (hasImages) {
     userPayload = [
       { type: 'text', text: promptText },
-      ...base64Urls.slice(-3).map((url) => ({
+      ...base64Urls.slice(-8).map((url) => ({
         type: 'image_url',
         image_url: { url },
       })),
@@ -726,6 +815,7 @@ export async function extractOrderFromText(
   orgId: string,
   text: string,
   contactInfo?: { name?: string; phone?: string; address?: string; customerId?: string },
+  imageUrls?: string[],
 ): Promise<AiOrderDraft> {
   // Fetch product catalog
   const productCache = await prisma.productCache.findMany({
@@ -775,7 +865,21 @@ TRẢ VỀ JSON:
   "missingInfo": ["..."]
 }`;
 
-  const llmResponse = await callGroqChat(systemPrompt, text);
+  let userPayload: string | any[] = text || 'Trích xuất toàn bộ sản phẩm và số lượng từ hình ảnh đính kèm.';
+  if (imageUrls && imageUrls.length > 0) {
+    const base64Urls = await convertAllToDataUris(imageUrls);
+    if (base64Urls.length > 0) {
+      userPayload = [
+        { type: 'text', text: typeof userPayload === 'string' ? userPayload : text },
+        ...base64Urls.slice(-8).map((url) => ({
+          type: 'image_url',
+          image_url: { url },
+        })),
+      ];
+    }
+  }
+
+  const llmResponse = await callGroqChat(systemPrompt, userPayload, orgId);
 
   let llmData: any;
   try {

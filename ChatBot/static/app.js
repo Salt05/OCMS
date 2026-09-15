@@ -1,7 +1,45 @@
 // Vanna AI Data Assistant - Client Application
 
-let currentToken = localStorage.getItem("vanna_token") || "";
-let currentUser = JSON.parse(localStorage.getItem("vanna_user") || "null");
+// Safe Storage Utility (protects against DOMException in restricted/cross-origin iframes)
+const memoryStorage = {};
+function safeStorageGet(key, defaultVal = "") {
+    try {
+        if (typeof window !== "undefined" && window.localStorage) {
+            const val = window.localStorage.getItem(key);
+            return val !== null ? val : defaultVal;
+        }
+    } catch (e) {}
+    return memoryStorage[key] !== undefined ? memoryStorage[key] : defaultVal;
+}
+function safeStorageSet(key, val) {
+    try {
+        if (typeof window !== "undefined" && window.localStorage) {
+            window.localStorage.setItem(key, String(val));
+            return;
+        }
+    } catch (e) {}
+    memoryStorage[key] = String(val);
+}
+function safeStorageRemove(key) {
+    try {
+        if (typeof window !== "undefined" && window.localStorage) {
+            window.localStorage.removeItem(key);
+            return;
+        }
+    } catch (e) {}
+    delete memoryStorage[key];
+}
+function safeStorageGetJson(key, defaultVal = null) {
+    try {
+        const raw = safeStorageGet(key, "");
+        return raw ? JSON.parse(raw) : defaultVal;
+    } catch (e) {
+        return defaultVal;
+    }
+}
+
+let currentToken = safeStorageGet("vanna_token", "");
+let currentUser = safeStorageGetJson("vanna_user", null);
 let activeConversationId = null;
 let currentAuthMode = "login";
 let isSending = false;
@@ -14,14 +52,21 @@ let isOrderMode = false;
 let toastTimeoutId = null;
 
 // ==============================================================================
-// 1. KHỞI TẠO ỨNG DỤNG
+// 1. KHỞI TẠO ỨNG DỤNG (Xử lý an toàn cho cả khi DOM tải trước hoặc sau script)
 // ==============================================================================
-document.addEventListener("DOMContentLoaded", () => {
+function initApp() {
     initTheme();
     setupEventListeners();
     setupDataPanelResize();
     checkAuthAndInit();
-});
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initApp);
+} else {
+    // Nếu trang đã nạp xong trước khi script chạy (thường gặp khi nhúng iframe hoặc cache)
+    initApp();
+}
 
 function checkAuthAndInit() {
     if (currentToken && currentUser) {
@@ -36,7 +81,7 @@ function checkAuthAndInit() {
 // GIAO DIỆN CHẾ ĐỘ SÁNG / TỐI (LIGHT / DARK MODE THEME MANAGEMENT)
 // ==============================================================================
 function initTheme() {
-    const savedTheme = localStorage.getItem("vanna_theme") || "light";
+    const savedTheme = safeStorageGet("vanna_theme", "light");
     setTheme(savedTheme);
 }
 
@@ -66,7 +111,7 @@ function setTheme(themeName) {
         img.src = botLogo;
     });
 
-    localStorage.setItem("vanna_theme", themeName);
+    safeStorageSet("vanna_theme", themeName);
 }
 
 function toggleTheme() {
@@ -82,56 +127,32 @@ window.addEventListener("message", (event) => {
     }
 });
 
-function setupEventListeners() {
-    // Input Enter handler
-    const input = document.getElementById("user-input");
-    if (input) {
-        input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (!isSending) {
-                    sendMessage();
-                }
-            }
-        });
-
-        // Auto-resize input
-        input.addEventListener("input", () => {
-            input.style.height = "auto";
-            input.style.height = Math.min(input.scrollHeight, 140) + "px";
-        });
+// ==============================================================================
+// CÁC HÀM ĐIỀU KHIỂN GIAO DIỆN & NÚT BẤM (Hỗ trợ gọi từ inline HTML onclick)
+// ==============================================================================
+function handleSendClick() {
+    if (isSending) {
+        stopGenerating();
+    } else {
+        sendMessage();
     }
+}
 
-    // Send / Stop button
-    document.getElementById("btn-send")?.addEventListener("click", () => {
-        if (isSending) {
-            stopGenerating();
-        } else {
-            sendMessage();
-        }
-    });
-
-    // New chat button
-    document.getElementById("btn-new-chat")?.addEventListener("click", startNewChat);
-
-    // Order Mode Toggle Button
+function toggleOrderMode() {
+    isOrderMode = !isOrderMode;
     const btnOrderMode = document.getElementById("btn-toggle-order-mode");
-    if (btnOrderMode) {
-        btnOrderMode.addEventListener("click", () => {
-            isOrderMode = !isOrderMode;
-            btnOrderMode.classList.toggle("is-active", isOrderMode);
-            const inputBox = document.getElementById("chat-input-box");
-            if (inputBox) inputBox.classList.toggle("is-order-mode", isOrderMode);
-            const inputEl = document.getElementById("user-input");
-            if (inputEl) {
-                inputEl.placeholder = isOrderMode 
-                    ? "Nhập yêu cầu tạo hoặc sửa đơn hàng (VD: 30 bao E01, lên đơn 5 bao B03...)" 
-                    : "Hỏi về khách hàng, đơn hàng, sản phẩm...";
-                inputEl.focus();
-            }
-            showOrderModeToast(isOrderMode);
-        });
+    if (btnOrderMode) btnOrderMode.classList.toggle("is-active", isOrderMode);
+    const inputBox = document.getElementById("chat-input-box");
+    if (inputBox) inputBox.classList.toggle("is-order-mode", isOrderMode);
+    const inputEl = document.getElementById("user-input");
+    if (inputEl) {
+        inputEl.placeholder = isOrderMode 
+            ? "Nhập yêu cầu tạo hoặc sửa đơn hàng (VD: 30 bao E01, lên đơn 5 bao B03...)" 
+            : "Hỏi về khách hàng, đơn hàng, sản phẩm...";
+        inputEl.focus();
     }
+    showOrderModeToast(isOrderMode);
+}
 
 function showOrderModeToast(isOn) {
     const toast = document.getElementById("order-mode-toast");
@@ -162,17 +183,73 @@ function showOrderModeToast(isOn) {
     }, 3500);
 }
 
+function openSidebar() {
+    const sidebar = document.getElementById("sidebar");
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+    sidebar?.classList.add("open");
+    sidebarBackdrop?.classList.add("active");
+}
+
+function closeSidebar() {
+    const sidebar = document.getElementById("sidebar");
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+    sidebar?.classList.remove("open");
+    sidebarBackdrop?.classList.remove("active");
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById("sidebar");
+    if (sidebar?.classList.contains("open")) {
+        closeSidebar();
+    } else {
+        openSidebar();
+    }
+}
+
+function openDevModal() {
+    const devModal = document.getElementById("dev-modal");
+    if (devModal) devModal.style.display = "flex";
+}
+
+function closeDevModal() {
+    const devModal = document.getElementById("dev-modal");
+    if (devModal) devModal.style.display = "none";
+}
+
+function setupEventListeners() {
+    // Input Enter handler
+    const input = document.getElementById("user-input");
+    if (input) {
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSendClick();
+            }
+        });
+
+        // Auto-resize input
+        input.addEventListener("input", () => {
+            input.style.height = "auto";
+            input.style.height = Math.min(input.scrollHeight, 140) + "px";
+        });
+    }
+
+    // Send / Stop button
+    document.getElementById("btn-send")?.addEventListener("click", handleSendClick);
+
+    // New chat button
+    document.getElementById("btn-new-chat")?.addEventListener("click", startNewChat);
+
+    // Order Mode Toggle Button
+    document.getElementById("btn-toggle-order-mode")?.addEventListener("click", toggleOrderMode);
+
     // Toggle Dev Modal Popup
     const devModal = document.getElementById("dev-modal");
-    document.getElementById("btn-toggle-dev-panel")?.addEventListener("click", () => {
-        if (devModal) devModal.style.display = "flex";
-    });
-    document.getElementById("btn-close-dev-drawer")?.addEventListener("click", () => {
-        if (devModal) devModal.style.display = "none";
-    });
+    document.getElementById("btn-toggle-dev-panel")?.addEventListener("click", openDevModal);
+    document.getElementById("btn-close-dev-drawer")?.addEventListener("click", closeDevModal);
     devModal?.addEventListener("click", (e) => {
         if (e.target.id === "dev-modal") {
-            devModal.style.display = "none";
+            closeDevModal();
         }
     });
 
@@ -181,27 +258,6 @@ function showOrderModeToast(isOn) {
     document.getElementById("btn-close-data-panel")?.addEventListener("click", closeDataPanel);
 
     // Toggle Sidebar (Floating Overlay Drawer)
-    const sidebar = document.getElementById("sidebar");
-    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
-
-    const openSidebar = () => {
-        sidebar?.classList.add("open");
-        sidebarBackdrop?.classList.add("active");
-    };
-
-    const closeSidebar = () => {
-        sidebar?.classList.remove("open");
-        sidebarBackdrop?.classList.remove("active");
-    };
-
-    const toggleSidebar = () => {
-        if (sidebar?.classList.contains("open")) {
-            closeSidebar();
-        } else {
-            openSidebar();
-        }
-    };
-
     document.getElementById("btn-toggle-sidebar-collapse")?.addEventListener("click", toggleSidebar);
     document.getElementById("btn-sidebar-toggle")?.addEventListener("click", toggleSidebar);
     document.getElementById("btn-mobile-toggle")?.addEventListener("click", toggleSidebar);
@@ -294,8 +350,8 @@ async function handleAuthSubmit(e) {
 
         currentToken = data.access_token;
         currentUser = data.user;
-        localStorage.setItem("vanna_token", currentToken);
-        localStorage.setItem("vanna_user", JSON.stringify(currentUser));
+        safeStorageSet("vanna_token", currentToken);
+        safeStorageSet("vanna_user", JSON.stringify(currentUser));
 
         updateUserUI(currentUser);
         hideAuthModal();
@@ -311,8 +367,8 @@ async function handleAuthSubmit(e) {
 function continueAsGuest() {
     currentToken = "";
     currentUser = { id: "guest_user", email: "guest@example.com", username: "Khách (Guest)" };
-    localStorage.removeItem("vanna_token");
-    localStorage.setItem("vanna_user", JSON.stringify(currentUser));
+    safeStorageRemove("vanna_token");
+    safeStorageSet("vanna_user", JSON.stringify(currentUser));
     updateUserUI(currentUser);
     hideAuthModal();
     loadConversations();
@@ -1492,12 +1548,12 @@ function setupDataPanelResize() {
             handle.classList.remove("resizing");
             document.body.style.cursor = "";
             document.body.style.userSelect = "";
-            localStorage.setItem("vanna_data_panel_width", panel.style.width);
+            safeStorageSet("vanna_data_panel_width", panel.style.width);
             window.dispatchEvent(new Event("resize"));
         }
     });
 
-    const savedWidth = localStorage.getItem("vanna_data_panel_width");
+    const savedWidth = safeStorageGet("vanna_data_panel_width", "");
     if (savedWidth) {
         panel.style.width = savedWidth;
     }
@@ -1743,3 +1799,29 @@ function escapeHtml(str) {
     if (!str) return "";
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+
+// ==============================================================================
+// GẮN CÁC HÀM TOÀN CỤC VÀO WINDOW ĐỂ SẴN SÀNG CHO HTML ONCLICK
+// ==============================================================================
+window.initApp = initApp;
+window.handleSendClick = handleSendClick;
+window.sendMessage = sendMessage;
+window.stopGenerating = stopGenerating;
+window.startNewChat = startNewChat;
+window.toggleOrderMode = toggleOrderMode;
+window.showOrderModeToast = showOrderModeToast;
+window.openSidebar = openSidebar;
+window.closeSidebar = closeSidebar;
+window.toggleSidebar = toggleSidebar;
+window.openDevModal = openDevModal;
+window.closeDevModal = closeDevModal;
+window.toggleDataPanel = toggleDataPanel;
+window.closeDataPanel = closeDataPanel;
+window.toggleTheme = toggleTheme;
+window.continueAsGuest = continueAsGuest;
+window.switchAuthTab = switchAuthTab;
+window.handleAuthSubmit = handleAuthSubmit;
+window.switchDataTab = switchDataTab;
+window.deleteConversation = deleteConversation;
+window.selectConversation = selectConversation;
+

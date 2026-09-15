@@ -503,6 +503,9 @@ model OrderHistory {
   pickingIds         Json?    @map("picking_ids")
   note               String?  @db.Text
   pdfSentAt          DateTime? @map("pdf_sent_at")
+  writeDate          DateTime? @map("write_date")
+  writeUid           Int?      @map("write_uid")
+  writeUserName      String?   @map("write_user_name")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 

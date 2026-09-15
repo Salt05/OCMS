@@ -5,8 +5,10 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { odooService } from './odoo-service.js';
 import { directusService } from '../directus/directus-service.js';
+import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
+import { routerClient } from '../../shared/services/router-client.js';
 
 export async function odooRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -87,7 +89,7 @@ export async function odooRoutes(app: FastifyInstance) {
     }
   });
 
-  // POST /api/v1/odoo/customers — create a new customer in Odoo
+  // POST /api/v1/odoo/customers — create a new customer in Odoo (qua Router)
   app.post('/api/v1/odoo/customers', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const data = request.body as any;
@@ -105,12 +107,19 @@ export async function odooRoutes(app: FastifyInstance) {
         salesperson: data.salesperson,
       };
 
-      const newId = await odooService.createCustomer(customerData);
-      
-      // Fetch the created customer to return full details
-      const customer = await odooService.getCustomerById(newId!);
-      
-      return reply.status(201).send({ success: true, id: newId, customer });
+      // Điều phối qua RouterClient (Router toàn quyền quyết định Odoo Test hay Prod)
+      const routerResult = await routerClient.createCustomer({
+        customer: customerData,
+        contact_id: data.contactId || data.contact_id,
+      });
+
+      const newId = routerResult.customerId;
+
+      // Lấy thông tin khách hàng từ Odoo đích theo Router
+      const activeOdoo = await routerClient.getActiveOdooConfig();
+      const customer = newId ? await odooService.getCustomerById(newId, activeOdoo || undefined) : null;
+
+      return reply.status(201).send({ success: true, id: newId, customer, target: routerResult.target });
     } catch (err: any) {
       logger.error('[odoo-routes] create customer error:', err);
       return reply.status(500).send({ error: err.message || 'Lỗi tạo khách hàng Odoo' });
@@ -129,7 +138,8 @@ export async function odooRoutes(app: FastifyInstance) {
   const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 
   /**
-   * Helper to sync and enrich products from Directus, disk cache, and Odoo
+   * Helper to sync and enrich products from Directus, disk cache, and Odoo.
+   * Merges Directus products and Odoo products; if duplicate, prioritizes Directus data.
    */
   async function getOrSyncProducts(force = false): Promise<any[]> {
     const now = Date.now();
@@ -137,30 +147,188 @@ export async function odooRoutes(app: FastifyInstance) {
       return productsCache;
     }
 
-    // 1. Load rich products from Directus / Persistent Disk Cache
-    let richProducts = await directusService.getProducts(force);
-
-    // 2. If Directus has products (official catalog), verify Odoo IDs and return official catalog
-    if (richProducts && richProducts.length > 0) {
-      productsCache = richProducts;
-      productsCacheTime = now;
-      directusService.saveDiskCache(richProducts).catch(() => {});
-      logger.info(`[odoo-routes] Successfully loaded ${richProducts.length} official products from Directus catalog.`);
-      return richProducts;
-    }
-
-    // 3. Fallback: Only if Directus and disk cache are completely empty, query Odoo
-    let fallbackProducts: any[] = [];
+    // 1. Load rich products from Directus (or persistent disk cache)
+    let directusProducts: any[] = [];
     try {
-      logger.info('[odoo-routes] Directus catalog empty, falling back to Odoo...');
-      fallbackProducts = await odooService.getAllSellableProducts();
+      directusProducts = await directusService.getProducts(force);
+      if (directusProducts && directusProducts.length > 0) {
+        directusService.saveDiskCache(directusProducts).catch(() => {});
+      }
     } catch (err: any) {
-      logger.warn('[odoo-routes] Failed fetching Odoo products fallback:', err.message);
+      logger.warn('[odoo-routes] Failed fetching Directus products, falling back to disk cache:', err.message);
+      directusProducts = directusService.loadDiskCache() || [];
     }
 
-    productsCache = fallbackProducts;
+    // 2. Fetch sellable products from Odoo ERP (with fallback to prisma.productCache)
+    let odooProducts: any[] = [];
+    try {
+      odooProducts = await odooService.getAllSellableProducts();
+      logger.info(`[odoo-routes] Fetched ${odooProducts.length} sellable products from Odoo ERP.`);
+    } catch (err: any) {
+      logger.warn('[odoo-routes] Failed fetching Odoo products directly:', err.message);
+    }
+
+    // If live Odoo products empty, fallback to DB ProductCache
+    if (!odooProducts || odooProducts.length === 0) {
+      try {
+        const dbCache = await prisma.productCache.findMany({
+          where: { isActive: true },
+        });
+        if (dbCache && dbCache.length > 0) {
+          odooProducts = dbCache.map((cp: any) => ({
+            id: cp.odooId,
+            name: cp.name,
+            default_code: cp.sku || '',
+            display_name: cp.displayName || (cp.sku ? `[${cp.sku}] ${cp.name}` : cp.name),
+            list_price: cp.listPrice || 0,
+            wholesale_price: cp.wholesalePrice || cp.listPrice || 0,
+            retail_price: cp.retailPrice || 0,
+            uom_name: cp.uomName || 'Gói',
+            specification: cp.specification || null,
+            image_url: cp.imageUrl || null,
+            ingredients: cp.ingredients || null,
+            description: cp.description || null,
+            weight: cp.weight || null,
+            categ_name: cp.category || 'Sản phẩm Odoo ERP',
+          }));
+          logger.info(`[odoo-routes] Loaded ${odooProducts.length} products from PostgreSQL productCache fallback.`);
+        }
+      } catch (err: any) {
+        logger.warn('[odoo-routes] Failed loading DB productCache fallback:', err.message);
+      }
+    }
+
+    // 3. Build lookup maps for Directus products (by odoo_id and by SKU)
+    const directusByOdooId = new Map<number, any>();
+    const directusBySku = new Map<string, any>();
+
+    for (const dp of directusProducts) {
+      const numId = Number(dp.odoo_id || dp.id);
+      if (numId) directusByOdooId.set(numId, dp);
+      const skuKey = (dp.sku || dp.default_code || '').trim().toLowerCase();
+      if (skuKey) directusBySku.set(skuKey, dp);
+    }
+
+    const processedDirectus = new Set<any>();
+    const unifiedList: any[] = [];
+
+    // 4. Process Odoo products: if duplicate with Directus, PRIORITIZE DIRECTUS
+    for (const op of odooProducts) {
+      const opId = Number(op.id || op.odooId);
+      const opSku = (op.default_code || op.sku || '').trim().toLowerCase();
+      const dp = (opId ? directusByOdooId.get(opId) : null) || (opSku ? directusBySku.get(opSku) : null);
+
+      if (dp) {
+        processedDirectus.add(dp);
+        // Prioritize Directus rich information, ensure Odoo ID is mapped correctly
+        const sku = dp.sku || dp.default_code || op.default_code || op.sku || '';
+        const name = dp.name || op.name || '';
+        const uomName = dp.uom_name || op.uom_name || op.uomName || 'Gói';
+        const wholesalePrice = Number(dp.wholesale_price || dp.list_price || op.list_price || op.wholesale_price || 0);
+        const listPrice = Number(dp.list_price || dp.wholesale_price || op.list_price || 0);
+        const retailPrice = Number(dp.retail_price || op.retail_price || 0);
+        const odooId = opId || Number(dp.odoo_id || dp.id);
+
+        unifiedList.push({
+          ...dp,
+          id: dp.id || odooId,
+          odoo_id: odooId,
+          sku,
+          default_code: sku,
+          name,
+          display_name: dp.display_name || (sku ? `[${sku}] ${name}` : (op.display_name || name)),
+          list_price: listPrice > 0 ? listPrice : wholesalePrice,
+          wholesale_price: wholesalePrice,
+          retail_price: retailPrice,
+          uom_id: dp.uom_id || op.uom_id || null,
+          uom_name: uomName,
+          weight: dp.weight || op.weight || null,
+          specification: dp.specification || op.specification || null,
+          image_url: dp.image_url || op.image_url || null,
+          description: dp.description || op.description || null,
+          ingredients: dp.ingredients || op.ingredients || null,
+          nutritional_info: dp.nutritional_info || null,
+          target: dp.target || op.target || null,
+          preservation: dp.preservation || op.preservation || null,
+          product_group_id: dp.product_group_id || null,
+          product_group_name: dp.product_group_name || null,
+          product_groups: dp.product_groups || (dp.product_group_name ? [{ id: dp.product_group_id || 1, name: dp.product_group_name }] : []),
+          source: 'directus',
+        });
+      } else {
+        // Odoo only product
+        const sku = op.default_code || op.sku || '';
+        const name = op.name || '';
+        const uomName = op.uom_name || op.uomName || 'Gói';
+        const listPrice = Number(op.list_price || 0);
+        const wholesalePrice = Number(op.wholesale_price || listPrice);
+        const retailPrice = Number(op.retail_price || 0);
+        const rawCategory = op.categ_name || op.category || '';
+        const categoryName = rawCategory
+          ? (rawCategory.includes('/') ? rawCategory.split('/').pop()!.trim() : rawCategory.trim())
+          : 'Sản phẩm Odoo ERP';
+        const categoryId = op.categ_id || 'odoo';
+
+        unifiedList.push({
+          id: opId,
+          odoo_id: opId,
+          sku,
+          default_code: sku,
+          name,
+          display_name: op.display_name || (sku ? `[${sku}] ${name}` : name),
+          list_price: listPrice,
+          wholesale_price: wholesalePrice,
+          retail_price: retailPrice,
+          uom_id: op.uom_id || null,
+          uom_name: uomName,
+          weight: op.weight || null,
+          specification: op.specification || null,
+          image_url: op.image_url || null,
+          description: op.description || null,
+          ingredients: op.ingredients || null,
+          nutritional_info: null,
+          target: null,
+          preservation: null,
+          product_group_id: categoryId,
+          product_group_name: categoryName,
+          product_groups: [{ id: categoryId, name: categoryName }],
+          source: 'odoo',
+        });
+      }
+    }
+
+    // 5. Append remaining Directus products not matched with any Odoo product
+    for (const dp of directusProducts) {
+      if (processedDirectus.has(dp)) continue;
+
+      const odooId = Number(dp.odoo_id || dp.id);
+      const sku = dp.sku || dp.default_code || '';
+      const name = dp.name || '';
+      const wholesalePrice = Number(dp.wholesale_price || dp.list_price || 0);
+      const listPrice = Number(dp.list_price || dp.wholesale_price || 0);
+      const retailPrice = Number(dp.retail_price || 0);
+
+      unifiedList.push({
+        ...dp,
+        id: dp.id || odooId,
+        odoo_id: odooId,
+        sku,
+        default_code: sku,
+        name,
+        display_name: dp.display_name || (sku ? `[${sku}] ${name}` : name),
+        list_price: listPrice > 0 ? listPrice : wholesalePrice,
+        wholesale_price: wholesalePrice,
+        retail_price: retailPrice,
+        uom_name: dp.uom_name || 'Gói',
+        product_groups: dp.product_groups || (dp.product_group_name ? [{ id: dp.product_group_id || 1, name: dp.product_group_name }] : []),
+        source: 'directus',
+      });
+    }
+
+    productsCache = unifiedList;
     productsCacheTime = now;
-    return fallbackProducts;
+    logger.info(`[odoo-routes] Unified product catalog ready: ${unifiedList.length} items (${processedDirectus.size} enriched with Directus, ${unifiedList.length - directusProducts.length} from Odoo only).`);
+    return unifiedList;
   }
 
   // GET /api/v1/odoo/products — get all products from multi-tier cache
@@ -266,6 +434,7 @@ export async function odooRoutes(app: FastifyInstance) {
             fullName: true,
             phone: true,
             email: true,
+            address: true,
             salesperson: true,
             assignedUserId: true,
             assignedUser: { select: { id: true, odooId: true, fullName: true } },
@@ -280,6 +449,7 @@ export async function odooRoutes(app: FastifyInstance) {
             fullName: true,
             phone: true,
             email: true,
+            address: true,
             salesperson: true,
             assignedUserId: true,
             assignedUser: { select: { id: true, odooId: true, fullName: true } },
@@ -436,36 +606,30 @@ export async function odooRoutes(app: FastifyInstance) {
         }
       }
 
-      const orderId = await odooService.createOrder({
-        partner_id: body.partner_id,
-        validity_date: body.validity_date,
-        payment_term_id: body.payment_term_id,
-        pricelist_id: body.pricelist_id,
-        user_id: orderOdooUserId,
-        note: body.notes,
-        order_line: body.order_line,
-      });
+      // Tính toán danh sách sản phẩm và tổng tiền ước tính
+      const items = (body.order_line || []).map((line: any) => ({
+        sku: line.sku || `PROD-${line.product_id}`,
+        odoo_product_id: line.product_id,
+        quantity: Number(line.product_uom_qty) || 1,
+        price: Number(line.price_unit) || 0,
+        discount: Number(line.discount) || 0,
+      }));
 
-      let orderCode = `ODOO-${orderId}`;
-      let totalAmount = 0;
+      const totalAmount = items.reduce(
+        (sum: number, it: any) => sum + it.price * it.quantity * (1 - (it.discount || 0) / 100),
+        0
+      );
 
-      // Fetch the created order to get its real name (e.g. SO001) and total
-      const odooOrder = await odooService.getOrder(orderId!);
-      if (odooOrder) {
-        orderCode = odooOrder.name;
-        totalAmount = odooOrder.amount_total || 0;
-      }
+      const orderCode = `CHAT-${Date.now().toString().slice(-6)}`;
 
       // CHỈ gán khách hàng nếu khách hàng CHƯA CÓ nhân viên sale trước đó (Rule 1)
       if (shouldAssignCustomerToCreator) {
-        // Gán trên Odoo
+        // Gán trên Odoo thông qua Router (bất đồng bộ để không chặn phản hồi)
         if (creatorOdooUserId && partnerIdNum > 0) {
-          try {
-            await odooService.updateCustomer(partnerIdNum, { user_id: creatorOdooUserId });
-            logger.info(`[odoo-routes] Đã gán khách hàng #${partnerIdNum} cho NV ${creatorName} (Odoo #${creatorOdooUserId})`);
-          } catch (err: any) {
-            logger.warn('[odoo-routes] Failed to update customer salesperson on Odoo:', err.message);
-          }
+          routerClient.updateCustomer({
+            partner_id: partnerIdNum,
+            data: { user_id: creatorOdooUserId },
+          }).catch(err => logger.warn('[odoo-routes] Failed to update customer salesperson on Odoo via Router:', err.message));
         }
 
         // Gán trong CRM Contact
@@ -492,7 +656,7 @@ export async function odooRoutes(app: FastifyInstance) {
         }
       }
 
-      // Save a summary in Prisma Orders & Record Message in conversation
+      // Lưu trạng thái ban đầu trong Prisma Orders
       if (body.contactId) {
         await prisma.order.create({
           data: {
@@ -502,13 +666,13 @@ export async function odooRoutes(app: FastifyInstance) {
             createdByUserId: user.id,
             conversationId: body.conversationId || null,
             orderCode,
-            totalAmount: parseFloat(totalAmount as any),
-            status: 'new',
+            totalAmount,
+            status: 'processing',
             notes: body.notes || 'Tạo từ tích hợp Odoo',
           }
-        });
+        }).catch(e => logger.warn('[odoo-routes] Failed to create local order record:', e.message));
 
-        // Clear draftOrder in ConversationAiState on order creation success
+        // Clear draftOrder in ConversationAiState on order creation
         if (body.conversationId) {
           await prisma.conversationAiState.update({
             where: { conversationId: body.conversationId },
@@ -519,7 +683,55 @@ export async function odooRoutes(app: FastifyInstance) {
         }
       }
 
-      return reply.status(201).send({ success: true, id: orderId, orderCode, totalAmount });
+      // Điều phối tạo đơn qua Universal Router Queue (100% Asynchronous & Event-Driven)
+      const customerName = contactRecord?.fullName || odooCustomer?.name || 'Khách hàng';
+      const customerPhone = contactRecord?.phone || odooCustomer?.phone || '';
+      const shippingAddress = contactRecord?.address || 'Giao tại cửa hàng / Chưa cập nhật';
+
+      try {
+        await routerClient.submitOrderAsync({
+          order_code: orderCode,
+          source: 'zalo_chat',
+          partner_id: partnerIdNum,
+          customer_name: customerName,
+          customer_phone: customerPhone,
+          shipping_address: shippingAddress,
+          validity_date: body.validity_date,
+          payment_term_id: body.payment_term_id,
+          user_id: orderOdooUserId,
+          note: body.notes,
+          items,
+          total_amount: totalAmount,
+          contactId: body.contactId,
+          conversationId: body.conversationId,
+        });
+      } catch (routerErr: any) {
+        logger.warn(`[odoo-routes] Router từ chối đơn hàng [${orderCode}]: ${routerErr.message}`);
+        await prisma.order.updateMany({
+          where: { orderCode, orgId: user.orgId },
+          data: {
+            status: 'failed',
+            notes: `${body.notes || ''} [LỖI ROUTER]: ${routerErr.message}`.trim(),
+          },
+        }).catch(() => {});
+
+        return reply.status(422).send({
+          success: false,
+          orderCode,
+          status: 'failed',
+          error: routerErr.message,
+          message: `Đơn hàng ${orderCode} chưa được tạo trên Odoo: ${routerErr.message}`,
+        });
+      }
+
+      // Phản hồi siêu tốc (< 30ms) cho giao diện người dùng
+      return reply.status(201).send({
+        success: true,
+        orderCode,
+        status: 'processing',
+        message: `Đơn hàng ${orderCode} đã được tiếp nhận và đang đồng bộ sang Odoo...`,
+        totalAmount,
+      });
     } catch (err: any) {
       logger.error('[odoo-routes] create order error:', err);
       return reply.status(500).send({ error: err.message || 'Lỗi tạo đơn hàng trên Odoo' });

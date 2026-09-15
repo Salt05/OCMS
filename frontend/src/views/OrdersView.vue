@@ -148,20 +148,19 @@
           <v-table density="compact" hover class="orders-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th class="text-center" :style="isMobile ? 'width: 15%;' : ''">Mã đơn</th>
-                <th class="text-left" :style="isMobile ? 'width: 23%;' : ''">Khách hàng</th>
-                <th v-if="!isMobile" class="text-left">Nhân viên</th>
-                <th class="text-center" :style="isMobile ? 'width: 16%;' : ''">Ngày tạo</th>
-                <th v-if="!isMobile" class="text-center">Số món</th>
-                <th class="text-right" :style="isMobile ? 'width: 22%;' : ''">Tổng tiền</th>
-                <th class="text-center" :style="isMobile ? 'width: 24%;' : ''">Trạng thái</th>
-                <th v-if="!isMobile" class="text-center">Giao hàng</th>
-                <th v-if="!isMobile" class="text-center"></th>
+                <th class="text-center" :style="isMobile ? 'width: 15%;' : 'width: 90px;'">Mã đơn</th>
+                <th class="text-left" :style="isMobile ? 'width: 23%;' : 'width: auto;'">Khách hàng</th>
+                <th v-if="!isMobile" class="text-left" style="width: 140px;">Nhân viên</th>
+                <th class="text-center" :style="isMobile ? 'width: 16%;' : 'width: 135px;'">Ngày tạo</th>
+                <th v-if="!isMobile" class="text-left" style="width: 155px;">Hoạt động (odoo)</th>
+                <th class="text-right" :style="isMobile ? 'width: 22%;' : 'width: 115px;'">Tổng tiền</th>
+                <th class="text-center" :style="isMobile ? 'width: 24%;' : 'width: 100px;'">Trạng thái</th>
+                <th v-if="!isMobile" class="text-center" style="width: 95px;">Giao hàng</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!loading && orders.length === 0">
-                <td :colspan="isMobile ? 5 : 9" class="text-center text-medium-emphasis py-12">
+                <td :colspan="isMobile ? 5 : 8" class="text-center text-medium-emphasis py-12">
                   <v-icon icon="lucide-inbox" size="48" color="grey" class="mb-2" />
                   <div class="text-body-1 font-weight-medium">Không tìm thấy đơn hàng nào</div>
                   <div class="text-caption text-grey">Thử thay đổi bộ lọc hoặc bấm "Đồng bộ Odoo"</div>
@@ -181,12 +180,12 @@
                   </span>
                 </td>
 
-                <!-- Customer (Single line on desktop) -->
-                <td class="text-left">
-                  <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="o.partnerName || o.customerProfile?.name || ''">
+                <!-- Customer (Single line with ellipsis on desktop) -->
+                <td class="text-left customer-col">
+                  <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="getCustomerFullInfo(o)">
                     {{ formatCustomerName(o.partnerName || o.customerProfile?.name) }}
                   </div>
-                  <div v-else class="d-flex align-center gap-1 flex-nowrap" :title="o.partnerName || o.customerProfile?.name || ''">
+                  <div v-else class="text-truncate customer-desktop-cell" :title="getCustomerFullInfo(o)">
                     <span class="font-weight-medium text-caption text-high-emphasis">{{ o.partnerName || o.customerProfile?.name || '—' }}</span>
                     <span v-if="o.customerProfile?.phone || o.customerProfile?.city" class="text-caption text-medium-emphasis ml-1.5 font-weight-regular">
                       ({{ [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ') }})
@@ -195,8 +194,10 @@
                 </td>
 
                 <!-- Salesperson -->
-                <td v-if="!isMobile" class="text-left">
-                  <span class="text-caption text-medium-emphasis">{{ o.customerProfile?.salesperson || o.salesperson || '—' }}</span>
+                <td v-if="!isMobile" class="text-left text-truncate" style="max-width: 140px;">
+                  <span class="text-caption text-medium-emphasis text-truncate d-block" :title="o.customerProfile?.salesperson || o.salesperson || ''">
+                    {{ o.customerProfile?.salesperson || o.salesperson || '—' }}
+                  </span>
                 </td>
 
                 <!-- Date Order (Single line on desktop) -->
@@ -207,11 +208,17 @@
                   </div>
                 </td>
 
-                <!-- Items count -->
-                <td v-if="!isMobile" class="text-center">
-                  <v-chip size="x-small" variant="tonal" color="grey">
-                    {{ o._count?.lines ?? o.lines?.length ?? 0 }} món
-                  </v-chip>
+                <!-- Hoạt động (Odoo) / Ghi chú giao việc -->
+                <td v-if="!isMobile" class="text-left text-truncate" style="max-width: 155px;">
+                  <div
+                    v-if="o.activitySummary"
+                    class="text-caption text-amber-darken-3 font-weight-medium text-truncate d-inline-flex align-center gap-1 w-100"
+                    :title="o.activitySummary"
+                  >
+                    <v-icon size="13" color="amber-darken-3" class="flex-shrink-0">lucide-clipboard-list</v-icon>
+                    <span class="text-truncate">{{ o.activitySummary }}</span>
+                  </div>
+                  <span v-else class="text-caption text-medium-emphasis">—</span>
                 </td>
 
                 <!-- Total Amount -->
@@ -234,13 +241,6 @@
                     {{ deliveryStatusLabel(o.deliveryStatus) }}
                   </v-chip>
                   <span v-else class="text-caption text-medium-emphasis">—</span>
-                </td>
-
-                <!-- Action -->
-                <td v-if="!isMobile" class="text-center" @click.stop>
-                  <v-btn icon size="x-small" variant="text" color="primary" title="Xem chi tiết" @click="openDetail(o.id)">
-                    <v-icon size="16">lucide-eye</v-icon>
-                  </v-btn>
                 </td>
               </tr>
             </tbody>
@@ -286,15 +286,15 @@
           <v-table density="compact" hover class="orders-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th v-if="!isMobile" class="text-center">Mã đơn</th>
-                <th class="text-left" :style="isMobile ? 'width: 28%;' : ''">Tên khách hàng</th>
-                <th class="text-left" :style="isMobile ? 'width: 22%;' : ''">Nhân viên</th>
-                <th class="text-center" :style="isMobile ? 'width: 24%;' : ''">Thời gian tạo</th>
-                <th v-if="!isMobile" class="text-center">Số món</th>
-                <th class="text-right" :style="isMobile ? 'width: 26%;' : ''">Tổng tiền</th>
-                <th v-if="!isMobile" class="text-center">Trạng thái</th>
-                <th v-if="!isMobile" class="text-left">Phương thức thanh toán</th>
-                <th v-if="!isMobile" class="text-center">Hành động</th>
+                <th v-if="!isMobile" class="text-center" style="width: 90px;">Mã đơn</th>
+                <th class="text-left" :style="isMobile ? 'width: 28%;' : 'width: auto;'">Tên khách hàng</th>
+                <th class="text-left" :style="isMobile ? 'width: 22%;' : 'width: 140px;'">Nhân viên</th>
+                <th class="text-center" :style="isMobile ? 'width: 24%;' : 'width: 135px;'">Thời gian tạo</th>
+                <th v-if="!isMobile" class="text-center" style="width: 75px;">Số món</th>
+                <th class="text-right" :style="isMobile ? 'width: 26%;' : 'width: 120px;'">Tổng tiền</th>
+                <th v-if="!isMobile" class="text-center" style="width: 100px;">Trạng thái</th>
+                <th v-if="!isMobile" class="text-left" style="width: 150px;">Phương thức thanh toán</th>
+                <th v-if="!isMobile" class="text-center" style="width: 110px;">Hành động</th>
               </tr>
             </thead>
             <tbody>
@@ -319,22 +319,22 @@
                   </span>
                 </td>
 
-                <!-- Customer (Tên khách hàng - single line on desktop) -->
-                <td class="text-left">
-                  <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="o.partnerName || o.customerProfile?.name || ''">
+                <!-- Customer (Tên khách hàng - single line with ellipsis on desktop) -->
+                <td class="text-left customer-col">
+                  <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="getCustomerFullInfo(o)">
                     {{ formatCustomerName(o.partnerName || o.customerProfile?.name) }}
                   </div>
-                  <div v-else class="d-flex align-center gap-1 flex-nowrap" :title="o.partnerName || o.customerProfile?.name || ''">
+                  <div v-else class="text-truncate customer-desktop-cell" :title="getCustomerFullInfo(o)">
                     <span class="font-weight-medium text-caption text-high-emphasis">{{ o.partnerName || o.customerProfile?.name || '—' }}</span>
                     <span v-if="o.customerProfile?.phone || o.customerProfile?.city" class="text-caption text-medium-emphasis ml-1.5 font-weight-regular">
-                      ({{ [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ') }}
+                      ({{ [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ') }})
                     </span>
                   </div>
                 </td>
 
                 <!-- Salesperson (Nhân viên) -->
-                <td class="text-left">
-                  <span class="text-caption text-medium-emphasis text-truncate d-inline-block" :title="o.customerProfile?.salesperson || o.salesperson || ''">
+                <td class="text-left text-truncate" style="max-width: 140px;">
+                  <span class="text-caption text-medium-emphasis text-truncate d-block" :title="o.customerProfile?.salesperson || o.salesperson || ''">
                     {{ (o.customerProfile?.salesperson || o.salesperson) ? (isMobile ? formatCustomerName(o.customerProfile?.salesperson || o.salesperson) : (o.customerProfile?.salesperson || o.salesperson)) : '—' }}
                   </span>
                 </td>
@@ -673,6 +673,13 @@ function formatCustomerName(name?: string | null): string {
     return trimmed.slice(0, 12) + '...';
   }
   return trimmed;
+}
+
+function getCustomerFullInfo(o: any): string {
+  if (!o) return '';
+  const name = o.partnerName || o.customerProfile?.name || '—';
+  const meta = [o.customerProfile?.phone, o.customerProfile?.city].filter(Boolean).join(' • ');
+  return meta ? `${name} (${meta})` : name;
 }
 
 function onDetailConfirm(order: OrderItem) {
@@ -1125,6 +1132,15 @@ onUnmounted(() => {
 .orders-table {
   width: 100% !important;
 }
+:deep(.v-table__wrapper) {
+  width: 100% !important;
+  overflow-x: hidden !important;
+}
+:deep(.v-table__wrapper > table) {
+  width: 100% !important;
+  min-width: 100% !important;
+  table-layout: fixed !important;
+}
 .orders-table th {
   font-size: 0.75rem;
   text-transform: uppercase;
@@ -1136,32 +1152,31 @@ onUnmounted(() => {
 .orders-table td {
   padding-left: 8px !important;
   padding-right: 8px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.customer-col {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.customer-desktop-cell {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Desktop: Proportional auto-fit with evenly distributed space */
+/* Desktop: Proportional fixed layout fitting window width with no scroll */
 @media (min-width: 769px) {
-  :deep(.v-table__wrapper > table) {
-    width: 100% !important;
-    table-layout: auto !important;
-  }
   .orders-table th,
   .orders-table td {
     padding-left: 10px !important;
     padding-right: 10px !important;
-    white-space: nowrap !important;
   }
 }
 /* Mobile: Fixed layout with percentage columns, no scroll */
 @media (max-width: 768px) {
-  :deep(.v-table__wrapper) {
-    overflow-x: hidden !important;
-    width: 100% !important;
-  }
-  :deep(.v-table__wrapper > table) {
-    width: 100% !important;
-    min-width: 100% !important;
-    table-layout: fixed !important;
-  }
   .orders-table th {
     padding-left: 2px !important;
     padding-right: 2px !important;
@@ -1171,8 +1186,6 @@ onUnmounted(() => {
     padding-left: 2px !important;
     padding-right: 2px !important;
     font-size: 12px !important;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .orders-table .v-chip {
     font-size: 11px !important;

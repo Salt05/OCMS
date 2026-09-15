@@ -1370,6 +1370,108 @@ export async function chatRoutes(app: FastifyInstance) {
     },
   );
 
+  // ── Undo / Revoke Message on Zalo ──────────────────────────────────────
+  app.post(
+    '/api/v1/conversations/:id/messages/:messageId/undo',
+    async (
+      request: FastifyRequest<{
+        Params: { id: string; messageId: string };
+      }>,
+      reply: FastifyReply,
+    ) => {
+      const user = request.user!;
+      const { id, messageId } = request.params;
+
+      const hasAccess = await checkConversationContactAccess(id, user);
+      if (!hasAccess) {
+        return reply.status(403).send({ error: 'Forbidden: You do not have access to this contact/conversation' });
+      }
+
+      const conversation = await prisma.conversation.findFirst({
+        where: { id, orgId: user.orgId },
+        include: { zaloAccount: true },
+      });
+      if (!conversation) {
+        return reply.status(404).send({ error: 'Conversation not found' });
+      }
+
+      const message = await prisma.message.findFirst({
+        where: { id: messageId, conversationId: id },
+      });
+      if (!message) {
+        return reply.status(404).send({ error: 'Message not found' });
+      }
+
+      if (message.senderType !== 'self') {
+        return reply.status(400).send({ error: 'Chỉ có thể thu hồi tin nhắn do chính bạn/nhân viên gửi' });
+      }
+
+      if (message.isDeleted) {
+        return { success: true, message: 'Tin nhắn đã được thu hồi trước đó' };
+      }
+
+      if (!message.zaloMsgId) {
+        return reply.status(400).send({ error: 'Tin nhắn chưa có Zalo Message ID để thu hồi' });
+      }
+
+      const resolved = await getOrResolveActiveZaloInstance(conversation, user.orgId);
+      if (!resolved || !resolved.instance?.api) {
+        return reply.status(503).send({ error: 'Tài khoản Zalo hiện không kết nối' });
+      }
+
+      const instance = resolved.instance;
+      const threadId = conversation.externalThreadId || '';
+      // 0 = User, 1 = Group
+      const threadType = conversation.threadType === 'group' ? 1 : 0;
+      const cliMsgId = getMessageCliMsgId(message) || message.zaloMsgId;
+
+      try {
+        if (typeof instance.api.undo === 'function') {
+          await instance.api.undo(
+            {
+              msgId: String(message.zaloMsgId),
+              cliMsgId,
+            },
+            threadId,
+            threadType,
+          );
+        } else {
+          logger.warn(`[chat] instance.api.undo is not available`);
+        }
+      } catch (undoErr: any) {
+        logger.error(`[chat] Zalo API undo error:`, undoErr);
+        const errMsg = undoErr?.message || '';
+        if (errMsg.includes('expired') || errMsg.includes('214') || errMsg.includes('213')) {
+          return reply.status(400).send({ error: 'Tin nhắn đã quá thời gian cho phép thu hồi trên Zalo (thường trong 24 giờ)' });
+        }
+        return reply.status(500).send({ error: `Lỗi thu hồi Zalo: ${errMsg || 'Không thể thu hồi tin nhắn'}` });
+      }
+
+      // Mark isDeleted in database (keep original content for CRM audit)
+      await prisma.message.update({
+        where: { id: message.id },
+        data: {
+          isDeleted: true,
+          deletedAt: new Date(),
+        },
+      });
+
+      // Broadcast socket event
+      const io = (request.server as any).io;
+      io?.emit('chat:deleted', {
+        accountId: conversation.zaloAccountId,
+        conversationId: conversation.id,
+        msgId: String(message.zaloMsgId),
+        messageId: message.id,
+      });
+
+      return {
+        success: true,
+        message: 'Đã thu hồi tin nhắn thành công',
+      };
+    },
+  );
+
   // ── Get group info & avatar for a group conversation ────────────────────
   app.get(
     '/api/v1/conversations/:id/group-info',

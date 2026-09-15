@@ -1,0 +1,119 @@
+{
+  "version": "1.1.0",
+  "updated_at": "2026-09-09T08:22:00.000Z",
+  "events": {
+    "order.created": {
+      "name": "Đơn hàng mới",
+      "description": "Kích hoạt khi khách hàng đặt đơn thành công từ Store Lapet hoặc OCMS",
+      "targets": [
+        {
+          "id": "target_odoo",
+          "name": "Odoo ERP",
+          "icon": "🏢",
+          "target_system": "odoo",
+          "queue": "queue_odoo",
+          "action": "create_sale_order",
+          "description": "Tạo báo giá (Quotation) hoặc đơn bán (Sale Order) trong Odoo",
+          "enabled": true,
+          "retry_attempts": 3
+        }
+      ]
+    },
+    "order.odoo_synced": {
+      "name": "Đơn hàng đã đồng bộ Odoo",
+      "description": "Kích hoạt sau khi Odoo tạo xong báo giá chính thức",
+      "targets": [
+        {
+          "id": "target_ocms",
+          "name": "OCMS (CRM & Zalo)",
+          "icon": "💬",
+          "target_system": "ocms",
+          "queue": "queue_ocms",
+          "action": "process_order_and_notify",
+          "description": "Lưu đơn vào Database CRM & Gửi tin nhắn Zalo kèm file PDF cho khách hàng",
+          "enabled": true,
+          "retry_attempts": 3
+        }
+      ]
+    },
+    "payment.success": {
+      "name": "Thanh toán thành công",
+      "description": "Kích hoạt khi nhận được webhook chuyển khoản VietQR / PayOS",
+      "targets": [
+        {
+          "id": "target_odoo_pay",
+          "name": "Odoo ERP",
+          "icon": "🏢",
+          "target_system": "odoo",
+          "queue": "queue_odoo",
+          "action": "confirm_payment",
+          "description": "Ghi nhận thanh toán hóa đơn trong kế toán Odoo",
+          "enabled": true,
+          "retry_attempts": 3
+        },
+        {
+          "id": "target_ocms_pay",
+          "name": "OCMS (CRM & Zalo)",
+          "icon": "💬",
+          "target_system": "ocms",
+          "queue": "queue_ocms",
+          "action": "confirm_payment_and_notify",
+          "description": "Cập nhật trạng thái thanh toán CRM & Bắn tin nhắn Zalo biên nhận",
+          "enabled": true,
+          "retry_attempts": 3
+        }
+      ]
+    },
+    "order.cancelled": {
+      "name": "Hủy đơn hàng",
+      "description": "Kích hoạt khi khách hàng hoặc hệ thống yêu cầu hủy đơn hàng",
+      "targets": [
+        {
+          "id": "target_odoo_cancel",
+          "name": "Odoo ERP",
+          "icon": "🏢",
+          "target_system": "odoo",
+          "queue": "queue_odoo",
+          "action": "cancel_sale_order",
+          "description": "Hủy đơn hàng/báo giá trên máy chủ Odoo đích được chỉ định",
+          "enabled": true,
+          "retry_attempts": 3
+        }
+      ]
+    },
+    "customer.created": {
+      "name": "Khách hàng mới",
+      "description": "Kích hoạt khi tạo mới đối tác khách hàng từ OCMS hoặc Web Store",
+      "targets": [
+        {
+          "id": "target_odoo_create_cust",
+          "name": "Odoo ERP",
+          "icon": "👤",
+          "target_system": "odoo",
+          "queue": "queue_odoo",
+          "action": "create_customer",
+          "description": "Tạo đối tác (res.partner) trên máy chủ Odoo đích được chỉ định",
+          "enabled": true,
+          "retry_attempts": 3
+        }
+      ]
+    },
+    "customer.updated": {
+      "name": "Cập nhật khách hàng",
+      "description": "Kích hoạt khi cập nhật thông tin hoặc nhân viên phụ trách khách hàng",
+      "targets": [
+        {
+          "id": "target_odoo_update_cust",
+          "name": "Odoo ERP",
+          "icon": "📝",
+          "target_system": "odoo",
+          "queue": "queue_odoo",
+          "action": "update_customer",
+          "description": "Cập nhật thông tin đối tác trên máy chủ Odoo đích được chỉ định",
+          "enabled": true,
+          "retry_attempts": 3
+        }
+      ]
+    }
+  }
+}

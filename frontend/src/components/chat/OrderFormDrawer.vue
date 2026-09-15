@@ -1,5 +1,5 @@
 <template>
-  <div class="order-form-container d-flex flex-column h-100 bg-surface">
+  <div class="order-form-container d-flex flex-column h-100 bg-surface" tabindex="0" @paste="onDrawerPaste">
     <!-- Header -->
     <div class="panel-header d-flex align-center justify-space-between px-5 py-3 border-b bg-surface flex-shrink-0">
       <div class="d-flex align-center gap-2.5 overflow-hidden mr-2">
@@ -59,29 +59,86 @@
 
     <!-- Main Scrollable Form Content (Generous padding: px-5 pt-4 pb-6) -->
     <div v-else class="panel-content flex-grow-1 overflow-y-auto px-5 pt-4 pb-6">
-      <!-- AI Extract Button -->
-      <div class="ai-extract-section mb-4">
+      <!-- AI Extract Unified Button -->
+      <div class="mb-4">
         <v-btn
           color="deep-purple-accent-3"
           variant="tonal"
           block
+          class="font-weight-bold text-body-2 mb-1 ai-extract-btn"
           height="40"
           rounded="lg"
           :loading="aiExtracting"
           :disabled="aiExtracting"
-          class="font-weight-bold text-body-2 ai-extract-btn"
           prepend-icon="lucide-sparkles"
-          @click="handleAiExtract"
+          @click="() => handleAiExtract()"
         >
           <template v-if="aiExtracting">
-            AI đang phân tích tin nhắn...
+            AI đang phân tích tin nhắn & hình ảnh...
           </template>
           <template v-else>
-            ✨ AI Bóc tách đơn từ tin nhắn
+            ✨ AI Bóc tách đơn hàng
           </template>
         </v-btn>
-        <div class="text-caption text-center text-medium-emphasis mt-1 font-size-11">
-          AI đọc tin nhắn hôm nay • Tự động điền sản phẩm & số lượng
+
+        <!-- Attached Drawer Image Previews (if pasted via Ctrl+V or attached) -->
+        <div v-if="drawerAttachedImages.length > 0" class="d-flex align-center gap-2 my-2 pa-2 border rounded-lg bg-surface-variant">
+          <div
+            v-for="(img, idx) in drawerAttachedImages"
+            :key="idx"
+            class="position-relative d-inline-block flex-shrink-0"
+          >
+            <img :src="img" class="rounded border elevation-1" style="width: 44px; height: 44px; object-fit: cover; display: block;" />
+            <button
+              type="button"
+              class="attached-img-remove-btn"
+              title="Xóa ảnh"
+              @click="drawerAttachedImages.splice(idx, 1)"
+            >
+              <v-icon size="10">lucide-x</v-icon>
+            </button>
+          </div>
+          <div class="flex-grow-1 text-caption text-medium-emphasis pl-1" style="font-size: 11px;">
+            {{ drawerAttachedImages.length }} ảnh đính kèm thêm
+          </div>
+          <v-btn
+            size="small"
+            color="primary"
+            variant="flat"
+            :loading="aiExtracting"
+            class="text-none font-weight-bold px-3"
+            @click="() => handleAiExtract(drawerAttachedImages)"
+          >
+            Bóc tách ngay
+          </v-btn>
+        </div>
+
+        <input
+          ref="drawerFileInputRef"
+          type="file"
+          accept="image/*"
+          multiple
+          class="d-none"
+          @change="onDrawerFilesSelected"
+        />
+
+        <div class="text-caption text-center text-medium-emphasis mt-1 font-size-11 d-flex align-center justify-center gap-1 flex-wrap">
+          <v-icon v-if="hasContextBoundary" size="12" color="amber-darken-3">lucide-sparkles</v-icon>
+          <span v-if="hasContextBoundary" class="text-amber-darken-3 font-weight-medium">
+            AI đọc theo mốc ngữ cảnh đã đặt (gồm tin nhắn & hình ảnh)
+          </span>
+          <span v-else>
+            AI đọc tin nhắn & hình ảnh hôm nay
+          </span>
+          <span class="opacity-60">•</span>
+          <button
+            type="button"
+            class="text-decoration-underline text-primary cursor-pointer border-0 bg-transparent pa-0 font-size-11"
+            @click="triggerDrawerFileInput"
+            title="Nhấn để chọn ảnh từ máy tính hoặc bấm Ctrl+V để dán ảnh"
+          >
+            Đính kèm ảnh / Ctrl+V
+          </button>
         </div>
       </div>
 
@@ -277,12 +334,20 @@
               <!-- Left: Unit Price × Stepper -->
               <div class="d-flex align-center gap-2 flex-shrink-0">
                 <div class="d-flex flex-column align-start">
-                  <span v-if="line.originalPrice && line.originalPrice > line.price" class="text-caption text-decoration-line-through text-medium-emphasis leading-none">
+                  <span v-if="line.originalPrice && line.originalPrice > line.price" class="text-caption text-decoration-line-through text-medium-emphasis leading-none mb-0.5">
                     {{ formatCurrency(line.originalPrice) }}
                   </span>
-                  <span class="unit-price-text font-weight-bold" :class="line.originalPrice && line.originalPrice > line.price ? 'text-success' : 'text-medium-emphasis'">
-                    {{ formatCurrency(line.price) }}
-                  </span>
+                  <div class="unit-price-input-box d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1.5 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);" title="Điều chỉnh đơn giá">
+                    <input
+                      type="text"
+                      :value="formatThousand(line.price)"
+                      @input="onUnitPriceInput(line, $event)"
+                      class="unit-price-input text-right font-weight-bold text-high-emphasis"
+                      style="width: 86px; font-size: 0.825rem; border: none; outline: none; background: transparent;"
+                      placeholder="0"
+                    />
+                    <span class="text-caption font-weight-medium text-medium-emphasis ml-0.5">₫</span>
+                  </div>
                 </div>
                 <span class="text-medium-emphasis opacity-60 font-size-11">×</span>
 
@@ -449,7 +514,13 @@ import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
 const props = defineProps<{
   contact: Contact | null;
   conversationId: string;
+  conversation?: any;
 }>();
+
+const hasContextBoundary = computed(() => {
+  const conv = props.conversation;
+  return !!(conv?.contextStartMsgId || conv?.contextEndMsgId || conv?.contextStartedAt || conv?.contextEndedAt);
+});
 
 const emit = defineEmits<{
   close: [];
@@ -518,6 +589,21 @@ const totalAmount = computed(() => {
 const isValidOrder = computed(() => {
   return orderLines.value.length > 0 && orderLines.value.some(l => l.product?.id != null && Number(l.qty) > 0);
 });
+
+// Price formatting & controls
+function formatThousand(val: number | string | undefined | null): string {
+  if (val === undefined || val === null || val === '') return '0';
+  const num = typeof val === 'number' ? Math.round(val) : parseInt(String(val).replace(/\D/g, ''), 10) || 0;
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function onUnitPriceInput(line: OrderLineItem, event: Event) {
+  const input = event.target as HTMLInputElement;
+  const rawDigits = input.value.replace(/\D/g, '');
+  const numericVal = rawDigits ? parseInt(rawDigits, 10) : 0;
+  line.price = numericVal;
+  input.value = formatThousand(numericVal);
+}
 
 // Quantity controls
 function incrementQty(line: OrderLineItem) {
@@ -640,12 +726,75 @@ async function refreshOdooData() {
 }
 
 // ── AI Order Extraction ─────────────────────────────────────────────────────
-async function handleAiExtract() {
+const drawerAttachedImages = ref<string[]>([]);
+const drawerFileInputRef = ref<HTMLInputElement | null>(null);
+
+function triggerDrawerFileInput() {
+  drawerFileInputRef.value?.click();
+}
+
+async function fileToDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function onDrawerFilesSelected(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (!input.files || input.files.length === 0) return;
+  for (let i = 0; i < input.files.length; i++) {
+    const file = input.files[i];
+    if (file.type.startsWith('image/')) {
+      try {
+        const dataUri = await fileToDataUri(file);
+        drawerAttachedImages.value.push(dataUri);
+      } catch (err) {
+        console.error('Failed to read image file:', err);
+      }
+    }
+  }
+  input.value = '';
+}
+
+async function onDrawerPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  let hasImage = false;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        hasImage = true;
+        try {
+          const dataUri = await fileToDataUri(file);
+          drawerAttachedImages.value.push(dataUri);
+        } catch (err) {
+          console.error('Failed to read pasted image:', err);
+        }
+      }
+    }
+  }
+  if (hasImage) {
+    e.preventDefault();
+    snackbar.value = {
+      show: true,
+      text: 'Đã nhận ảnh từ clipboard! Bấm "AI Bóc tách đơn hàng" để phân tích.',
+      color: 'info',
+    };
+  }
+}
+
+async function handleAiExtract(customImages?: string[]) {
   if (!props.conversationId) {
     snackbar.value = { show: true, text: 'Không tìm thấy cuộc trò chuyện hiện tại.', color: 'error' };
     return;
   }
 
+  const images = customImages !== undefined ? customImages : drawerAttachedImages.value;
   aiExtracting.value = true;
   aiMissingInfo.value = [];
   aiShippingAddress.value = '';
@@ -653,18 +802,25 @@ async function handleAiExtract() {
   try {
     const res = await api.post('/orders/ai-extract', {
       conversationId: props.conversationId,
+      imageUrls: images.length > 0 ? images : undefined,
     });
 
     if (res.data?.success && res.data.draft) {
+      drawerAttachedImages.value = [];
       fillOrderFromAI(res.data.draft);
+      snackbar.value = {
+        show: true,
+        text: '✨ AI đã bóc tách đơn hàng thành công!',
+        color: 'success',
+      };
     } else {
-      snackbar.value = { show: true, text: 'AI không trích xuất được đơn hàng từ tin nhắn.', color: 'warning' };
+      snackbar.value = { show: true, text: 'AI không trích xuất được đơn hàng từ dữ liệu.', color: 'warning' };
     }
   } catch (err: any) {
     console.error('[AI Extract]', err);
     snackbar.value = {
       show: true,
-      text: err.response?.data?.error || 'Lỗi khi AI phân tích tin nhắn',
+      text: err.response?.data?.error || 'Lỗi khi AI phân tích',
       color: 'error',
     };
   } finally {
@@ -1197,6 +1353,28 @@ async function submitOrder() {
 .v-theme--dark .ai-filled-card {
   border-color: rgba(192, 132, 252, 0.35) !important;
   box-shadow: 0 0 0 1px rgba(192, 132, 252, 0.15), 0 2px 8px rgba(192, 132, 252, 0.1);
+}
+
+.attached-img-remove-btn {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 17px;
+  height: 17px;
+  background: #f43f5e;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  z-index: 2;
+  transition: transform 0.15s ease;
+}
+.attached-img-remove-btn:hover {
+  transform: scale(1.15);
 }
 </style>
 

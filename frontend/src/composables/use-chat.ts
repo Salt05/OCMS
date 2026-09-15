@@ -632,6 +632,8 @@ export function useChat() {
               text = 'Đã gửi một video';
             } else if (!isVideoPayload(data.message.content) && (data.message.contentType === 'call' || isCallMessage(data.message))) {
               text = getCallInfo(data.message).snippet;
+            } else if (data.message.contentType === 'bank_card' || data.message.content?.includes('zinstant.bankcard')) {
+              text = 'Đã gửi thông tin tài khoản ngân hàng';
             } else if (data.message.contentType === 'text') {
               text = data.message.content || 'Đã gửi một tin nhắn';
             } else {
@@ -651,8 +653,8 @@ export function useChat() {
       }
     });
 
-    socket.on('chat:deleted', (data: { msgId: string }) => {
-      const msg = messages.value.find(m => m.zaloMsgId === data.msgId);
+    socket.on('chat:deleted', (data: { msgId?: string; messageId?: string }) => {
+      const msg = messages.value.find(m => (data.msgId && m.zaloMsgId === data.msgId) || (data.messageId && m.id === data.messageId));
       if (msg) {
         msg.isDeleted = true;
       }
@@ -894,6 +896,35 @@ export function useChat() {
     }
   }
 
+  async function undoMessage(conversationId: string, messageId: string) {
+    const res = await api.post(`/conversations/${conversationId}/messages/${messageId}/undo`);
+    const msg = messages.value.find(m => m.id === messageId);
+    if (msg) {
+      msg.isDeleted = true;
+    }
+    return res.data;
+  }
+
+  async function getFriendStatus(conversationId: string) {
+    const res = await api.get('/zalo/friend-status', { params: { conversationId } });
+    return res.data;
+  }
+
+  async function sendFriendRequest(conversationId: string, msg?: string) {
+    const res = await api.post('/zalo/friend-request', { conversationId, msg });
+    return res.data;
+  }
+
+  async function acceptFriendRequest(conversationId: string) {
+    const res = await api.post('/zalo/accept-friend', { conversationId });
+    return res.data;
+  }
+
+  async function undoFriendRequest(conversationId: string) {
+    const res = await api.post('/zalo/undo-friend-request', { conversationId });
+    return res.data;
+  }
+
   function destroySocket() {
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', handleOnline);
@@ -924,6 +955,11 @@ export function useChat() {
     retrySendAttachment,
     removeOptimisticMessage,
     sendReaction,
+    undoMessage,
+    getFriendStatus,
+    sendFriendRequest,
+    acceptFriendRequest,
+    undoFriendRequest,
     pauseAi,
     resumeAi,
     toggleAi,

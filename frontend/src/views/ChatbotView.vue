@@ -25,14 +25,15 @@ import { useTheme } from 'vuetify';
 const theme = useTheme();
 const chatbotIframe = ref<HTMLIFrameElement | null>(null);
 const iframeLoading = ref(true);
+const mountedTimestamp = ref(Date.now());
 
 const chatbotUrl = computed(() => {
   if (typeof window !== 'undefined') {
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
-    return `${protocol}//${hostname}:8000`;
+    return `${protocol}//${hostname}:8000?t=${mountedTimestamp.value}`;
   }
-  return 'http://localhost:8000';
+  return `http://localhost:8000?t=${mountedTimestamp.value}`;
 });
 
 function sendThemeToIframe() {
@@ -85,6 +86,7 @@ watch(() => theme.global.name.value, () => {
 });
 
 onMounted(() => {
+  mountedTimestamp.value = Date.now();
   setTimeout(() => {
     iframeLoading.value = false;
   }, 3000);

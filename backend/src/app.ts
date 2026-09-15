@@ -32,6 +32,7 @@ import { teamRoutes } from './modules/auth/team-routes.js';
 import { orgRoutes } from './modules/auth/org-routes.js';
 import { zaloAccessRoutes } from './modules/zalo/zalo-access-routes.js';
 import { zaloSyncRoutes } from './modules/zalo/zalo-sync-routes.js';
+import { zaloFriendRoutes } from './modules/zalo/zalo-friend-routes.js';
 import { zaloPool } from './modules/zalo/zalo-pool.js';
 import { registerZaloSocketHandlers } from './modules/zalo/zalo-socket.js';
 import { notificationRoutes } from './modules/notifications/notification-routes.js';
@@ -43,12 +44,14 @@ import { orderRoutes } from './modules/orders/order-routes.js';
 import { tagRoutes } from './modules/tags/tag-routes.js';
 import { quickMessageRoutes } from './modules/quick-messages/quick-message-routes.js';
 import { odooRoutes } from './modules/odoo/odoo-routes.js';
+import { directusService } from './modules/directus/directus-service.js';
 import { syncRoutes } from './modules/sync/sync-routes.js';
 import { chatbotRoutes, knowledgeRoutes } from './modules/chatbot/chatbot-routes.js';
 import { chatbotTestRoutes } from './modules/chatbot-test/chatbot-test-routes.js';
 import { promotionRoutes } from './modules/promotions/promotion-routes.js';
 import { productRoutes } from './modules/products/product-routes.js';
 import { odooSyncService } from './modules/sync/odoo-sync-service.js';
+import { internalRoutes } from './modules/internal/internal-routes.js';
 import cron from 'node-cron';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -181,6 +184,7 @@ async function bootstrap() {
   await app.register(orgRoutes);
   await app.register(zaloAccessRoutes);
   await app.register(zaloSyncRoutes);
+  await app.register(zaloFriendRoutes);
   await app.register(notificationRoutes);
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
@@ -195,6 +199,19 @@ async function bootstrap() {
   await app.register(knowledgeRoutes, { prefix: '/api/v1/knowledge' });
   await app.register(chatbotRoutes, { prefix: '/api/v1/chatbot' });
   await app.register(chatbotTestRoutes);
+  await app.register(internalRoutes);
+
+  // Directus asset proxy endpoint (public for <img> tags)
+  app.get('/api/v1/directus/assets/:fileId', async (request, reply) => {
+    const { fileId } = request.params as { fileId: string };
+    const asset = await directusService.fetchAsset(fileId);
+    if (!asset) {
+      return reply.status(404).send({ error: 'Asset not found' });
+    }
+    reply.header('Content-Type', asset.contentType);
+    reply.header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+    return reply.send(asset.buffer);
+  });
 
   // Liveness/readiness probe — also checks DB connectivity
   app.get('/health', async () => {

@@ -64,6 +64,9 @@ export interface OrderItem {
   note: string | null;
   createdAt: string;
   updatedAt: string;
+  writeDate?: string | null;
+  writeUid?: number | null;
+  writeUserName?: string | null;
   lines?: OrderLineItem[];
   _count?: { lines: number };
   conversationId?: string;

@@ -624,6 +624,7 @@ async function saveAllSettings() {
         url: settings.value.directus.url,
         email: settings.value.directus.email,
         password: settings.value.directus.password,
+        token: settings.value.directus.token,
         productCollection: settings.value.directus.productCollection,
       },
     };

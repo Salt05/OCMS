@@ -150,9 +150,9 @@ class DirectusService {
     }
 
     try {
-      const res = await fetch(`${url}/server/health`, {
+      const res = await fetch(`${url}/server/ping`, {
         method: 'GET',
-        signal: AbortSignal.timeout(1000), // 1s quick timeout
+        signal: AbortSignal.timeout(2000), // 2s quick timeout
       });
       this.isDirectusOnline = res.ok;
     } catch {
@@ -176,10 +176,13 @@ class DirectusService {
    * Potential paths for persistent products disk cache
    */
   private getCacheFilePaths(): string[] {
+    const backendDataDir = process.cwd().endsWith('backend')
+      ? path.join(process.cwd(), 'data')
+      : path.join(process.cwd(), 'backend', 'data');
+
     return [
       path.join(config.uploadDir, 'products_cache.json'),
-      path.join(process.cwd(), 'data', 'products_cache.json'),
-      path.join(process.cwd(), 'backend', 'data', 'products_cache.json'),
+      path.join(backendDataDir, 'products_cache.json'),
       path.join(process.cwd(), 'dist', 'data', 'products_cache.json'),
       path.join(process.cwd(), 'directus_products_sample.json'),
     ];
@@ -266,10 +269,13 @@ class DirectusService {
       products,
     }, null, 2);
 
+    const backendDataDir = process.cwd().endsWith('backend')
+      ? path.join(process.cwd(), 'data')
+      : path.join(process.cwd(), 'backend', 'data');
+
     const targetDirs = [
       config.uploadDir,
-      path.join(process.cwd(), 'data'),
-      path.join(process.cwd(), 'backend', 'data'),
+      backendDataDir,
     ];
 
     for (const dir of targetDirs) {
@@ -341,8 +347,8 @@ class DirectusService {
 
   /**
    * Format asset image URL safely.
-   * If Directus is offline, unreachable, or URL not configured, returns undefined
-   * to strictly prevent client net::ERR_CONNECTION_TIMED_OUT errors.
+   * Directus assets are routed via our backend proxy /api/v1/directus/assets/:id
+   * to ensure stable delivery with authentication, disk caching, and avoid CORS / host issues.
    */
   getAssetUrl(rawUrlOrId?: string): string | undefined {
     if (!rawUrlOrId) return undefined;
@@ -355,18 +361,77 @@ class DirectusService {
       }
     }
 
-    // Directus asset: strictly require Directus to be online & URL configured
-    if (!this.isDirectusOnline || !config.directus.url) {
-      return undefined;
-    }
-
     const fileId = this.extractAssetId(s);
     if (fileId) {
-      const baseUrl = this.activeUrl || config.directus.url;
-      return `${baseUrl}/assets/${fileId}`;
+      return `/api/v1/directus/assets/${fileId}`;
     }
 
     return undefined;
+  }
+
+  /**
+   * Fetch asset buffer from Directus with persistent local disk caching
+   */
+  async fetchAsset(fileId: string): Promise<{ buffer: Buffer; contentType: string } | null> {
+    const cacheDir = path.join(config.uploadDir, 'directus_cache');
+    const localFile = path.join(cacheDir, fileId);
+
+    // 1. Check local file cache
+    if (fs.existsSync(localFile)) {
+      try {
+        const buffer = await fs.promises.readFile(localFile);
+        return { buffer, contentType: 'image/jpeg' };
+      } catch (err: any) {
+        logger.debug(`[DirectusService] Error reading cached asset ${fileId}:`, err.message);
+      }
+    }
+
+    // 2. Fetch from Directus
+    const directusConfig = await integrationSettingsService.getDirectusConfig();
+    const url = directusConfig.url || config.directus.url;
+    if (!url) return null;
+
+    try {
+      const token = await this.getAuthToken();
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch(`${url.replace(/\/+$/, '')}/assets/${fileId}`, {
+        headers,
+        signal: AbortSignal.timeout(6000),
+      });
+
+      if (res.ok) {
+        const arrayBuf = await res.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        let contentType = res.headers.get('content-type') || 'image/jpeg';
+        if (contentType === 'application/octet-stream' || !contentType.startsWith('image/')) {
+          if (buffer.length >= 12 && buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+              buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+            contentType = 'image/webp';
+          } else if (buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+            contentType = 'image/png';
+          } else if (buffer.length >= 3 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+            contentType = 'image/jpeg';
+          } else {
+            contentType = 'image/webp';
+          }
+        }
+
+        try {
+          if (!fs.existsSync(cacheDir)) {
+            fs.mkdirSync(cacheDir, { recursive: true });
+          }
+          await fs.promises.writeFile(localFile, buffer);
+        } catch {}
+
+        return { buffer, contentType };
+      }
+    } catch (err: any) {
+      logger.warn(`[DirectusService] Failed to fetch asset ${fileId}:`, err.message);
+    }
+    return null;
   }
 
   /**
@@ -381,16 +446,17 @@ class DirectusService {
     // Quick health probe to avoid 3000ms timeouts when server is offline
     await this.checkDirectusHealth();
 
-    // If offline, bypass network call immediately and return disk cache safely
-    if (!this.isDirectusOnline || !config.directus.url) {
+    const directusConfig = await integrationSettingsService.getDirectusConfig();
+    const directusUrl = directusConfig.url || config.directus.url;
+
+    // If offline or no url, bypass network call immediately and return disk cache safely
+    if (!this.isDirectusOnline || !directusUrl) {
       if (!this.productsCache || this.productsCache.length === 0) {
         this.loadDiskCache();
       }
       return this.productsCache || [];
     }
 
-    const directusConfig = await integrationSettingsService.getDirectusConfig();
-    const directusUrl = directusConfig.url || config.directus.url;
     if (directusUrl) {
       try {
         const token = await this.getAuthToken();
@@ -400,8 +466,8 @@ class DirectusService {
         }
 
         const collection = directusConfig.productCollection || config.directus.productCollection || 'products';
-        const url = `${directusUrl}/items/${collection}?limit=-1&fields=*,images.*,product_groups.*,product_groups.product_groups_id.*`;
-        const res = await fetch(url, { headers, signal: AbortSignal.timeout(3000) });
+        const url = `${directusUrl}/items/${collection}?limit=-1&fields=*,images.*,images.directus_files_id.*,product_groups.*,product_groups.product_groups_id.*`;
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
 
         if (res.ok) {
           const data = (await res.json()) as any;
@@ -411,7 +477,16 @@ class DirectusService {
             this.productsCache = rawItems.map((item) => {
               let imageFileId: string | undefined = undefined;
               if (Array.isArray(item.images) && item.images.length > 0) {
-                imageFileId = item.images[0].directus_files_id || item.images[0].id;
+                const first = item.images[0];
+                if (typeof first === 'object' && first !== null) {
+                  if (typeof first.directus_files_id === 'object' && first.directus_files_id !== null) {
+                    imageFileId = first.directus_files_id.id;
+                  } else {
+                    imageFileId = first.directus_files_id || first.id;
+                  }
+                } else if (typeof first === 'string' || typeof first === 'number') {
+                  imageFileId = String(first);
+                }
               } else if (typeof item.image === 'string') {
                 imageFileId = item.image;
               } else if (typeof item.thumbnail === 'string') {

@@ -1289,6 +1289,7 @@ function lastMessagePreview(conv: Conversation): string {
   if (msg.contentType === 'sticker') return 'Nhãn dán';
   if (msg.contentType === 'voice') return 'Tin nhắn thoại';
   if (msg.contentType === 'gif') return 'GIF';
+  if (msg.contentType === 'bank_card') return '[Tài khoản ngân hàng]';
 
   if (msg.content?.startsWith('{')) {
     try {
@@ -1303,6 +1304,11 @@ function lastMessagePreview(conv: Conversation): string {
         return getCallInfo(msg).snippet;
       }
       
+      // Tài khoản ngân hàng (Zinstant Bankcard)
+      if (p.action === 'zinstant.bankcard' || (typeof p.action === 'string' && p.action.includes('bankcard')) || msg.content.includes('zinstant.bankcard')) {
+        return '[Tài khoản ngân hàng]';
+      }
+
       // Lịch hẹn / Reminder
       if (p.action === 'msginfo.actionlist') return 'Nhắc hẹn';
       

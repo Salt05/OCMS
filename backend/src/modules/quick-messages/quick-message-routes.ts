@@ -27,34 +27,15 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/quick-messages', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
-      const isAdminOrOwner = ['owner', 'admin'].includes(user.role);
 
-      let quickMessages;
-      if (isAdminOrOwner) {
-        // Admin & Owner see everything in the org
-        quickMessages = await prisma.quickMessage.findMany({
-          where: { orgId: user.orgId },
-          orderBy: { shortcut: 'asc' },
-          include: {
-            user: { select: { fullName: true, email: true } },
-          },
-        });
-      } else {
-        // Regular members see shared messages OR their own personal ones
-        quickMessages = await prisma.quickMessage.findMany({
-          where: {
-            orgId: user.orgId,
-            OR: [
-              { isShared: true },
-              { userId: user.id },
-            ],
-          },
-          orderBy: { shortcut: 'asc' },
-          include: {
-            user: { select: { fullName: true, email: true } },
-          },
-        });
-      }
+      // All members in the org see all quick messages (both shared and personal)
+      const quickMessages = await prisma.quickMessage.findMany({
+        where: { orgId: user.orgId },
+        orderBy: { shortcut: 'asc' },
+        include: {
+          user: { select: { id: true, fullName: true, email: true } },
+        },
+      });
 
       return { quickMessages };
     } catch (err) {
@@ -71,11 +52,11 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
 
       const shortcut = body.shortcut?.trim().toLowerCase();
       const title = body.title?.trim();
-      const content = body.content?.trim();
+      const content = (body.content !== undefined && body.content !== null) ? body.content.trim() : '';
       const isShared = !!body.isShared;
 
-      if (!shortcut || !title || !content) {
-        return reply.status(400).send({ error: 'Shortcut, title, and content are required' });
+      if (!shortcut || !title) {
+        return reply.status(400).send({ error: 'Phím tắt và tiêu đề là bắt buộc' });
       }
 
       // Shortcut format validation: letters, numbers, hyphens, underscores only
@@ -101,6 +82,45 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(409).send({ error: `Phím tắt /${shortcut} đã tồn tại trong hệ thống` });
       }
 
+      // Normalize attachments array (images, documents, files)
+      const parseList = (raw: any): any[] => {
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === 'string') {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+          } catch {}
+          if (raw.startsWith('http')) {
+            const isImg = /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(raw.split('?')[0]);
+            return [{ type: isImg ? 'image' : 'file', url: raw }];
+          }
+        }
+        return [];
+      };
+
+      const attachments = parseList(body.attachments).map((item: any) => {
+        if (typeof item === 'string') {
+          const isImg = /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(item.split('?')[0]);
+          const name = item.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
+          return { type: isImg ? 'image' : 'file', url: item, name };
+        }
+        const url = item?.url || '';
+        const isImg = item?.type === 'image' || (!item?.type && /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(url.split('?')[0]));
+        const name = item?.name || url.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
+        return {
+          type: item?.type || (isImg ? 'image' : 'file'),
+          url,
+          name,
+          size: item?.size,
+          mimeType: item?.mimeType,
+        };
+      }).filter((item: any) => item.url);
+
+      // Require at least content or attachments
+      if (!content && attachments.length === 0) {
+        return reply.status(400).send({ error: 'Cần có ít nhất 1 trong 2: nội dung tin nhắn hoặc tệp/hình ảnh đính kèm' });
+      }
+
       const newQuickMessage = await prisma.quickMessage.create({
         data: {
           orgId: user.orgId,
@@ -109,7 +129,10 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
           title,
           content,
           isShared,
-          attachments: body.attachments ?? [],
+          attachments,
+        },
+        include: {
+          user: { select: { id: true, fullName: true, email: true } },
         },
       });
 
@@ -137,16 +160,13 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
 
       const isAdminOrOwner = ['owner', 'admin'].includes(user.role);
 
-      // Access control: regular members cannot edit shared messages or templates they do not own
+      // Access control: only admin/owner OR creator can edit
       if (!isAdminOrOwner) {
-        if (existing.isShared) {
-          return reply.status(403).send({ error: 'You do not have permission to edit shared templates' });
-        }
         if (existing.userId !== user.id) {
-          return reply.status(403).send({ error: 'You do not own this template' });
+          return reply.status(403).send({ error: 'Chỉ quản trị viên hoặc người tạo mới có quyền chỉnh sửa tin nhắn mẫu này' });
         }
-        if (body.isShared === true) {
-          return reply.status(403).send({ error: 'Only admins or owners can set template as shared' });
+        if (body.isShared === true && !existing.isShared) {
+          return reply.status(403).send({ error: 'Chỉ quản trị viên hoặc chủ sở hữu mới có quyền đặt tin nhắn mẫu thành dùng chung' });
         }
       }
 
@@ -169,14 +189,63 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      let attachments = undefined;
+      if (body.attachments !== undefined) {
+        const parseList = (raw: any): any[] => {
+          if (Array.isArray(raw)) return raw;
+          if (typeof raw === 'string') {
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) return parsed;
+            } catch {}
+            if (raw.startsWith('http')) {
+              const isImg = /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(raw.split('?')[0]);
+              return [{ type: isImg ? 'image' : 'file', url: raw }];
+            }
+          }
+          return [];
+        };
+
+        attachments = parseList(body.attachments).map((item: any) => {
+          if (typeof item === 'string') {
+            const isImg = /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(item.split('?')[0]);
+            const name = item.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
+            return { type: isImg ? 'image' : 'file', url: item, name };
+          }
+          const url = item?.url || '';
+          const isImg = item?.type === 'image' || (!item?.type && /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(url.split('?')[0]));
+          const name = item?.name || url.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
+          return {
+            type: item?.type || (isImg ? 'image' : 'file'),
+            url,
+            name,
+            size: item?.size,
+            mimeType: item?.mimeType,
+          };
+        }).filter((item: any) => item.url);
+      }
+
+      // Check that at least content or attachments remains
+      const nextContent = body.content !== undefined ? body.content.trim() : existing.content;
+      const nextAttachments = attachments !== undefined ? attachments : (existing.attachments as any[]);
+      const hasContent = !!nextContent;
+      const hasAttachments = Array.isArray(nextAttachments) && nextAttachments.length > 0;
+
+      if (!hasContent && !hasAttachments) {
+        return reply.status(400).send({ error: 'Cần có ít nhất 1 trong 2: nội dung tin nhắn hoặc tệp/hình ảnh đính kèm' });
+      }
+
       const updated = await prisma.quickMessage.update({
         where: { id },
         data: {
           shortcut: shortcut || undefined,
           title: body.title?.trim() || undefined,
-          content: body.content?.trim() || undefined,
+          content: body.content !== undefined ? body.content.trim() : undefined,
           isShared: body.isShared !== undefined ? !!body.isShared : undefined,
-          attachments: body.attachments !== undefined ? body.attachments : undefined,
+          attachments: attachments !== undefined ? attachments : undefined,
+        },
+        include: {
+          user: { select: { id: true, fullName: true, email: true } },
         },
       });
 
@@ -203,13 +272,10 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
 
       const isAdminOrOwner = ['owner', 'admin'].includes(user.role);
 
-      // Access control: regular members can only delete their own personal templates
+      // Access control: only admin/owner OR creator can delete
       if (!isAdminOrOwner) {
-        if (existing.isShared) {
-          return reply.status(403).send({ error: 'You do not have permission to delete shared templates' });
-        }
         if (existing.userId !== user.id) {
-          return reply.status(403).send({ error: 'You do not own this template' });
+          return reply.status(403).send({ error: 'Chỉ quản trị viên hoặc người tạo mới có quyền xóa tin nhắn mẫu này' });
         }
       }
 
@@ -230,29 +296,37 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(400).send({ error: 'No file uploaded' });
       }
 
-      // Check if it's an image
-      const mimeType = data.mimetype;
-      if (!mimeType.startsWith('image/')) {
-        return reply.status(400).send({ error: 'Chỉ chấp nhận file hình ảnh' });
-      }
-
-      // Preserve original filename extension
-      const ext = path.extname(data.filename) || '.png';
+      const originalName = data.filename || 'file';
+      const mimeType = data.mimetype || 'application/octet-stream';
+      const ext = path.extname(originalName) || '';
       const fileName = `${randomUUID()}${ext}`;
       const targetPath = path.join(config.uploadDir, fileName);
 
       // Stream data to target path
       await pipeline(data.file, fs.createWriteStream(targetPath));
 
+      let size = 0;
+      try {
+        const stats = await fs.promises.stat(targetPath);
+        size = stats.size;
+      } catch {}
+
       // Return absolute URL based on host header
       const protocol = (request.headers['x-forwarded-proto'] as string) || 'http';
       const host = request.headers.host;
       const fileUrl = `${protocol}://${host}/uploads/${fileName}`;
+      const isImage = mimeType.startsWith('image/') || /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(ext);
 
-      return { url: fileUrl };
+      return {
+        url: fileUrl,
+        name: originalName,
+        type: isImage ? 'image' : 'file',
+        mimeType,
+        size,
+      };
     } catch (err) {
       logger.error('[quick-messages] Upload error:', err);
-      return reply.status(500).send({ error: 'Không thể upload file ảnh' });
+      return reply.status(500).send({ error: 'Không thể tải lên tệp đính kèm' });
     }
   });
 }

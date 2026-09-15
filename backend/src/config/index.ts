@@ -40,6 +40,7 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL || '',
   uploadDir: path.resolve(process.env.UPLOAD_DIR || './uploads'),
   appUrl: process.env.APP_URL || 'http://localhost:3000',
+  routerUrl: process.env.ROUTER_API_URL || 'http://localhost:3001',
   isProduction: process.env.NODE_ENV === 'production',
   odoo: {
     url: process.env.ODOO_URL || '',

@@ -400,19 +400,6 @@ export class ChatbotToolExecutor {
       }
     }
 
-    // Filter by explicit category (ngành hàng) if provided
-    if (catQuery) {
-      const catFiltered = filtered.filter((p: any) => {
-        const pCat = (p.category || '').toLowerCase();
-        const pName = (p.name || '').toLowerCase();
-        const pDesc = (p.description || '').toLowerCase();
-        return pCat.includes(catQuery) || pName.includes(catQuery) || pDesc.includes(catQuery);
-      });
-      if (catFiltered.length > 0) {
-        filtered = catFiltered;
-      }
-    }
-
     // Filter allergy exclusions
     if (excludeIngredients && excludeIngredients.length > 0) {
       filtered = filtered.filter((p: any) => {
@@ -437,6 +424,19 @@ export class ChatbotToolExecutor {
       });
     }
 
+    const baseFiltered = filtered;
+
+    // Filter by explicit category (ngành hàng) if provided
+    let catFiltered: any[] = [];
+    if (catQuery) {
+      catFiltered = baseFiltered.filter((p: any) => {
+        const pCat = (p.category || '').toLowerCase();
+        const pName = (p.name || '').toLowerCase();
+        const pDesc = (p.description || '').toLowerCase();
+        return pCat.includes(catQuery) || pName.includes(catQuery) || pDesc.includes(catQuery);
+      });
+    }
+
     const isPuppy = (ageMonths !== undefined && ageMonths <= 6);
     const wantsSoft = texturePreference === 'soft' || isPuppy;
 
@@ -445,95 +445,136 @@ export class ChatbotToolExecutor {
     const hasYellowVariant = /vàng|vang|yellow/i.test(q);
     const isMultiColorQuery = hasWhiteVariant && hasYellowVariant;
 
-    // Fuzzy text match & smart boosting
     const words = q.split(/\s+/).filter(w => w.length > 1);
-    const scored = filtered.map((p: any) => {
-      let score = 0;
-      const skuLower = (p.sku || '').toLowerCase();
-      const nameLower = p.name.toLowerCase();
-      const dispLower = (p.displayName || '').toLowerCase();
-      const descLower = (p.description || '').toLowerCase();
-      const specLower = (p.specification || '').toLowerCase();
-      const catLower = (p.category || '').toLowerCase();
-      const brandLower = (p.brand || '').toLowerCase();
 
-      if (skuLower === q) score += 30;
-      if (nameLower.includes(q) || dispLower.includes(q)) score += 15;
-      if (descLower.includes(q)) score += 8;
+    // Scoring function
+    const scoreItems = (items: any[]) => {
+      return items.map((p: any) => {
+        let score = 0;
+        let textScore = 0;
+        const skuLower = (p.sku || '').toLowerCase();
+        const nameLower = p.name.toLowerCase();
+        const dispLower = (p.displayName || '').toLowerCase();
+        const descLower = (p.description || '').toLowerCase();
+        const specLower = (p.specification || '').toLowerCase();
+        const catLower = (p.category || '').toLowerCase();
+        const brandLower = (p.brand || '').toLowerCase();
 
-      // Handle "xương nơ" / "da bò" specific detection
-      if (q.includes('xương nơ') || q.includes('xuong no')) {
-        if (nameLower.includes('xương nơ') || dispLower.includes('xương nơ')) score += 20;
-        else if (descLower.includes('xương nơ') || (descLower.includes('xương') && descLower.includes('nơ'))) score += 18;
-      }
-      if (q.includes('da bò') || q.includes('da bo')) {
-        if (nameLower.includes('da bò') || dispLower.includes('da bò')) score += 12;
-        else if (descLower.includes('da bò')) score += 8;
-      }
+        if (skuLower === q) { score += 30; textScore += 30; }
+        if (nameLower.includes(q) || dispLower.includes(q)) { score += 15; textScore += 15; }
+        if (descLower.includes(q)) { score += 8; textScore += 8; }
 
-      // If multi-variant query (e.g. "trắng vàng"): boost both white and yellow variants
-      if (isMultiColorQuery) {
-        if (nameLower.includes('trắng') || dispLower.includes('trắng') || descLower.includes('trắng')) {
-          score += 25;
+        // Handle "xương nơ" / "da bò" specific detection
+        if (q.includes('xương nơ') || q.includes('xuong no')) {
+          if (nameLower.includes('xương nơ') || dispLower.includes('xương nơ')) { score += 20; textScore += 20; }
+          else if (descLower.includes('xương nơ') || (descLower.includes('xương') && descLower.includes('nơ'))) { score += 18; textScore += 18; }
         }
-        if (nameLower.includes('vàng') || dispLower.includes('vàng') || descLower.includes('vàng')) {
-          score += 25;
+        if (q.includes('da bò') || q.includes('da bo')) {
+          if (nameLower.includes('da bò') || dispLower.includes('da bò')) { score += 12; textScore += 12; }
+          else if (descLower.includes('da bò')) { score += 8; textScore += 8; }
         }
-      } else {
-        if (hasWhiteVariant && (nameLower.includes('trắng') || dispLower.includes('trắng'))) score += 15;
-        if (hasYellowVariant && (nameLower.includes('vàng') || dispLower.includes('vàng'))) score += 15;
-      }
 
-      // Boost matching category (ngành hàng)
-      if (catLower && (q.includes(catLower) || (catQuery && catLower.includes(catQuery)))) {
-        score += 15;
-      }
-      // Boost matching brand
-      if (brandLower && (q.includes(brandLower) || (brandQuery && brandLower.includes(brandQuery)))) {
-        score += 15;
-      }
+        // If multi-variant query (e.g. "trắng vàng"): boost both white and yellow variants
+        if (isMultiColorQuery) {
+          if (nameLower.includes('trắng') || dispLower.includes('trắng') || descLower.includes('trắng')) {
+            score += 25; textScore += 25;
+          }
+          if (nameLower.includes('vàng') || dispLower.includes('vàng') || descLower.includes('vàng')) {
+            score += 25; textScore += 25;
+          }
+        } else {
+          if (hasWhiteVariant && (nameLower.includes('trắng') || dispLower.includes('trắng'))) { score += 15; textScore += 15; }
+          if (hasYellowVariant && (nameLower.includes('vàng') || dispLower.includes('vàng'))) { score += 15; textScore += 15; }
+        }
 
-      for (const w of words) {
-        if (w === 'trắng' || w === 'vàng' || w === 'và' || w === 'món' || w === 'loại') continue;
-        if (skuLower.includes(w)) score += 6;
-        if (nameLower.includes(w) || dispLower.includes(w)) score += 4;
-        if (catLower.includes(w)) score += 4;
-        if (brandLower.includes(w)) score += 4;
-        if (descLower.includes(w)) score += 2;
-      }
+        // Boost matching category (ngành hàng)
+        if (catLower && (q.includes(catLower) || (catQuery && catLower.includes(catQuery)))) {
+          score += 15;
+        }
+        // Boost matching brand
+        if (brandLower && (q.includes(brandLower) || (brandQuery && brandLower.includes(brandQuery)))) {
+          score += 15;
+        }
 
-      // Boost soft / puppy snacks
-      if (wantsSoft) {
-        if (nameLower.includes('mềm') || descLower.includes('mềm') || specLower.includes('mềm')) score += 15;
-        if (nameLower.includes('bàn chải') || skuLower === 'b03' || skuLower === 'b06') score += 12;
-        if (nameLower.includes('sữa') || descLower.includes('sữa') || descLower.includes('rawhide-free')) score += 10;
-      }
+        for (const w of words) {
+          if (w === 'trắng' || w === 'vàng' || w === 'và' || w === 'món' || w === 'loại') continue;
+          if (skuLower.includes(w)) { score += 6; textScore += 6; }
+          if (nameLower.includes(w) || dispLower.includes(w)) { score += 4; textScore += 4; }
+          if (catLower.includes(w)) score += 4;
+          if (brandLower.includes(w)) score += 4;
+          if (descLower.includes(w)) { score += 2; textScore += 2; }
+        }
 
-      return { p, score };
+        // Boost soft / puppy snacks
+        if (wantsSoft) {
+          if (nameLower.includes('mềm') || descLower.includes('mềm') || specLower.includes('mềm')) score += 15;
+          if (nameLower.includes('bàn chải') || skuLower === 'b03' || skuLower === 'b06') score += 12;
+          if (nameLower.includes('sữa') || descLower.includes('sữa') || descLower.includes('rawhide-free')) score += 10;
+        }
+
+        return { p, score, textScore };
+      });
+    };
+
+    const initialPool = catFiltered.length > 0 ? catFiltered : baseFiltered;
+    let scored = scoreItems(initialPool);
+
+    let topMatches = scored
+      .filter((s: any) => (!q && s.score >= 0) || (q && s.textScore > 0 && s.score > 10))
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, 6);
+
+    const hasPhraseMatchInPool = topMatches.some((s: any) => {
+      const n = (s.p.name || '').toLowerCase();
+      const d = (s.p.displayName || '').toLowerCase();
+      return n.includes(q) || d.includes(q);
     });
 
-    const topMatches = scored
-      .filter((s: any) => s.score > 10 || (!q && s.score >= 0))
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 6)
-      .map((s: any) => {
-        const wholesalePrice = s.p.wholesalePrice > 0 ? s.p.wholesalePrice : s.p.listPrice;
-        return {
-          sku: s.p.sku || `OD-${s.p.odooId}`,
-          name: s.p.name,
-          displayName: s.p.displayName || s.p.name,
-          category: s.p.category || null,
-          brand: s.p.brand || null,
-          price: wholesalePrice,
-          wholesale_price: wholesalePrice,
-          formatted_price: `${wholesalePrice.toLocaleString('vi-VN')} đ`,
-          specification: s.p.specification || s.p.weight || 'Gói',
-          target: s.p.target || 'Tất cả thú cưng',
-          highlights: s.p.description?.slice(0, 120) || 'Thành phần an toàn, công nghệ Rawhide-Free dễ tiêu hóa',
-        };
+    // Smart Category Fallback:
+    // If filtering by category yielded NO exact name/phrase matches for q,
+    // but baseFiltered has products with direct name matches (e.g. searching "bàn chải"
+    // with category="Xương gặm" when actual products are named "Xương bàn chải" under category "Xương bàn chải"),
+    // fall back to baseFiltered!
+    if ((topMatches.length === 0 || !hasPhraseMatchInPool) && catFiltered.length > 0 && q) {
+      const fallbackScored = scoreItems(baseFiltered);
+      const fallbackMatches = fallbackScored
+        .filter((s: any) => {
+          const n = (s.p.name || '').toLowerCase();
+          const d = (s.p.displayName || '').toLowerCase();
+          return (n.includes(q) || d.includes(q) || s.textScore > 0) && s.score > 10;
+        })
+        .sort((a: any, b: any) => b.score - a.score)
+        .slice(0, 6);
+
+      const hasFallbackPhraseMatch = fallbackMatches.some((s: any) => {
+        const n = (s.p.name || '').toLowerCase();
+        const d = (s.p.displayName || '').toLowerCase();
+        return n.includes(q) || d.includes(q);
       });
 
-    return { products: topMatches, count: topMatches.length };
+      if (hasFallbackPhraseMatch || topMatches.length === 0) {
+        topMatches = fallbackMatches;
+      }
+    }
+
+    const mappedProducts = topMatches.map((s: any) => {
+      const wholesalePrice = s.p.wholesalePrice > 0 ? s.p.wholesalePrice : s.p.listPrice;
+      return {
+        sku: s.p.sku || `OD-${s.p.odooId}`,
+        name: s.p.name,
+        displayName: s.p.displayName || s.p.name,
+        category: s.p.category || null,
+        brand: s.p.brand || null,
+        price: wholesalePrice,
+        wholesale_price: wholesalePrice,
+        formatted_price: `${wholesalePrice.toLocaleString('vi-VN')} đ`,
+        specification: s.p.specification || s.p.weight || 'Gói',
+        target: s.p.target || 'Tất cả thú cưng',
+        highlights: s.p.description?.slice(0, 120) || 'Thành phần an toàn, công nghệ Rawhide-Free dễ tiêu hóa',
+      };
+    });
+
+    return { products: mappedProducts, count: mappedProducts.length };
   }
 
   private async compareProducts(skus: string[]) {

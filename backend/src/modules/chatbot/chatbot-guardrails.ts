@@ -311,6 +311,95 @@ export class ChatbotGuardrails {
     const hasConcreteData = /\b[BCE]\d{1,3}\b|\bOD-\d+\b|\b\d+[.,]\d+\s*đ\b|\b\d+\s*gói\b|\n-\s+/i.test(text);
     return !hasConcreteData;
   }
+
+  /**
+   * Validate that all product SKUs mentioned in AI response actually exist in DB (product_cache).
+   * If AI hallucinated non-existent SKUs (e.g. C29, C30, C31) or misattributed SKUs with fabricated prices,
+   * it intercepts the response and falls back to actual grounded products or a polite not-found response.
+   */
+  static async validateProductSkuGrounding(
+    responseText: string,
+    orgId: string,
+    toolResultsSummary?: string
+  ): Promise<string> {
+    if (!responseText) return responseText;
+
+    // Regex to match SKU patterns like C28, C29, E01, DB01, DB-VP01, TL01, B03, B06, etc.
+    const skuMatches = responseText.match(/\b([A-Z]{1,3}-?[A-Z]{0,2}\d{1,4}(?:-[A-Z0-9]+)?)\b/g);
+    if (!skuMatches || skuMatches.length === 0) return responseText;
+
+    const ignoredWords = new Set([
+      'VNĐ', 'VND', 'KG', 'G', 'ML', 'COMBO', 'OK', 'AI', 'ZALO', 'CRM',
+      'LA', 'PET', 'FAQ', 'B2B', 'MRP', 'VAT', 'USD', 'IMO', 'DHA', 'OD', 'CSDL', 'V1', 'V2', 'V3'
+    ]);
+
+    const candidateSkus = Array.from(new Set(
+      skuMatches
+        .map(s => s.trim().toUpperCase())
+        .filter(s => !ignoredWords.has(s) && /\d/.test(s))
+    ));
+
+    if (candidateSkus.length === 0) return responseText;
+
+    // Check if the response is asserting product existence / catalog listing (e.g. listing items with price or dashes)
+    const isCatalogOrProductListing = /(?:hiện đang có|tiêu biểu|bảng giá|giá sỉ|giá:|đ\b|\d+[.,]\d+\s*đ|quy cách|cái\/túi|gói\/túi)/i.test(responseText);
+    const isStatingNotFound = /(?:không tìm thấy|chưa có|chưa tìm thấy)\s*(?:dòng|sản phẩm|mã)/i.test(responseText);
+
+    // If the message is already stating that product is not found, do not interfere
+    if (isStatingNotFound && !isCatalogOrProductListing) {
+      return responseText;
+    }
+
+    try {
+      const existingProducts = await prisma.productCache.findMany({
+        where: {
+          orgId,
+          isActive: true,
+          sku: { in: candidateSkus, mode: 'insensitive' },
+        },
+        select: { sku: true, name: true, wholesalePrice: true, listPrice: true, specification: true },
+      });
+
+      const existingSkuMap = new Map<string, any>();
+      for (const p of existingProducts) {
+        if (p.sku) existingSkuMap.set(p.sku.toUpperCase(), p);
+      }
+
+      const invalidSkus = candidateSkus.filter(sku => !existingSkuMap.has(sku));
+
+      // Also check for existing SKUs being misattributed with completely fabricated product names
+      let hasMismatchedSku = false;
+      for (const [sku, p] of existingSkuMap.entries()) {
+        const nameWords = p.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+        // Find line or bullet point containing this SKU, e.g. "- C28 - Xương bàn chải sữa lớn"
+        const skuLineRegex = new RegExp(`(?:^|\\n|[-•*])\\s*${sku}\\s*[-:–]\\s*([^\\n]+)`, 'i');
+        const skuLineMatch = responseText.match(skuLineRegex);
+        if (skuLineMatch && skuLineMatch[1]) {
+          const lineContent = skuLineMatch[1].toLowerCase();
+          const hasOverlap = nameWords.some((w: string) => lineContent.includes(w));
+          if (!hasOverlap) {
+            hasMismatchedSku = true;
+            break;
+          }
+        }
+      }
+
+      if (invalidSkus.length > 0 || hasMismatchedSku) {
+        logger.warn(`[guardrails] Product SKU hallucination detected: invalidSkus=[${invalidSkus.join(', ')}], hasMismatched=${hasMismatchedSku}`);
+
+        // If toolResultsSummary has valid grounded products (with prices):
+        if (toolResultsSummary && toolResultsSummary.includes('Giá sỉ:')) {
+          return `Dạ hệ thống bên em hiện có các sản phẩm tiêu biểu sau ạ:\n\n${toolResultsSummary}\n\nMình cần em hỗ trợ thêm thông tin gì không ạ?`;
+        }
+
+        return `Dạ hiện tại hệ thống bên em chưa có các dòng sản phẩm khớp với yêu cầu này ạ. Nhờ mình cho em biết thêm thông tin cụ thể để em tìm dòng tương đương, hoặc em kết nối chuyên viên tư vấn hỗ trợ mình ngay nhé ạ!`;
+      }
+    } catch (err: any) {
+      logger.error(`[guardrails] Error during validateProductSkuGrounding: ${err.message}`);
+    }
+
+    return responseText;
+  }
 }
 
 

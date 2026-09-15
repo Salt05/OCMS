@@ -22,13 +22,13 @@
                         <span class="brand-name">LaPet Agent</span>
                     </div>
                 </div>
-                <button class="btn-icon btn-close-sidebar" id="btn-close-sidebar" title="Đóng lịch sử">
+                <button class="btn-icon btn-close-sidebar" id="btn-close-sidebar" title="Đóng lịch sử" onclick="closeSidebar()">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
             </div>
 
             <div class="sidebar-action">
-                <button class="btn-new-chat" id="btn-new-chat">
+                <button class="btn-new-chat" id="btn-new-chat" onclick="startNewChat()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
                     <span>Cuộc trò chuyện mới</span>
                 </button>
@@ -50,7 +50,7 @@
             <!-- Top Navbar -->
             <header class="top-nav">
                 <div class="nav-left">
-                    <button class="btn-icon btn-sidebar-toggle" id="btn-sidebar-toggle" title="Mở / Thu gọn Lịch sử chat">
+                    <button class="btn-icon btn-sidebar-toggle" id="btn-sidebar-toggle" title="Mở / Thu gọn Lịch sử chat" onclick="toggleSidebar()">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                     </button>
                     <div class="chat-title-info">
@@ -60,14 +60,14 @@
 
                 <div class="nav-right">
                     <!-- Nút Dev Tools gọn gàng ở góc (Giữ nguyên text + badge) -->
-                    <button class="btn-dev-panel" id="btn-toggle-dev-panel" title="Mở Developer Tasks & Traces (Popup)">
+                    <button class="btn-dev-panel" id="btn-toggle-dev-panel" title="Mở Developer Tasks & Traces (Popup)" onclick="openDevModal()">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
                         <span>Dev Tasks</span>
                         <span class="task-counter-pill" id="nav-task-count">0/0</span>
                     </button>
 
                     <!-- Nút Đóng / Mở Bảng Dữ Liệu bên Phải (Dùng icon < / >) -->
-                    <button class="btn-toggle-panel-icon" id="btn-toggle-data-panel" title="Mở / Đóng Bảng Dữ Liệu & Biểu Đồ">
+                    <button class="btn-toggle-panel-icon" id="btn-toggle-data-panel" title="Mở / Đóng Bảng Dữ Liệu & Biểu Đồ" onclick="toggleDataPanel()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" id="data-panel-toggle-icon"><polyline points="15 18 9 12 15 6"/></svg>
                     </button>
                 </div>
@@ -100,15 +100,16 @@
                     <span class="toast-text" id="order-mode-toast-text">Đã BẬT Chế độ Tạo / Chỉnh sửa đơn hàng</span>
                 </div>
                 <div class="chat-input-box" id="chat-input-box">
-                    <button type="button" class="btn-toggle-order-mode" id="btn-toggle-order-mode" title="Bật/Tắt Chế độ Tạo/Sửa đơn hàng">
+                    <button type="button" class="btn-toggle-order-mode" id="btn-toggle-order-mode" title="Bật/Tắt Chế độ Tạo/Sửa đơn hàng" onclick="toggleOrderMode()">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
                     </button>
                     <textarea 
                         id="user-input" 
                         rows="1" 
                         placeholder="Hỏi về khách hàng, đơn hàng, sản phẩm... (Shift + Enter để xuống dòng)"
+                        onkeydown="if(event.key === 'Enter' && !event.shiftKey){ event.preventDefault(); handleSendClick(); }"
                     ></textarea>
-                    <button class="btn-send" id="btn-send" title="Gửi tin nhắn">
+                    <button type="button" class="btn-send" id="btn-send" title="Gửi tin nhắn" onclick="handleSendClick()">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                     </button>
                 </div>
@@ -130,7 +131,7 @@
                     <span class="data-panel-title">Dữ Liệu & Biểu Đồ</span>
                 </div>
                 <div class="data-panel-header-actions">
-                    <button class="btn-icon" id="btn-close-data-panel" title="Đóng bảng dữ liệu">
+                    <button class="btn-icon" id="btn-close-data-panel" title="Đóng bảng dữ liệu" onclick="closeDataPanel()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
@@ -276,6 +277,6 @@
     <!-- External Libs -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-    <script src="/static/app.js?v=7.0"></script>
+    <script src="/static/app.js?v=7.1"></script>
 </body>
 </html>

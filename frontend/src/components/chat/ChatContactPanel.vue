@@ -50,6 +50,21 @@
               {{ contact?.updatedAt ? formatDateShort(contact.updatedAt) : '—' }}
             </span>
           </div>
+          <div class="d-flex align-center justify-space-between gap-2">
+            <span class="text-medium-emphasis">Kết bạn:</span>
+            <span v-if="friendStatus?.isFriend" class="font-weight-medium text-success text-right d-flex align-center gap-0.5" style="font-size: 11px;">
+              <v-icon size="12" color="success">lucide-check</v-icon> Bạn bè
+            </span>
+            <span v-else-if="friendStatus?.isRequesting" class="font-weight-medium text-warning text-right" style="font-size: 11px;">
+              Đã gửi lời mời
+            </span>
+            <span v-else-if="friendStatus?.isRequested" class="font-weight-medium text-primary text-right" style="font-size: 11px;">
+              Chờ bạn đồng ý
+            </span>
+            <span v-else class="text-medium-emphasis text-right" style="font-size: 11px;">
+              Chưa kết bạn
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -220,14 +235,14 @@
                   </div>
                   <span class="text-subtitle-2 font-weight-bold text-teal tracking-wide">THÔNG TIN NÂNG CAO</span>
                 </div>
-                <v-tooltip v-if="!isAdmin" text="Chỉ Admin mới có quyền sửa các trường này" location="top">
+                <v-tooltip v-if="!isAdmin" text="Một số trường nâng cao (như gán nhân viên CSKH) chỉ Admin mới có quyền sửa" location="top">
                   <template #activator="{ props }">
                     <v-icon v-bind="props" size="16" color="grey">lucide-lock</v-icon>
                   </template>
                 </v-tooltip>
               </div>
 
-              <!-- ID Customer (Admin only edit) -->
+              <!-- ID Customer (Cho phép nhân viên & admin tương tác) -->
               <v-text-field
                 v-model="form.customerId"
                 label="ID Customer (Odoo)"
@@ -237,14 +252,13 @@
                 prepend-inner-icon="lucide-hash"
                 hide-details="auto"
                 class="mb-2"
-                :disabled="!isAdmin"
                 :loading="loadingOdoo"
                 @keyup.enter="lookupAndApplyOdoo()"
               >
                 <template #append-inner>
                   <div class="odoo-action-buttons">
                     <v-btn
-                      v-if="form.customerId && isAdmin"
+                      v-if="form.customerId"
                       icon
                       variant="text"
                       color="primary"
@@ -258,7 +272,7 @@
                       <v-icon size="15">lucide-refresh-cw</v-icon>
                     </v-btn>
                     <v-btn
-                      v-else-if="isAdmin"
+                      v-else
                       icon
                       variant="text"
                       color="primary"
@@ -272,7 +286,7 @@
                       <v-icon size="15">lucide-search</v-icon>
                     </v-btn>
                     <v-btn
-                      v-if="form.customerId && isAdmin"
+                      v-if="form.customerId"
                       icon
                       variant="text"
                       color="error"
@@ -461,12 +475,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import type { Contact } from '@/composables/use-contacts';
 import { STATUS_OPTIONS, SOURCE_OPTIONS, SALUTATION_OPTIONS } from '@/composables/use-contacts';
 import { useChatContactPanel } from '@/composables/use-chat-contact-panel';
 import { useUsers } from '@/composables/use-users';
 import { useAuthStore } from '@/stores/auth';
+import { api } from '@/api/index';
 import ChatOrders from './ChatOrders.vue';
 import ChatMediaGallery from './ChatMediaGallery.vue';
 import TagSelector from '@/components/common/TagSelector.vue';
@@ -484,6 +499,30 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref('info');
+const friendStatus = ref<{ isFriend: boolean; isRequested: boolean; isRequesting: boolean } | null>(null);
+
+async function fetchFriendStatus() {
+  if (!props.conversation?.id || props.conversation?.threadType === 'group') {
+    friendStatus.value = null;
+    return;
+  }
+  try {
+    const res = await api.get('/zalo/friend-status', {
+      params: { conversationId: props.conversation.id },
+    });
+    friendStatus.value = res.data;
+  } catch {
+    friendStatus.value = null;
+  }
+}
+
+watch(
+  () => props.conversation?.id,
+  () => {
+    fetchFriendStatus();
+  },
+  { immediate: true },
+);
 const { users, fetchUsers } = useUsers();
 const authStore = useAuthStore();
 const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role || ''));

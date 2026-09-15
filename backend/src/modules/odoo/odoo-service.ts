@@ -35,13 +35,13 @@ class OdooService {
     logger.info('[odoo] Connection session reset due to configuration update');
   }
 
-  async authenticate(): Promise<number | null> {
-    if (this.uid) return this.uid;
-    if (this.authPromise) return this.authPromise;
+  async authenticate(overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<number | null> {
+    if (!overrideConfig && this.uid) return this.uid;
+    if (!overrideConfig && this.authPromise) return this.authPromise;
 
-    this.authPromise = (async () => {
+    const doAuth = async () => {
       try {
-        const odooConfig = await integrationSettingsService.getOdooConfig();
+        const odooConfig = overrideConfig || (await integrationSettingsService.getOdooConfig());
         const { url, db, user, apiKey } = odooConfig;
         if (!url || !db || !user || !apiKey) {
           logger.warn('[odoo] Missing Odoo configuration parameters (URL, DB, User, or API Key). Please configure in Settings > Integrations.');
@@ -70,16 +70,27 @@ class OdooService {
           return null;
         }
 
-        this.uid = typeof data.result === 'number' ? data.result : null;
-        if (this.uid) {
-          logger.info(`[odoo] Authenticated successfully with UID: ${this.uid}`);
+        const authedUid = typeof data.result === 'number' ? data.result : null;
+        if (authedUid) {
+          logger.info(`[odoo] Authenticated successfully with UID: ${authedUid} (${url})`);
+          if (!overrideConfig) this.uid = authedUid;
         } else {
           logger.warn('[odoo] Authentication returned false / null UID');
         }
-        return this.uid;
+        return authedUid;
       } catch (err: any) {
         logger.error('[odoo] Failed to connect to Odoo server:', err.message);
         return null;
+      }
+    };
+
+    if (overrideConfig) {
+      return doAuth();
+    }
+
+    this.authPromise = (async () => {
+      try {
+        return await doAuth();
       } finally {
         this.authPromise = null;
       }
@@ -93,13 +104,16 @@ class OdooService {
     method: string,
     args: any[] = [],
     kwargs: Record<string, any> = {},
+    overrideConfig?: { url: string; db: string; user: string; apiKey: string },
+    overrideUid?: number,
   ): Promise<T | null> {
-    const uid = await this.authenticate();
+    const defaultUid = await this.authenticate(overrideConfig);
+    const uid = defaultUid;
     if (!uid) {
       throw new Error('Không thể xác thực với máy chủ Odoo. Vui lòng kiểm tra lại thông tin kết nối trong Cài đặt -> Tích hợp Odoo.');
     }
 
-    const odooConfig = await integrationSettingsService.getOdooConfig();
+    const odooConfig = overrideConfig || (await integrationSettingsService.getOdooConfig());
     const { url, db, apiKey } = odooConfig;
     if (!url || !db || !apiKey) {
       throw new Error('Cấu hình Odoo chưa hoàn tất (thiếu URL, Database hoặc API Key).');
@@ -130,7 +144,7 @@ class OdooService {
     return data.result as T;
   }
 
-  async getCustomerById(partnerId: number | string): Promise<OdooCustomer | null> {
+  async getCustomerById(partnerId: number | string, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<OdooCustomer | null> {
     const numericId = parseInt(String(partnerId).trim(), 10);
     if (isNaN(numericId) || numericId <= 0) {
       return null;
@@ -143,7 +157,7 @@ class OdooService {
         fields: ['id', 'name', 'phone', 'mobile', 'street', 'street2', 'city', 'state_id', 'country_id', 'email', 'vat', 'user_id', 'property_payment_term_id'],
         context: { lang: 'vi_VN' },
         limit: 1,
-      });
+      }, overrideConfig);
 
       if (!partners || partners.length === 0) {
         return null;
@@ -234,7 +248,7 @@ class OdooService {
     phone?: string;
     email?: string;
     [key: string]: any;
-  }): Promise<number | null> {
+  }, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<number | null> {
     try {
       const partnerData: any = {
         is_company: data.is_company,
@@ -254,14 +268,14 @@ class OdooService {
         } else if (typeof data.salesperson === 'string') {
           const users = await this.executeKw<any[]>('res.users', 'search_read', [
             [['name', 'ilike', data.salesperson.trim()]],
-          ], { fields: ['id'], limit: 1 });
+          ], { fields: ['id'], limit: 1 }, overrideConfig);
           if (users && users.length > 0) {
             partnerData.user_id = users[0].id;
           }
         }
       }
 
-      const newId = await this.executeKw<number>('res.partner', 'create', [[partnerData]]);
+      const newId = await this.executeKw<number>('res.partner', 'create', [[partnerData]], {}, overrideConfig);
       if (!newId) {
         throw new Error('Tạo khách hàng thất bại: Odoo trả về rỗng');
       }
@@ -275,11 +289,11 @@ class OdooService {
   async updateCustomer(partnerId: number, data: {
     user_id?: number;
     [key: string]: any;
-  }): Promise<boolean> {
+  }, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<boolean> {
     try {
       const partnerData: any = { ...data };
       
-      const success = await this.executeKw<boolean>('res.partner', 'write', [[partnerId], partnerData]);
+      const success = await this.executeKw<boolean>('res.partner', 'write', [[partnerId], partnerData], {}, overrideConfig);
       return success || false;
     } catch (err: any) {
       logger.error('[odoo] updateCustomer error:', err.message);
@@ -292,7 +306,7 @@ class OdooService {
       const products = await this.executeKw<any[]>('product.product', 'search_read', [
         [['sale_ok', '=', true], ['active', '=', true]],
       ], {
-        fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'uom_id'],
+        fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'uom_id', 'categ_id'],
         context: { lang: 'vi_VN' },
         order: 'default_code asc, name asc',
       });
@@ -306,6 +320,8 @@ class OdooService {
         list_price: typeof p.list_price === 'number' ? p.list_price : 0,
         uom_id: Array.isArray(p.uom_id) && p.uom_id.length > 0 ? p.uom_id[0] : null,
         uom_name: Array.isArray(p.uom_id) && p.uom_id.length > 1 ? String(p.uom_id[1]) : '',
+        categ_id: Array.isArray(p.categ_id) && p.categ_id.length > 0 ? p.categ_id[0] : null,
+        categ_name: Array.isArray(p.categ_id) && p.categ_id.length > 1 ? String(p.categ_id[1]) : '',
       }));
     } catch (err: any) {
       logger.error('[odoo] getAllSellableProducts error:', err.message);
@@ -363,13 +379,15 @@ class OdooService {
     pricelist_id?: number;
     user_id?: number;
     note?: string;
+    client_order_ref?: string;
+    origin?: string;
     order_line: Array<{
       product_id: number;
       product_uom_qty: number;
       price_unit: number;
       discount?: number;
     }>;
-  }): Promise<number | null> {
+  }, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<number | null> {
     try {
       // Build order_line array for Odoo. Format: (0, 0, { values })
       const orderLines = data.order_line.map(line => [0, 0, {
@@ -389,8 +407,10 @@ class OdooService {
       if (data.pricelist_id) orderData.pricelist_id = data.pricelist_id;
       if (data.user_id) orderData.user_id = data.user_id;
       if (data.note) orderData.note = data.note;
+      if (data.client_order_ref) orderData.client_order_ref = data.client_order_ref;
+      if (data.origin) orderData.origin = data.origin;
 
-      const res = await this.executeKw<any>('sale.order', 'create', [[orderData]]);
+      const res = await this.executeKw<any>('sale.order', 'create', [[orderData]], {}, overrideConfig);
       const orderId = Array.isArray(res) ? res[0] : (typeof res === 'number' ? res : parseInt(res, 10));
       if (!orderId || isNaN(orderId)) {
         throw new Error('Tạo đơn hàng thất bại: Odoo trả về rỗng');
@@ -402,15 +422,54 @@ class OdooService {
     }
   }
   
-  async getOrder(orderId: number): Promise<any | null> {
+  async getOrder(orderId: number, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<any | null> {
     try {
       const orders = await this.executeKw<any[]>('sale.order', 'search_read', [
         [['id', '=', orderId]]
       ], {
-        fields: ['id', 'name', 'amount_total', 'state'],
+        fields: [
+          'id',
+          'name',
+          'partner_id',
+          'user_id',
+          'warehouse_id',
+          'pricelist_id',
+          'amount_untaxed',
+          'amount_tax',
+          'amount_total',
+          'order_line',
+          'state',
+          'date_order',
+          'note',
+        ],
         limit: 1,
-      });
-      return orders && orders.length > 0 ? orders[0] : null;
+      }, overrideConfig);
+
+      if (!orders || orders.length === 0) return null;
+      const order = orders[0];
+
+      // Fetch full line items from sale.order.line
+      let lines: any[] = [];
+      if (Array.isArray(order.order_line) && order.order_line.length > 0) {
+        const resLines = await this.executeKw<any[]>('sale.order.line', 'search_read', [
+          [['id', 'in', order.order_line]]
+        ], {
+          fields: [
+            'id',
+            'name',
+            'product_id',
+            'product_uom_qty',
+            'price_unit',
+            'discount',
+            'price_subtotal',
+            'price_total',
+            'product_uom',
+          ],
+        }, overrideConfig);
+        lines = resLines || [];
+      }
+
+      return { ...order, lines };
     } catch (err: any) {
       logger.error('[odoo] getOrder error:', err.message);
       return null;
@@ -634,7 +693,7 @@ class OdooService {
   /**
    * Search a product directly on Odoo by SKU (default_code) or name
    */
-  async searchProductBySku(sku: string): Promise<any | null> {
+  async searchProductBySku(sku: string, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<any | null> {
     try {
       const trimmed = sku.trim();
       const results = await this.executeKw<any[]>(
@@ -644,7 +703,8 @@ class OdooService {
         {
           fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'uom_id', 'active'],
           limit: 1,
-        }
+        },
+        overrideConfig
       );
       return results && results.length > 0 ? results[0] : null;
     } catch (err: any) {
@@ -665,9 +725,9 @@ class OdooService {
     }
   }
 
-  async cancelOrder(odooOrderId: number): Promise<boolean> {
+  async cancelOrder(odooOrderId: number, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<boolean> {
     try {
-      await this.executeKw('sale.order', 'action_cancel', [[odooOrderId]]);
+      await this.executeKw('sale.order', 'action_cancel', [[odooOrderId]], {}, overrideConfig);
       logger.info(`[odoo] Order ${odooOrderId} cancelled successfully`);
       return true;
     } catch (err: any) {
@@ -680,28 +740,28 @@ class OdooService {
    * Generates and downloads the official QWeb PDF report for a sale order from Odoo.
    * Leverages Odoo's mail.compose.message wizard to render the report attachment with exact branding.
    */
-  async getOrderReportPdf(odooOrderId: number): Promise<{ buffer: Buffer; filename: string } | null> {
+  async getOrderReportPdf(odooOrderId: number, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<{ buffer: Buffer; filename: string } | null> {
     try {
-      const uid = await this.authenticate();
+      const uid = await this.authenticate(overrideConfig);
       if (!uid) {
-        throw new Error('Không thể xác thực với máy chủ Odoo. Vui lòng kiểm tra lại thông tin kết nối trong Cài đặt -> Tích hợp Odoo.');
+        throw new Error('Không thể xác thực với máy chủ Odoo. Vui lòng kiểm tra lại thông tin kết nối.');
       }
 
       // 1. Find mail template with report_template_ids for sale.order
       let templates = await this.executeKw<any[]>('mail.template', 'search_read', [
         [['model', '=', 'sale.order'], ['name', 'ilike', 'Order Confirmation']]
-      ], { fields: ['id', 'name', 'report_template_ids'], limit: 1 });
+      ], { fields: ['id', 'name', 'report_template_ids'], limit: 1 }, overrideConfig);
 
       if (!templates || templates.length === 0 || !templates[0].report_template_ids?.length) {
         templates = await this.executeKw<any[]>('mail.template', 'search_read', [
           [['model', '=', 'sale.order'], ['name', 'ilike', 'Quotation']]
-        ], { fields: ['id', 'name', 'report_template_ids'], limit: 1 });
+        ], { fields: ['id', 'name', 'report_template_ids'], limit: 1 }, overrideConfig);
       }
 
       if (!templates || templates.length === 0) {
         templates = await this.executeKw<any[]>('mail.template', 'search_read', [
           [['model', '=', 'sale.order']]
-        ], { fields: ['id', 'name', 'report_template_ids'], limit: 10 });
+        ], { fields: ['id', 'name', 'report_template_ids'], limit: 10 }, overrideConfig);
         templates = templates?.filter(t => Array.isArray(t.report_template_ids) && t.report_template_ids.length > 0) || [];
       }
 
@@ -722,7 +782,7 @@ class OdooService {
 
       const defaultValues = await this.executeKw('mail.compose.message', 'default_get', [
         ['subject', 'body', 'attachment_ids', 'template_id', 'model', 'res_ids']
-      ], { context: wizardContext });
+      ], { context: wizardContext }, overrideConfig);
 
       const wizardId = await this.executeKw<number>('mail.compose.message', 'create', [{
         ...(defaultValues || {}),
@@ -730,7 +790,7 @@ class OdooService {
         composition_mode: 'comment',
         model: 'sale.order',
         res_ids: `[${odooOrderId}]`,
-      }], { context: wizardContext });
+      }], { context: wizardContext }, overrideConfig);
 
       if (!wizardId) {
         logger.warn(`[odoo] Failed to create mail.compose.message wizard for order ${odooOrderId}`);
@@ -740,7 +800,7 @@ class OdooService {
       const wizards = await this.executeKw<any[]>('mail.compose.message', 'read', [
         [wizardId],
         ['id', 'attachment_ids']
-      ]);
+      ], {}, overrideConfig);
 
       const attachmentIds = wizards?.[0]?.attachment_ids;
       if (!attachmentIds || attachmentIds.length === 0) {
@@ -751,7 +811,7 @@ class OdooService {
       const atts = await this.executeKw<any[]>('ir.attachment', 'read', [
         attachmentIds,
         ['id', 'name', 'mimetype', 'datas']
-      ]);
+      ], {}, overrideConfig);
 
       const pdfAtt = atts?.find((a: any) => a.mimetype === 'application/pdf' || a.name?.toLowerCase().endsWith('.pdf')) || atts?.[0];
       if (!pdfAtt || !pdfAtt.datas) {

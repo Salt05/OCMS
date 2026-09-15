@@ -2,6 +2,7 @@ name: ocms
 
 services:
   app:
+    image: app
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -14,6 +15,7 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://${DB_USER:-crmuser}:${DB_PASSWORD}@db:5432/${DB_NAME:-zalocrm}
+      - ROUTER_API_URL=http://router:3001
     depends_on:
       db:
         condition: service_healthy
@@ -46,6 +48,60 @@ services:
     volumes:
       - ./ChatBot:/app
       - chatbot_data:/app/vanna_data
+
+  router:
+    build:
+      context: ./services/router
+      dockerfile: Dockerfile
+    container_name: router
+    image: ocms-router
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+      - CORS_ORIGIN=*
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OCMS_BACKEND_URL=http://app:3000
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   db:
     image: postgres:16-alpine
@@ -95,4 +151,6 @@ volumes:
     name: zalocrm_file_storage
   chatbot_data:
     name: zalocrm_chatbot_data
+  redis_data:
+    name: zalocrm_redis_data
 

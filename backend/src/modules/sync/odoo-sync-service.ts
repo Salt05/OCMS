@@ -296,7 +296,7 @@ class OdooSyncService {
           'state', 'amount_untaxed', 'amount_tax', 'amount_total', 'amount_undiscounted',
           'margin', 'margin_percent', 'invoice_status', 'delivery_status',
           'warehouse_id', 'pricelist_id', 'user_id', 'note',
-          'order_line', 'activity_summary', 'picking_ids', 'write_date',
+          'order_line', 'activity_summary', 'picking_ids', 'write_date', 'write_uid',
         ],
         order: 'write_date asc',
       });
@@ -398,6 +398,9 @@ class OdooSyncService {
           activitySummary: typeof order.activity_summary === 'string' ? order.activity_summary : null,
           pickingIds: Array.isArray(order.picking_ids) ? order.picking_ids : null,
           note: typeof order.note === 'string' ? order.note : null,
+          writeDate: order.write_date ? new Date(order.write_date) : null,
+          writeUid: Array.isArray(order.write_uid) ? order.write_uid[0] : (typeof order.write_uid === 'number' ? order.write_uid : null),
+          writeUserName: Array.isArray(order.write_uid) ? order.write_uid[1] : null,
         };
 
         const existing = await prisma.orderHistory.findUnique({
@@ -435,6 +438,13 @@ class OdooSyncService {
 
       await this.updateCustomerOrderStats(oid);
 
+      // Đồng bộ toàn bộ hoạt động / ghi chú giao việc từ Odoo mail.activity cho các đơn hàng
+      try {
+        await this.syncActivities(oid);
+      } catch (actErr: any) {
+        logger.warn(`[sync] syncActivities warning: ${actErr.message}`);
+      }
+
       await this.updateSyncState(oid, modelName, {
         status: 'idle',
         lastWriteDate: latestWriteDate,
@@ -450,6 +460,69 @@ class OdooSyncService {
       });
       logger.error(`[sync] ${modelName} error:`, err.message);
       throw err;
+    }
+  }
+
+  /**
+   * Đồng bộ toàn bộ hoạt động (mail.activity) của sale.order từ Odoo vào OrderHistory.activitySummary
+   */
+  async syncActivities(orgId?: string): Promise<{ total: number }> {
+    const oid = orgId || (await this.getOrgId());
+    try {
+      const activities = await odooService.executeKw<any[]>('mail.activity', 'search_read', [
+        [['res_model', '=', 'sale.order']],
+      ], {
+        fields: ['id', 'res_id', 'summary', 'note'],
+      });
+
+      if (!activities || !Array.isArray(activities)) {
+        return { total: 0 };
+      }
+
+      const actMap = new Map<number, string>();
+      for (const act of activities) {
+        const orderId = Number(act.res_id);
+        if (!orderId) continue;
+        const text = (act.summary || act.note || '').trim();
+        if (text) {
+          if (actMap.has(orderId)) {
+            actMap.set(orderId, `${actMap.get(orderId)} | ${text}`);
+          } else {
+            actMap.set(orderId, text);
+          }
+        }
+      }
+
+      // 1. Xóa activitySummary đối với các đơn không còn hoạt động nào trên Odoo
+      const activeOdooIds = Array.from(actMap.keys());
+      await prisma.orderHistory.updateMany({
+        where: {
+          orgId: oid,
+          activitySummary: { not: null },
+          odooOrderId: { notIn: activeOdooIds },
+        },
+        data: { activitySummary: null },
+      });
+
+      // 2. Cập nhật activitySummary cho các đơn có hoạt động theo lô 100 bản ghi
+      const entries = Array.from(actMap.entries());
+      for (let i = 0; i < entries.length; i += 100) {
+        const chunk = entries.slice(i, i + 100);
+        await Promise.all(
+          chunk.map(([odooOrderId, summary]) =>
+            prisma.orderHistory.updateMany({
+              where: { orgId: oid, odooOrderId },
+              data: { activitySummary: summary },
+            })
+          )
+        );
+      }
+
+      logger.info(`[sync] Đã đồng bộ ${activities.length} hoạt động Odoo cho ${entries.length} đơn hàng.`);
+      return { total: entries.length };
+    } catch (err: any) {
+      logger.warn(`[sync] Lỗi đồng bộ hoạt động Odoo: ${err.message}`);
+      return { total: 0 };
     }
   }
 

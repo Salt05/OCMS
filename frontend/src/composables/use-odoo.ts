@@ -34,9 +34,10 @@ export interface OdooProduct {
   image_url?: string;
   directus_id?: string | number;
   description?: string;
-  product_group_id?: number | null;
+  product_group_id?: number | string | null;
   product_group_name?: string | null;
-  product_groups?: { id: number; name: string; slug?: string }[];
+  product_groups?: { id: number | string; name: string; slug?: string }[];
+  source?: 'directus' | 'odoo';
 }
 
 export const SKU_GROUP_MAP: Record<string, { id: number; name: string }> = {
@@ -96,24 +97,33 @@ export const SKU_GROUP_MAP: Record<string, { id: number; name: string }> = {
 };
 
 function enrichProductGroup(p: OdooProduct): OdooProduct {
-  if (p.product_group_name && p.product_group_id != null) {
-    return p;
+  const item = { ...p };
+  if (item.image_url && item.image_url.startsWith('/assets/')) {
+    item.image_url = `/api/v1/directus${item.image_url}`;
   }
-  const sku = (p.sku || p.default_code || '').trim();
+  if (item.product_group_name && item.product_group_id != null) {
+    return item;
+  }
+  const sku = (item.sku || item.default_code || '').trim();
   const match = SKU_GROUP_MAP[sku];
   if (match) {
     return {
-      ...p,
+      ...item,
       product_group_id: match.id,
       product_group_name: match.name,
-      product_groups: p.product_groups && p.product_groups.length > 0 ? p.product_groups : [{ id: match.id, name: match.name }],
+      product_groups: item.product_groups && item.product_groups.length > 0 ? item.product_groups : [{ id: match.id, name: match.name }],
     };
   }
-  return p;
+  return {
+    ...item,
+    product_group_id: item.product_group_id ?? 'odoo',
+    product_group_name: item.product_group_name || 'Sản phẩm Odoo ERP',
+    product_groups: item.product_groups && item.product_groups.length > 0 ? item.product_groups : [{ id: 'odoo', name: item.product_group_name || 'Sản phẩm Odoo ERP' }],
+  };
 }
 
-const PRODUCTS_STORAGE_KEY = 'ocms_products_cache_v3';
-const TERMS_STORAGE_KEY = 'ocms_terms_cache_v3';
+const PRODUCTS_STORAGE_KEY = 'ocms_products_cache_v5';
+const TERMS_STORAGE_KEY = 'ocms_terms_cache_v5';
 const STALE_TIME = 10 * 60 * 1000; // 10 minutes
 
 // Global in-memory singleton cache

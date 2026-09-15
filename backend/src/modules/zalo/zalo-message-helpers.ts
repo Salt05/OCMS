@@ -115,12 +115,42 @@ export function isCallEvent(msgType: string | undefined, content: any): boolean 
 }
 
 /**
+ * Check if the message represents a Zalo bank card (Zinstant Bankcard widget).
+ */
+export function isBankCardContent(msgType: string | undefined, content: any): boolean {
+  if (msgType && (msgType.includes('bankcard') || msgType.includes('bank_card'))) return true;
+  if (!content) return false;
+
+  let parsed = content;
+  if (typeof content === 'string') {
+    if (content.includes('zinstant.bankcard') || content.includes('templateId=11845')) {
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
+    if (parsed.action === 'zinstant.bankcard' || (typeof parsed.action === 'string' && parsed.action.includes('bankcard'))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Map zca-js msgType string to a normalized content type label.
  * Falls back to 'text' for unrecognised types or plain-string content.
  */
 export function detectContentType(msgType: string | undefined, content: any): string {
   if (isVideoContent(msgType, content)) return 'video';
   if (isCallEvent(msgType, content)) return 'call';
+  if (isBankCardContent(msgType, content)) return 'bank_card';
   if (!msgType) return 'text';
   if (msgType.includes('photo') || msgType.includes('image')) return 'image';
   if (msgType.includes('sticker')) return 'sticker';

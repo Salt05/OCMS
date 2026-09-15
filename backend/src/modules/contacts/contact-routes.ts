@@ -12,6 +12,7 @@ import { ensureTagsExist, cleanupUnusedTags } from '../tags/tag-routes.js';
 import { mergeContacts } from './contact-merge-service.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
+import { routerClient } from '../../shared/services/router-client.js';
 
 type QueryParams = Record<string, string>;
 
@@ -442,13 +443,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         },
       });
 
-      // ── Sync salesperson to Odoo when assignedUserId changes ──
+      // ── Sync salesperson to Odoo via Router when assignedUserId changes ──
       if (body.assignedUserId !== undefined && updated.customerId) {
         try {
           const partnerId = parseInt(updated.customerId);
           if (!isNaN(partnerId) && partnerId > 0) {
             if (body.assignedUserId) {
-              // User assigned: find their Odoo user ID and sync
+              // User assigned: find their Odoo user ID and sync via Router
               const assignedUser = await prisma.user.findUnique({
                 where: { id: body.assignedUserId },
                 select: { odooId: true, fullName: true },
@@ -456,27 +457,33 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
               if (assignedUser?.odooId) {
                 const odooUserId = parseInt(assignedUser.odooId);
                 if (!isNaN(odooUserId) && odooUserId > 0) {
-                  await odooService.updateCustomer(partnerId, { user_id: odooUserId });
+                  await routerClient.updateCustomer({
+                    partner_id: partnerId,
+                    data: { user_id: odooUserId },
+                  });
                   // Update local salesperson name
                   await prisma.contact.update({
                     where: { id },
                     data: { salesperson: assignedUser.fullName },
                   });
-                  logger.info(`[contacts] Synced salesperson to Odoo: partner #${partnerId} → user #${odooUserId} (${assignedUser.fullName})`);
+                  logger.info(`[contacts] Synced salesperson to Odoo via Router: partner #${partnerId} → user #${odooUserId} (${assignedUser.fullName})`);
                 }
               }
             } else {
-              // NV CSKH was cleared: clear salesperson on Odoo too
-              await odooService.updateCustomer(partnerId, { user_id: false as any });
+              // NV CSKH was cleared: clear salesperson on Odoo too via Router
+              await routerClient.updateCustomer({
+                partner_id: partnerId,
+                data: { user_id: false as any },
+              });
               await prisma.contact.update({
                 where: { id },
                 data: { salesperson: null },
               });
-              logger.info(`[contacts] Cleared salesperson on Odoo for partner #${partnerId}`);
+              logger.info(`[contacts] Cleared salesperson on Odoo via Router for partner #${partnerId}`);
             }
           }
         } catch (err: any) {
-          logger.warn(`[contacts] Failed to sync salesperson to Odoo: ${err.message}`);
+          logger.warn(`[contacts] Failed to sync salesperson to Odoo via Router: ${err.message}`);
           // Non-blocking: don't fail the contact update
         }
       }

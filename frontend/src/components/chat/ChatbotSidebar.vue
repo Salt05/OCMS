@@ -8,11 +8,23 @@
       
       <!-- Welcome screen when empty -->
       <div v-if="messages.length === 0" class="welcome-section my-auto py-8 text-center px-4">
-        <div v-if="customerName" class="mb-3">
+        <div v-if="customerName" class="mb-3 d-flex align-center justify-center gap-1.5 flex-wrap">
           <v-chip size="small" color="primary" variant="tonal" class="font-weight-medium px-3" style="border-radius: 12px !important;">
             <v-icon size="13" class="mr-1.5">lucide-user-check</v-icon>
             Hội thoại: <strong class="ml-1">{{ customerName }}</strong>
             <span v-if="customerPhone" class="ml-1 text-caption opacity-80">({{ customerPhone }})</span>
+          </v-chip>
+          <v-chip
+            v-if="hasContextBoundary"
+            size="small"
+            color="amber-darken-3"
+            variant="tonal"
+            class="font-weight-medium px-2.5"
+            style="border-radius: 12px !important;"
+            title="Chatbot chỉ đọc tin nhắn trong phạm vi mốc ngữ cảnh đã ghim"
+          >
+            <v-icon size="13" class="mr-1">lucide-sparkles</v-icon>
+            <span>Mốc ngữ cảnh AI ({{ contextualMessageCount }} tin)</span>
           </v-chip>
         </div>
         <h2 class="welcome-title text-subtitle-1 font-weight-bold mb-1" style="line-height: 1.4;">
@@ -33,6 +45,18 @@
           <!-- User Bubble Row (Right-aligned) -->
           <div v-if="msg.role === 'user'" class="d-flex align-start justify-end w-100">
             <div class="user-bubble-wrapper d-flex flex-column align-end">
+              <!-- Attached Images Display -->
+              <div v-if="msg.images && msg.images.length > 0" class="d-flex flex-wrap gap-1.5 mb-1.5 justify-end">
+                <img
+                  v-for="(img, imgIdx) in msg.images"
+                  :key="imgIdx"
+                  :src="img"
+                  class="rounded border user-msg-thumbnail cursor-pointer"
+                  style="max-width: 150px; max-height: 150px; object-fit: cover;"
+                  title="Nhấn để phóng to ảnh"
+                  @click="openImageModal(img)"
+                />
+              </div>
               <div class="user-bubble px-3 py-2 text-body-2">
                 {{ msg.content }}
               </div>
@@ -359,6 +383,43 @@
 
     <!-- Input Area (1 line compact with Order Mode Toggle) -->
     <div class="input-section px-3 pb-3 pt-2">
+      <!-- Context Boundary Active Indicator -->
+      <div v-if="hasContextBoundary" class="d-flex align-center justify-space-between px-1 mb-1.5 context-boundary-badge">
+        <div class="d-flex align-center gap-1 text-caption font-weight-medium text-amber-darken-3" style="font-size: 11px;">
+          <v-icon size="12" color="amber-darken-3">lucide-sparkles</v-icon>
+          <span>Đang áp dụng mốc ngữ cảnh AI</span>
+        </div>
+        <span class="text-caption text-medium-emphasis" style="font-size: 11px;">
+          {{ contextualMessageCount }} tin nhắn hợp lệ
+        </span>
+      </div>
+
+      <!-- Pending Attached Images Preview Bar -->
+      <div v-if="attachedImages.length > 0" class="attached-images-bar d-flex align-center gap-2 mb-2 px-1 overflow-x-auto">
+        <div
+          v-for="(img, idx) in attachedImages"
+          :key="idx"
+          class="position-relative d-inline-block attached-img-card"
+        >
+          <img
+            :src="img"
+            class="rounded border elevation-1"
+            style="width: 48px; height: 48px; object-fit: cover; display: block;"
+          />
+          <button
+            type="button"
+            class="attached-img-remove-btn"
+            title="Xóa ảnh này"
+            @click="removeAttachedImage(idx)"
+          >
+            <v-icon size="11">lucide-x</v-icon>
+          </button>
+        </div>
+        <span class="text-caption text-medium-emphasis" style="font-size: 11px;">
+          {{ attachedImages.length }} ảnh đính kèm (AI sẽ bóc tách từ ảnh)
+        </span>
+      </div>
+
       <div class="input-box-wrapper d-flex align-center px-2 py-1" :class="{ 'is-order-mode': isOrderMode }">
         <!-- Order Mode Toggle Button (Icon Cart) -->
         <button
@@ -371,20 +432,42 @@
           <v-icon size="15">{{ isOrderMode ? 'lucide-shopping-cart' : 'lucide-shopping-bag' }}</v-icon>
         </button>
 
-        <!-- Text Input Field (1 line, no outline) -->
+        <!-- Hidden File Input for Image Upload -->
+        <input
+          ref="fileInputRef"
+          type="file"
+          accept="image/*"
+          multiple
+          class="d-none"
+          @change="onFilesSelected"
+        />
+
+        <!-- Image Upload Button -->
+        <button
+          type="button"
+          class="action-icon-btn flex-shrink-0 d-flex align-center justify-center mr-1"
+          :class="{ 'has-images': attachedImages.length > 0 }"
+          title="Tải ảnh lên (hoặc nhấn Ctrl+V để dán ảnh)"
+          @click="triggerFileInput"
+        >
+          <v-icon size="16" :color="attachedImages.length > 0 ? 'primary' : undefined">lucide-image</v-icon>
+        </button>
+
+        <!-- Text Input Field (1 line, no outline) with Paste listener -->
         <input
           v-model="inputText"
           type="text"
-          :placeholder="isOrderMode ? 'Nhập yêu cầu tạo hoặc sửa đơn hàng (VD: 30 bao E01, giảm 5 C24...)' : 'Hỏi về khách hàng, sản phẩm, chi tiêu, tin nhắn...'"
+          :placeholder="attachedImages.length > 0 ? 'Nhập ghi chú hoặc bấm Gửi để AI bóc tách từ ảnh...' : (isOrderMode ? 'Nhập yêu cầu tạo hoặc sửa đơn hàng...' : 'Hỏi về khách hàng, sản phẩm, chi tiêu, tin nhắn...')"
           class="sidebar-chat-input flex-grow-1 text-body-2"
           @keydown.enter="sendMessage"
+          @paste="onInputPaste"
         />
         
         <!-- Send Button -->
         <button 
           type="button"
           class="send-btn flex-shrink-0 ml-1 d-flex align-center justify-center"
-          :disabled="!inputText.trim() || isLoading"
+          :disabled="(!inputText.trim() && attachedImages.length === 0) || isLoading"
           @click="sendMessage"
         >
           <v-progress-circular v-if="isLoading" indeterminate size="14" width="2" color="white" />
@@ -502,6 +585,18 @@
       </v-card>
     </v-dialog>
 
+    <!-- Image Zoom Modal Dialog -->
+    <v-dialog v-model="showImageModal" max-width="800" width="90vw">
+      <v-card class="pa-2 rounded-lg text-center bg-surface">
+        <div class="d-flex justify-end mb-1">
+          <v-btn icon size="small" variant="text" @click="showImageModal = false">
+            <v-icon size="18">lucide-x</v-icon>
+          </v-btn>
+        </div>
+        <img :src="modalImageUrl" style="max-width: 100%; max-height: 80vh; object-fit: contain; margin: 0 auto; border-radius: 8px;" />
+      </v-card>
+    </v-dialog>
+
     <!-- Product Picker Modal Dialog for Chat Order Form -->
     <ProductPickerDialog
       v-model="showPickerForDraft"
@@ -545,6 +640,7 @@ const emit = defineEmits<{
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  images?: string[];
   duration?: number | string;
   chart?: any;
   dataframe?: any;
@@ -637,18 +733,54 @@ const contactNotes = computed(() => {
   return activeContact.value?.notes || '';
 });
 
+const contextualMessages = computed(() => {
+  if (!props.messages || !Array.isArray(props.messages) || props.messages.length === 0) return [];
+  const conv = props.conversation;
+  let msgs = props.messages.filter((m: any) => !m.isDeleted && (m.content || m.attachments?.length));
+
+  const startMsgId = conv?.contextStartMsgId;
+  const endMsgId = conv?.contextEndMsgId;
+  const startedAt = conv?.contextStartedAt ? new Date(conv.contextStartedAt).getTime() : null;
+  const endedAt = conv?.contextEndedAt ? new Date(conv.contextEndedAt).getTime() : null;
+
+  // Filter start boundary (AI only reads from this message onwards)
+  if (startMsgId || startedAt) {
+    const startIndex = msgs.findIndex((m: any) => (startMsgId && (m.id === startMsgId || m.zaloMsgId === startMsgId)));
+    if (startIndex !== -1) {
+      msgs = msgs.slice(startIndex);
+    } else if (startedAt) {
+      msgs = msgs.filter((m: any) => m.sentAt && new Date(m.sentAt).getTime() >= startedAt);
+    }
+  }
+
+  // Filter end boundary (AI does not read after this message)
+  if (endMsgId || endedAt) {
+    const endIndex = msgs.findIndex((m: any) => (endMsgId && (m.id === endMsgId || m.zaloMsgId === endMsgId)));
+    if (endIndex !== -1) {
+      msgs = msgs.slice(0, endIndex + 1);
+    } else if (endedAt) {
+      msgs = msgs.filter((m: any) => m.sentAt && new Date(m.sentAt).getTime() <= endedAt);
+    }
+  }
+
+  return msgs;
+});
+
+const hasContextBoundary = computed(() => {
+  const conv = props.conversation;
+  return !!(conv?.contextStartMsgId || conv?.contextEndMsgId || conv?.contextStartedAt || conv?.contextEndedAt);
+});
+
+const contextualMessageCount = computed(() => contextualMessages.value.length);
+
 const recentThreadMessages = computed(() => {
-  if (!props.messages || !Array.isArray(props.messages) || props.messages.length === 0) return '';
-  const lastMsgs = props.messages
-    .filter((m: any) => !m.isDeleted && m.content)
-    .slice(-8);
+  const msgs = contextualMessages.value.slice(-10);
+  if (msgs.length === 0) return '';
 
-  if (lastMsgs.length === 0) return '';
-
-  return lastMsgs.map((m: any) => {
+  return msgs.map((m: any) => {
     const sender = m.senderType === 'self' ? (staffName.value || 'Nhân viên') : (customerName.value || 'Khách hàng');
     const time = m.sentAt ? new Date(m.sentAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
-    const rawContent = (m.content || '').trim();
+    const rawContent = (m.content || (m.attachments?.length ? '[Hình ảnh đính kèm]' : '')).trim();
     const content = rawContent.length > 200 ? rawContent.substring(0, 200) + '...' : rawContent;
     return `+ [${time}] ${sender}: ${content}`;
   }).join('\n');
@@ -1359,13 +1491,88 @@ async function submitDraftOrder(msg: ChatMessage) {
   }
 }
 
+// State for attached images in sidebar
+const attachedImages = ref<string[]>([]);
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const showImageModal = ref(false);
+const modalImageUrl = ref('');
+
+function triggerFileInput() {
+  fileInputRef.value?.click();
+}
+
+function openImageModal(url: string) {
+  modalImageUrl.value = url;
+  showImageModal.value = true;
+}
+
+function removeAttachedImage(index: number) {
+  attachedImages.value.splice(index, 1);
+}
+
+async function fileToDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function onFilesSelected(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (!input.files || input.files.length === 0) return;
+  for (let i = 0; i < input.files.length; i++) {
+    const file = input.files[i];
+    if (file.type.startsWith('image/')) {
+      try {
+        const dataUri = await fileToDataUri(file);
+        attachedImages.value.push(dataUri);
+      } catch (err) {
+        console.error('Failed to read image file:', err);
+      }
+    }
+  }
+  input.value = '';
+}
+
+async function onInputPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  let hasImage = false;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        hasImage = true;
+        try {
+          const dataUri = await fileToDataUri(file);
+          attachedImages.value.push(dataUri);
+        } catch (err) {
+          console.error('Failed to read pasted image:', err);
+        }
+      }
+    }
+  }
+  if (hasImage) {
+    e.preventDefault();
+  }
+}
+
 // ── Send message to chatbot / Handle Order Intent ────────────────────────────
 async function sendMessage() {
   const text = inputText.value.trim();
-  if (!text || isLoading.value) return;
+  const images = [...attachedImages.value];
+  if ((!text && images.length === 0) || isLoading.value) return;
 
+  attachedImages.value = [];
   const requestStartTime = Date.now();
-  messages.value.push({ role: 'user', content: text });
+  messages.value.push({
+    role: 'user',
+    content: text || (images.length > 0 ? 'Bóc tách đơn hàng từ hình ảnh đính kèm' : ''),
+    images: images.length > 0 ? images : undefined,
+  });
   inputText.value = '';
   isLoading.value = true;
   scrollToBottom();
@@ -1375,13 +1582,11 @@ async function sendMessage() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // A. CHẾ ĐỘ TẠO / SỬA ĐƠN HÀNG (ĐƯỢC BẬT QUA NÚT ICON GIỎ HÀNG)
+  // A. CHẾ ĐỘ TẠO / SỬA ĐƠN HÀNG (KHI BẬT NÚT, HOẶC CÂU LỆNH TẠO ĐƠN, HOẶC CÓ ẢNH ĐÍNH KÈM)
+  // ─────────────────────────────────────────────────────────────────────────────
   const isExplicitOrderCommand = /\b(tạo đơn|tao don|lên đơn|len don|lập đơn|lap don|bóc tách đơn|boc tach don|tạo order|lên order)\b/i.test(text);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // A. CHẾ ĐỘ TẠO / SỬA ĐƠN HÀNG (KHI BẬT NÚT HOẶC CÂU LỆNH YÊU CẦU TẠO ĐƠN RÕ RÀNG)
-  // ─────────────────────────────────────────────────────────────────────────────
-  if (isOrderMode.value || isExplicitOrderCommand) {
+  if (isOrderMode.value || isExplicitOrderCommand || images.length > 0) {
     // 1. Kiểm tra nếu tin nhắn trợ lý trước đó là 1 phiếu đơn hàng nháp -> SỬA ĐƠN HÀNG
     const lastAssistantMsg = [...messages.value].slice(0, -1).filter(m => m.role === 'assistant').pop();
     const hasActiveDraft = !!(lastAssistantMsg?.orderDraft && !lastAssistantMsg.orderDraft.orderCreated);
@@ -1498,9 +1703,11 @@ async function sendMessage() {
 
     messages.value.push({
       role: 'assistant',
-      content: mode === 'text' 
-        ? '🔍 Đang trích xuất đơn hàng từ thông tin bạn vừa nhập...' 
-        : '🔍 Đang phân tích tin nhắn Zalo để bóc tách đơn hàng...',
+      content: images.length > 0
+        ? '🔍 Đang phân tích hình ảnh và đối chiếu sản phẩm kho...'
+        : (mode === 'text' 
+            ? '🔍 Đang trích xuất đơn hàng từ thông tin bạn vừa nhập...' 
+            : '🔍 Đang phân tích tin nhắn Zalo để bóc tách đơn hàng...'),
       orderDraft: null,
     });
     const assistantMsgIndex = messages.value.length - 1;
@@ -1513,6 +1720,7 @@ async function sendMessage() {
         mode: mode,
         conversationId: props.conversation?.id,
         text: text,
+        imageUrls: images.length > 0 ? images : undefined,
         customerName: customerName.value,
         customerPhone: customerPhone.value,
         customerAddress: customerAddress.value,
@@ -2683,6 +2891,57 @@ defineExpose({
 .total-draft-amount {
   font-size: 16px;
   letter-spacing: -0.2px;
+}
+
+.attached-img-card {
+  position: relative;
+  flex-shrink: 0;
+}
+.attached-img-remove-btn {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 17px;
+  height: 17px;
+  background: #f43f5e;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  z-index: 2;
+  transition: transform 0.15s ease;
+}
+.attached-img-remove-btn:hover {
+  transform: scale(1.15);
+}
+.user-msg-thumbnail {
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.user-msg-thumbnail:hover {
+  transform: scale(1.03);
+  opacity: 0.92;
+}
+.action-icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(var(--v-theme-on-surface), 0.65);
+  transition: background 0.15s, color 0.15s;
+}
+.action-icon-btn:hover {
+  background: rgba(var(--v-theme-on-surface), 0.08);
+  color: rgb(var(--v-theme-primary));
+}
+.action-icon-btn.has-images {
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
 }
 </style>
 

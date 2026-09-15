@@ -13,6 +13,7 @@ import { zaloPool } from '../zalo/zalo-pool.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { odooSyncService } from '../sync/odoo-sync-service.js';
 import { checkConversationContactAccess } from '../chat/chat-routes.js';
+import { routerClient } from '../../shared/services/router-client.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,19 +43,19 @@ export async function orderRoutes(app: FastifyInstance) {
         if (!hasAccess) {
           return reply.status(403).send({ error: 'Bạn không có quyền thao tác trên cuộc trò chuyện này' });
         }
-        // Extract from customer's conversation messages in chat history (with optional staff instruction)
-        draft = await extractOrderFromConversation(user.orgId, body.conversationId, body.text);
-      } else if (body.text) {
-        // Extract directly from staff's text input (without reading chat history)
-        draft = await extractOrderFromText(user.orgId, body.text, {
+        // Extract from customer's conversation messages in chat history (with optional staff instruction and extra uploaded images)
+        draft = await extractOrderFromConversation(user.orgId, body.conversationId, body.text, body.imageUrls);
+      } else if (body.text || (Array.isArray(body.imageUrls) && body.imageUrls.length > 0)) {
+        // Extract directly from staff's text input and/or uploaded images (without reading chat history)
+        draft = await extractOrderFromText(user.orgId, body.text || '', {
           name: body.customerName,
           phone: body.customerPhone,
           address: body.customerAddress,
           customerId: body.customerId,
-        });
+        }, body.imageUrls);
       } else {
         return reply.status(400).send({
-          error: 'Vui lòng cung cấp conversationId hoặc text để AI phân tích.',
+          error: 'Vui lòng cung cấp conversationId, text hoặc hình ảnh để AI phân tích.',
         });
       }
 
@@ -507,21 +508,45 @@ export async function orderRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Không tìm thấy đơn hàng' });
     }
 
-    // Ưu tiên hiển thị nhân viên sale hiện tại của khách hàng
+    // Ưu tiên hiển thị nhân viên sale trực tiếp của đơn hàng, fallback sang hồ sơ khách hàng
     const orderObj = order as any;
-    let currentSalesperson = orderObj.customerProfile?.salesperson?.trim();
-    if (!currentSalesperson && orderObj.odooPartnerId) {
+    let fallbackSalesperson = orderObj.customerProfile?.salesperson?.trim();
+    if (!fallbackSalesperson && orderObj.odooPartnerId) {
       const contact = await prisma.contact.findFirst({
         where: { orgId: user.orgId, customerId: String(orderObj.odooPartnerId) },
         select: { salesperson: true, assignedUser: { select: { fullName: true } } },
       });
-      currentSalesperson = contact?.salesperson?.trim() || contact?.assignedUser?.fullName?.trim();
+      fallbackSalesperson = contact?.salesperson?.trim() || contact?.assignedUser?.fullName?.trim();
+    }
+
+    // Realtime sync activity from Odoo if order has odooOrderId
+    if (orderObj.odooOrderId) {
+      try {
+        const liveActs = await odooService.executeKw<any[]>('mail.activity', 'search_read', [
+          [['res_model', '=', 'sale.order'], ['res_id', '=', orderObj.odooOrderId]],
+        ], {
+          fields: ['id', 'summary', 'note'],
+          limit: 1,
+        });
+        const liveSummary = liveActs && liveActs.length > 0
+          ? (liveActs[0].summary || liveActs[0].note || '').trim() || null
+          : null;
+        if (liveSummary !== orderObj.activitySummary) {
+          orderObj.activitySummary = liveSummary;
+          prisma.orderHistory.update({
+            where: { id: orderObj.id },
+            data: { activitySummary: liveSummary },
+          }).catch(() => {});
+        }
+      } catch (actErr: any) {
+        // Non-blocking fallback
+      }
     }
 
     return {
       order: {
         ...orderObj,
-        salesperson: currentSalesperson || orderObj.salesperson || 'Chưa phân công',
+        salesperson: orderObj.salesperson?.trim() || fallbackSalesperson || 'Chưa phân công',
       },
     };
   });
@@ -1106,6 +1131,243 @@ export async function orderRoutes(app: FastifyInstance) {
     return { success: true, draft: currentDraft };
   });
 
+  // ── Update Order Details (Items, Qty, Price, Discount, Note) ──────────────
+  app.put('/api/v1/orders/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as {
+      note?: string;
+      activitySummary?: string;
+      lines?: Array<{
+        id?: string;
+        odooLineId?: number;
+        odooProductId?: number;
+        productName?: string;
+        productSku?: string;
+        uomName?: string;
+        quantity: number;
+        priceUnit: number;
+        discount?: number;
+      }>;
+    };
+
+    const isNumeric = /^\d+$/.test(id);
+
+    const existingOrder = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [
+          { id },
+          ...(isNumeric ? [{ odooOrderId: parseInt(id, 10) }] : []),
+          { orderCode: id },
+        ],
+      },
+      include: {
+        lines: true,
+      },
+    });
+
+    if (!existingOrder) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng cần chỉnh sửa' });
+    }
+
+    // Tra cứu tài khoản OCMS để lấy Odoo ID nhân viên (như yêu cầu)
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { id: true, fullName: true, odooId: true },
+    });
+    const staffOdooUid = dbUser?.odooId ? parseInt(dbUser.odooId, 10) : undefined;
+    const editorName = dbUser?.fullName || user.email;
+
+    let odooError: string | null = null;
+
+    // Cập nhật lên Odoo qua Router Gateway nếu đơn hàng đã có trên Odoo
+    if (existingOrder.odooOrderId) {
+      try {
+        await routerClient.updateOrder({
+          odoo_order_id: existingOrder.odooOrderId,
+          order_code: existingOrder.orderCode,
+          note: body.note,
+          lines: body.lines,
+          editor_name: editorName,
+          staff_odoo_uid: staffOdooUid,
+        });
+
+        // Đồng bộ Hoạt động / Ghi chú giao việc (mail.activity) qua Router nếu có thay đổi
+        if (body.activitySummary !== undefined) {
+          const actText = typeof body.activitySummary === 'string' ? body.activitySummary.trim() : '';
+          try {
+            await routerClient.manageActivity({
+              odoo_order_id: existingOrder.odooOrderId,
+              action: actText ? 'update' : 'delete',
+              summary: actText,
+            });
+          } catch (actErr: any) {
+            logger.warn(`[order-routes] Lỗi đồng bộ ghi chú giao việc qua Router:`, actErr.message);
+          }
+        }
+      } catch (err: any) {
+        logger.error(`[order-routes] Lỗi cập nhật đơn hàng lên Odoo qua Router #${existingOrder.odooOrderId}:`, err.message);
+        odooError = err.message;
+      }
+    }
+
+    // Cập nhật CSDL nội bộ OCMS
+    const now = new Date();
+    let newAmountUntaxed = 0;
+
+    if (body.lines && Array.isArray(body.lines)) {
+      await prisma.orderLineHistory.deleteMany({
+        where: { orderHistoryId: existingOrder.id },
+      });
+
+      let maxLineId = 0;
+      for (const line of body.lines) {
+        if (line.odooLineId && Number(line.odooLineId) > maxLineId) {
+          maxLineId = Number(line.odooLineId);
+        }
+      }
+
+      for (const [idx, line] of body.lines.entries()) {
+        const qty = Number(line.quantity) || 0;
+        const price = Number(line.priceUnit) || 0;
+        const discount = Number(line.discount) || 0;
+        const subtotal = Math.round(qty * price * (1 - discount / 100));
+        newAmountUntaxed += subtotal;
+
+        const resolvedLineId = line.odooLineId ? Number(line.odooLineId) : ++maxLineId;
+
+        await prisma.orderLineHistory.create({
+          data: {
+            orderHistoryId: existingOrder.id,
+            odooLineId: resolvedLineId,
+            productName: line.productName || 'Sản phẩm',
+            productSku: line.productSku || null,
+            odooProductId: line.odooProductId ? Number(line.odooProductId) : null,
+            uomName: line.uomName || 'Units',
+            quantity: qty,
+            priceUnit: price,
+            discount: discount,
+            priceSubtotal: subtotal,
+            priceTotal: subtotal,
+          },
+        });
+      }
+    }
+
+    const updatedOrder = await prisma.orderHistory.update({
+      where: { id: existingOrder.id },
+      data: {
+        ...(body.note !== undefined ? { note: body.note } : {}),
+        ...(body.activitySummary !== undefined ? { activitySummary: body.activitySummary?.trim() || null } : {}),
+        ...(body.lines ? {
+          amountUntaxed: newAmountUntaxed,
+          amountTotal: newAmountUntaxed > 0 ? newAmountUntaxed : existingOrder.amountTotal,
+        } : {}),
+        writeDate: now,
+        writeUid: staffOdooUid || undefined,
+        writeUserName: editorName,
+        updatedAt: now,
+      } as any,
+      include: {
+        customerProfile: true,
+        lines: {
+          orderBy: { odooLineId: 'asc' },
+        },
+      },
+    });
+
+    return reply.send({
+      success: true,
+      order: updatedOrder,
+      odooWarning: odooError || undefined,
+      message: odooError
+        ? `Đã lưu cục bộ nhưng Odoo có cảnh báo: ${odooError}`
+        : 'Cập nhật đơn hàng thành công!',
+    });
+  });
+
+  // ── Quick Add / Edit / Delete Activity (Ghi chú giao việc) ────────────────
+  app.post('/api/v1/orders/:id/activity', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const { summary } = (request.body || {}) as { summary?: string };
+    const isNumeric = /^\d+$/.test(id);
+
+    const order = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [{ id }, ...(isNumeric ? [{ odooOrderId: parseInt(id, 10) }] : []), { orderCode: id }],
+      },
+    });
+
+    if (!order) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng' });
+    }
+
+    const actText = typeof summary === 'string' ? summary.trim() : '';
+
+    if (order.odooOrderId) {
+      try {
+        await routerClient.manageActivity({
+          odoo_order_id: order.odooOrderId,
+          action: actText ? 'update' : 'delete',
+          summary: actText,
+        });
+      } catch (err: any) {
+        logger.warn(`[order-routes] Lỗi cập nhật hoạt động qua Router:`, err.message);
+      }
+    }
+
+    const updated = await prisma.orderHistory.update({
+      where: { id: order.id },
+      data: {
+        activitySummary: actText || null,
+        updatedAt: new Date(),
+      },
+    });
+
+    return reply.send({ success: true, activitySummary: updated.activitySummary });
+  });
+
+  app.delete('/api/v1/orders/:id/activity', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const isNumeric = /^\d+$/.test(id);
+
+    const order = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [{ id }, ...(isNumeric ? [{ odooOrderId: parseInt(id, 10) }] : []), { orderCode: id }],
+      },
+    });
+
+    if (!order) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng' });
+    }
+
+    if (order.odooOrderId) {
+      try {
+        await routerClient.manageActivity({
+          odoo_order_id: order.odooOrderId,
+          action: 'delete',
+        });
+      } catch (err: any) {
+        logger.warn(`[order-routes] Lỗi xóa hoạt động qua Router:`, err.message);
+      }
+    }
+
+    await prisma.orderHistory.update({
+      where: { id: order.id },
+      data: {
+        activitySummary: null,
+        updatedAt: new Date(),
+      },
+    });
+
+    return reply.send({ success: true, activitySummary: null });
+  });
+
   // ── Confirm Order & Dispatch Zalo Notification ────────────────────────────
   app.post('/api/v1/orders/:id/confirm', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
@@ -1418,24 +1680,35 @@ export async function orderRoutes(app: FastifyInstance) {
         });
       }
 
-      // ── CREATE REAL ORDER (QUOTATION) ON ODOO ERP ──
+      // ── CREATE REAL ORDER (QUOTATION) VIA ROUTER (ROUTER QUYẾT ĐỊNH ODOO TEST HAY PROD) ──
       try {
-        const createdId = await odooService.createOrder({
+        const routerRes = await routerClient.createOrder({
+          order_code: `AI-${conv.id.slice(0, 8)}-${Date.now()}`,
+          source: 'ai_draft_confirm',
           partner_id: odooPartnerId,
           user_id: salespersonOdooUserId,
           note: body.customNote || draft.notes || 'Đơn hàng tạo từ Chatbot AI',
-          order_line: odooLines,
+          items: odooLines.map(l => ({
+            sku: `PROD-${l.product_id}`,
+            odoo_product_id: l.product_id,
+            quantity: l.product_uom_qty,
+            price: l.price_unit,
+            discount: l.discount || 0,
+          })),
+          conversationId: conv.id,
         });
-        if (!createdId) {
-          throw new Error('Odoo trả về rỗng khi tạo đơn');
+
+        if (!routerRes.orderId) {
+          throw new Error('Router trả về rỗng khi tạo đơn trên Odoo');
         }
-        const numId = Array.isArray(createdId) ? (createdId as any)[0] : Number(createdId);
-        odooOrderId = numId;
+        odooOrderId = routerRes.orderId;
+        officialOrderCode = routerRes.orderCode || `SO-${odooOrderId}`;
+        officialTotal = routerRes.amount_total || odooLines.reduce((s, l) => s + Math.round(l.product_uom_qty * l.price_unit * (1 - (l.discount || 0) / 100)), 0);
       } catch (err: any) {
-        logger.error(`[order-routes] Failed to create order in Odoo: ${err.message}`);
+        logger.error(`[order-routes] Failed to create order in Odoo via Router: ${err.message}`);
         return reply.status(500).send({
           success: false,
-          message: `Lỗi tạo đơn hàng trên Odoo: ${err.message}`,
+          message: `Lỗi tạo đơn hàng trên Odoo qua Router: ${err.message}`,
         });
       }
 
@@ -1447,16 +1720,6 @@ export async function orderRoutes(app: FastifyInstance) {
       }
 
       const validOdooOrderId = odooOrderId;
-
-      // Fetch official order code & total from Odoo
-      try {
-        const odooOrder = await odooService.getOrder(validOdooOrderId);
-        officialOrderCode = odooOrder?.name || `SO-${validOdooOrderId}`;
-        officialTotal = odooOrder?.amount_total || odooLines.reduce((s, l) => s + Math.round(l.product_uom_qty * l.price_unit * (1 - (l.discount || 0) / 100)), 0);
-      } catch (err: any) {
-        officialOrderCode = `SO-${validOdooOrderId}`;
-        officialTotal = odooLines.reduce((s, l) => s + Math.round(l.product_uom_qty * l.price_unit * (1 - (l.discount || 0) / 100)), 0);
-      }
 
       // Complete conversation state now that order is really created on Odoo
       await prisma.conversationAiState.updateMany({
@@ -1692,25 +1955,32 @@ Em cảm ơn ${partnerDisplayName} đã ủng hộ shop ạ!`.trim();
         }
 
         if (validLines.length > 0) {
-          const createdOdooId = await odooService.createOrder({
+          const routerRes = await routerClient.createOrder({
+            order_code: order.orderCode || `SYNC-${order.id.slice(0, 8)}`,
+            source: 'ocms_order_confirm',
             partner_id: odooPartnerId,
             user_id: orderSalespersonUserId,
             note: order.note || undefined,
-            order_line: validLines,
+            items: validLines.map(vl => ({
+              sku: `PROD-${vl.product_id}`,
+              odoo_product_id: vl.product_id,
+              quantity: vl.product_uom_qty,
+              price: vl.price_unit,
+              discount: vl.discount || 0,
+            })),
           });
 
-          if (createdOdooId) {
-            syncedOdooId = createdOdooId;
+          if (routerRes.orderId) {
+            syncedOdooId = routerRes.orderId;
             odooConfirmed = true;
-            const odooOrder = await odooService.getOrder(createdOdooId);
-            if (odooOrder?.name) officialOrderCode = odooOrder.name;
-            if (odooOrder?.amount_total) officialTotal = odooOrder.amount_total;
+            officialOrderCode = routerRes.orderCode || `SO-${syncedOdooId}`;
+            if (routerRes.amount_total) officialTotal = routerRes.amount_total;
 
             await prisma.orderHistory.update({
               where: { id: order.id },
-              data: { odooOrderId: createdOdooId, orderCode: officialOrderCode, amountTotal: officialTotal },
+              data: { odooOrderId: syncedOdooId, orderCode: officialOrderCode, amountTotal: officialTotal },
             });
-            logger.info(`[order-routes] Created real Quotation in Odoo #${createdOdooId} (${officialOrderCode})`);
+            logger.info(`[order-routes] Created real Quotation in Odoo via Router #${syncedOdooId} (${officialOrderCode}) on ${routerRes.target_name}`);
           }
         }
       } catch (err: any) {
@@ -1913,13 +2183,18 @@ Mong khách hàng thông cảm.`;
       },
     });
 
-    // 2. Sync cancellation to Odoo ERP if odooOrderId exists
+    // 2. Sync cancellation to Odoo ERP via Router (Router toàn quyền quyết định Odoo Test hay Prod)
     let odooCancelled = false;
-    if (order.odooOrderId) {
+    if (order.odooOrderId || order.orderCode) {
       try {
-        odooCancelled = await odooService.cancelOrder(order.odooOrderId);
+        const cancelRes = await routerClient.cancelOrder({
+          order_code: order.orderCode,
+          odoo_order_id: order.odooOrderId || undefined,
+          reason,
+        });
+        odooCancelled = cancelRes.success;
       } catch (err: any) {
-        logger.warn(`[order-routes] Odoo cancel warning: ${err.message}`);
+        logger.warn(`[order-routes] Router Odoo cancel warning: ${err.message}`);
       }
     }
 

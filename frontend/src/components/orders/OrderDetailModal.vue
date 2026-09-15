@@ -15,13 +15,38 @@
                   <v-icon size="14">lucide-copy</v-icon>
                 </v-btn>
               </div>
-              <div class="text-caption text-medium-emphasis">
-                Odoo ID: #{{ order?.odooOrderId }} • Tạo lúc: {{ formatDateTime(order?.dateOrder) }}
+              <!-- Order Metadata: Created at + Last Edited & Modifier -->
+              <div class="text-caption text-medium-emphasis d-flex align-center flex-wrap gap-x-2 gap-y-0.5">
+                <span>Odoo ID: #{{ order?.odooOrderId }}</span>
+                <span>•</span>
+                <span>Tạo lúc: {{ formatDateTime(order?.dateOrder) }}</span>
+                <template v-if="order?.writeDate || order?.updatedAt">
+                  <span>•</span>
+                  <span class="text-primary font-weight-medium">
+                    Sửa cuối: {{ formatDateTime(order?.writeDate || order?.updatedAt) }}
+                  </span>
+                  <span v-if="order?.writeUserName" class="text-teal-darken-2 font-weight-medium">
+                    ({{ order.writeUserName }})
+                  </span>
+                </template>
               </div>
             </div>
           </div>
 
           <div class="d-flex align-center gap-2 flex-wrap">
+            <!-- Edit Mode Toggle Button -->
+            <v-btn
+              v-if="!isEditing && order"
+              size="small"
+              color="primary"
+              variant="tonal"
+              prepend-icon="lucide-edit-3"
+              class="text-none font-weight-bold mr-1"
+              @click="startEdit"
+            >
+              Chỉnh sửa
+            </v-btn>
+
             <v-chip v-if="order" size="small" :color="stateColor(order.state)" variant="flat" class="font-weight-medium">
               {{ stateLabel(order.state) }}
             </v-chip>
@@ -98,7 +123,7 @@
                 <v-card-text class="pa-4 text-body-2 space-y-2">
                   <div class="d-flex justify-space-between">
                     <span class="text-medium-emphasis">Nhân viên phụ trách:</span>
-                    <span class="font-weight-medium text-primary">{{ order.customerProfile?.salesperson || order.salesperson || 'Chưa phân công' }}</span>
+                    <span class="font-weight-medium text-primary">{{ order.salesperson || order.customerProfile?.salesperson || 'Chưa phân công' }}</span>
                   </div>
                   <div class="d-flex justify-space-between">
                     <span class="text-medium-emphasis">Kho xuất hàng:</span>
@@ -112,9 +137,78 @@
                     <span class="text-medium-emphasis">Hạn hiệu lực:</span>
                     <span>{{ formatDate(order.validityDate) }}</span>
                   </div>
-                  <div v-if="order.activitySummary" class="d-flex justify-space-between">
-                    <span class="text-medium-emphasis">Ghi chú giao việc:</span>
-                    <span class="text-amber-darken-3 font-italic">{{ order.activitySummary }}</span>
+                  <!-- Hoạt động / Ghi chú giao việc -->
+                  <div class="d-flex justify-space-between align-start py-1 gap-2">
+                    <span class="text-medium-emphasis flex-shrink-0" style="margin-top: 3px;">Ghi chú giao việc:</span>
+                    <!-- View mode -->
+                    <div v-if="!isEditing" class="d-flex align-start gap-1.5 flex-grow-1 justify-end ml-2">
+                      <template v-if="order.activitySummary">
+                        <div
+                          class="activity-summary-badge d-inline-flex align-start"
+                          :title="order.activitySummary"
+                        >
+                          <v-icon size="13" color="amber-darken-3" class="mr-1 flex-shrink-0" style="margin-top: 2px;">lucide-clipboard-list</v-icon>
+                          <span>{{ order.activitySummary }}</span>
+                        </div>
+                        <div class="d-inline-flex align-center flex-shrink-0">
+                          <v-btn
+                            icon
+                            size="24"
+                            variant="text"
+                            color="primary"
+                            title="Sửa ghi chú giao việc"
+                            @click="openActivityModal(order.activitySummary)"
+                          >
+                            <v-icon size="13">lucide-edit-2</v-icon>
+                          </v-btn>
+                          <v-btn
+                            icon
+                            size="24"
+                            variant="text"
+                            color="error"
+                            title="Xóa ghi chú giao việc"
+                            :loading="deletingActivity"
+                            @click="deleteActivityNote"
+                          >
+                            <v-icon size="13">lucide-trash-2</v-icon>
+                          </v-btn>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <v-btn
+                          size="x-small"
+                          variant="tonal"
+                          color="amber-darken-3"
+                          prepend-icon="lucide-plus"
+                          class="font-weight-medium text-none"
+                          @click="openActivityModal('')"
+                        >
+                          Thêm giao việc
+                        </v-btn>
+                      </template>
+                    </div>
+
+                    <!-- Edit mode -->
+                    <div v-else style="max-width: 230px;" class="flex-grow-1 ml-2">
+                      <v-text-field
+                        v-model="editedActivitySummary"
+                        placeholder="Nhập ghi chú giao việc..."
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        clearable
+                        class="text-caption font-weight-medium"
+                      />
+                    </div>
+                  </div>
+                  <!-- Audit Info: Thời gian sửa cuối & Người sửa cuối -->
+                  <div v-if="order.writeDate || order.updatedAt" class="d-flex justify-space-between">
+                    <span class="text-medium-emphasis">Sửa lần cuối:</span>
+                    <span class="font-weight-medium text-primary">{{ formatDateTime(order.writeDate || order.updatedAt) }}</span>
+                  </div>
+                  <div v-if="order.writeUserName" class="d-flex justify-space-between">
+                    <span class="text-medium-emphasis">Người sửa cuối:</span>
+                    <span class="font-weight-medium text-teal-darken-1">{{ order.writeUserName }}</span>
                   </div>
                 </v-card-text>
               </v-card>
@@ -123,11 +217,24 @@
 
           <!-- Order Lines Table -->
           <div class="mb-4">
-            <div class="d-flex align-center justify-space-between mb-2">
+            <div class="d-flex align-center justify-space-between mb-2 flex-wrap gap-2">
               <span class="text-subtitle-2 font-weight-bold d-flex align-center gap-2">
                 <v-icon color="primary" size="16">lucide-package</v-icon>
-                Danh sách sản phẩm ({{ productLines.length }})
+                Danh sách sản phẩm ({{ isEditing ? editedLines.length : productLines.length }})
               </span>
+
+              <!-- Secondary Action in Edit Mode: Thêm sản phẩm -->
+              <v-btn
+                v-if="isEditing"
+                size="small"
+                color="primary"
+                variant="tonal"
+                prepend-icon="lucide-plus"
+                class="font-weight-bold text-none rounded-lg"
+                @click="showAddProductDialog = true"
+              >
+                Thêm sản phẩm
+              </v-btn>
             </div>
 
             <v-card variant="outlined" class="rounded-lg overflow-hidden">
@@ -139,54 +246,134 @@
                       {{ isMobile ? 'Mã SP' : 'Sản phẩm' }}
                     </th>
                     <th v-if="!isMobile" style="width: 80px;" class="text-center">ĐVT</th>
-                    <th :style="!isMobile ? 'width: 80px;' : ''" class="text-right">SL</th>
-                    <th :style="!isMobile ? 'width: 120px;' : ''" class="text-right">Đơn giá</th>
-                    <th :style="!isMobile ? 'width: 80px;' : ''" class="text-right">CK %</th>
+                    <th :style="!isMobile ? 'width: 100px;' : ''" class="text-center">SL</th>
+                    <th :style="!isMobile ? 'width: 140px;' : ''" class="text-right">Đơn giá</th>
+                    <th :style="!isMobile ? 'width: 90px;' : ''" class="text-center">CK %</th>
                     <th :style="!isMobile ? 'width: 130px;' : ''" class="text-right">Thành tiền</th>
+                    <th v-if="isEditing" style="width: 45px;" class="text-center"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-if="productLines.length === 0">
-                    <td :colspan="isMobile ? 6 : 7" class="text-center text-medium-emphasis py-6">Không có dữ liệu dòng sản phẩm</td>
-                  </tr>
-                  <tr v-for="(line, idx) in productLines" :key="line.id">
-                    <td class="text-center text-caption text-medium-emphasis">{{ idx + 1 }}</td>
-                    <td>
-                      <!-- Desktop: Tên sản phẩm + SKU -->
-                      <div v-if="!isMobile">
+                  <!-- ── 1. READ ONLY MODE ── -->
+                  <template v-if="!isEditing">
+                    <tr v-if="productLines.length === 0">
+                      <td :colspan="isMobile ? 6 : 7" class="text-center text-medium-emphasis py-6">Không có dữ liệu dòng sản phẩm</td>
+                    </tr>
+                    <tr v-for="(line, idx) in productLines" :key="line.id">
+                      <td class="text-center text-caption text-medium-emphasis">{{ idx + 1 }}</td>
+                      <td>
+                        <!-- Desktop: Tên sản phẩm + SKU -->
+                        <div v-if="!isMobile">
+                          <div class="font-weight-medium text-body-2 line-clamp-1">{{ line.productName }}</div>
+                          <div v-if="line.productSku" class="text-caption text-medium-emphasis font-monospace">
+                            SKU: {{ line.productSku }}
+                          </div>
+                        </div>
+                        <!-- Mobile: Chỉ hiển thị mã sản phẩm -->
+                        <div v-else class="font-monospace text-caption font-weight-medium text-primary">
+                          {{ line.productSku || line.productName }}
+                        </div>
+                      </td>
+                      <td v-if="!isMobile" class="text-center text-caption">{{ line.uomName || 'Units' }}</td>
+                      <td class="text-center font-weight-medium">{{ line.quantity }}</td>
+                      <td class="text-right text-caption">
+                        <div v-if="!isMobile && line.originalPrice && line.originalPrice > line.priceUnit" class="text-caption text-decoration-line-through text-medium-emphasis">
+                          {{ formatVND(line.originalPrice) }}
+                        </div>
+                        <div :class="['font-weight-medium', (line.originalPrice && line.originalPrice > line.priceUnit) ? 'text-success font-weight-bold' : '']">
+                          {{ formatVND(line.priceUnit) }}
+                        </div>
+                      </td>
+                      <td class="text-center text-caption">
+                        <span v-if="line.discount > 0" class="text-error font-weight-medium">-{{ line.discount }}%</span>
+                        <span v-else class="text-medium-emphasis">—</span>
+                      </td>
+                      <td class="text-right font-weight-bold text-body-2">{{ formatVND(line.priceSubtotal) }}</td>
+                    </tr>
+                  </template>
+
+                  <!-- ── 2. EDIT MODE ── -->
+                  <template v-else>
+                    <tr v-if="editedLines.length === 0">
+                      <td :colspan="isMobile ? 6 : 8" class="text-center text-medium-emphasis py-6">
+                        Chưa có sản phẩm nào. Bấm "+ Thêm sản phẩm" ở trên để chọn.
+                      </td>
+                    </tr>
+                    <tr v-for="(line, idx) in editedLines" :key="idx">
+                      <td class="text-center text-caption text-medium-emphasis">{{ idx + 1 }}</td>
+                      <td>
                         <div class="font-weight-medium text-body-2 line-clamp-1">{{ line.productName }}</div>
                         <div v-if="line.productSku" class="text-caption text-medium-emphasis font-monospace">
                           SKU: {{ line.productSku }}
                         </div>
-                      </div>
-                      <!-- Mobile: Chỉ hiển thị mã sản phẩm -->
-                      <div v-else class="font-monospace text-caption font-weight-medium text-primary">
-                        {{ line.productSku || line.productName }}
-                      </div>
-                    </td>
-                    <td v-if="!isMobile" class="text-center text-caption">{{ line.uomName || 'Units' }}</td>
-                    <td class="text-right font-weight-medium">{{ line.quantity }}</td>
-                    <td class="text-right text-caption">
-                      <div v-if="!isMobile && line.originalPrice && line.originalPrice > line.priceUnit" class="text-caption text-decoration-line-through text-medium-emphasis">
-                        {{ formatVND(line.originalPrice) }}
-                      </div>
-                      <div :class="['font-weight-medium', (line.originalPrice && line.originalPrice > line.priceUnit) ? 'text-success font-weight-bold' : '']">
-                        {{ formatVND(line.priceUnit) }}
-                      </div>
-                    </td>
-                    <td class="text-right text-caption">
-                      <span v-if="line.discount > 0" class="text-error font-weight-medium">-{{ line.discount }}%</span>
-                      <span v-else class="text-medium-emphasis">—</span>
-                    </td>
-                    <td class="text-right font-weight-bold text-body-2">{{ formatVND(line.priceSubtotal) }}</td>
-                  </tr>
+                      </td>
+                      <td v-if="!isMobile" class="text-center text-caption">{{ line.uomName || 'Units' }}</td>
+                      <!-- Quantity Edit -->
+                      <td class="text-center">
+                        <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
+                          <input
+                            type="number"
+                            v-model.number="line.quantity"
+                            min="1"
+                            class="text-center font-weight-bold"
+                            style="width: 48px; font-size: 0.85rem; border: none; outline: none; background: transparent;"
+                          />
+                        </div>
+                      </td>
+                      <!-- Price Unit Edit -->
+                      <td class="text-right">
+                        <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1.5 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
+                          <input
+                            type="text"
+                            :value="formatThousand(line.priceUnit)"
+                            @input="onPriceUnitInput(line, $event)"
+                            class="text-right font-weight-bold"
+                            style="width: 88px; font-size: 0.85rem; border: none; outline: none; background: transparent;"
+                          />
+                          <span class="text-caption font-weight-medium text-medium-emphasis ml-0.5">₫</span>
+                        </div>
+                      </td>
+                      <!-- Discount Edit -->
+                      <td class="text-center">
+                        <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
+                          <input
+                            type="number"
+                            v-model.number="line.discount"
+                            min="0"
+                            max="100"
+                            step="1"
+                            class="text-center font-weight-bold text-error"
+                            style="width: 40px; font-size: 0.85rem; border: none; outline: none; background: transparent;"
+                          />
+                          <span class="text-caption font-weight-bold text-error">%</span>
+                        </div>
+                      </td>
+                      <!-- Calculated Subtotal -->
+                      <td class="text-right font-weight-bold text-body-2 text-primary">
+                        {{ formatVND(Math.round(line.quantity * line.priceUnit * (1 - (line.discount || 0) / 100))) }}
+                      </td>
+                      <!-- Delete Line -->
+                      <td class="text-center">
+                        <v-btn
+                          icon
+                          size="28"
+                          variant="text"
+                          color="error"
+                          title="Xóa sản phẩm này"
+                          @click="removeEditedLine(idx)"
+                        >
+                          <v-icon size="15">lucide-trash-2</v-icon>
+                        </v-btn>
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </v-table>
             </v-card>
           </div>
 
           <!-- Applied Promotions & Free Gifts Section -->
-          <div v-if="(order as any).appliedPromotions?.length || (order as any).freeItems?.length" class="mb-4">
+          <div v-if="!isEditing && ((order as any).appliedPromotions?.length || (order as any).freeItems?.length)" class="mb-4">
             <v-card variant="outlined" class="rounded-lg pa-3 bg-amber-50/40 dark:bg-amber-950/20 border-amber-200">
               <div class="text-subtitle-2 font-weight-bold text-amber-800 dark:text-amber-400 d-flex align-center gap-1 mb-2">
                 <v-icon size="18">lucide-gift</v-icon>
@@ -230,13 +417,31 @@
                   <v-icon color="grey" size="16">lucide-message-square</v-icon>
                   Ghi chú
                 </div>
-                <div v-if="cleanNote(order.note)" class="text-body-2 text-medium-emphasis order-note-content mb-2" v-html="cleanNote(order.note)" />
-                <div v-if="extractedNotes.length > 0" class="space-y-1 mt-1">
-                  <div v-for="(nt, nidx) in extractedNotes" :key="nidx" class="text-caption text-primary bg-primary-lighten-5 px-2 py-1 rounded border">
-                    📌 {{ nt }}
+
+                <!-- Read Only Notes -->
+                <template v-if="!isEditing">
+                  <div v-if="cleanNote(order.note)" class="text-body-2 text-medium-emphasis order-note-content mb-2" style="white-space: pre-wrap;">{{ cleanNote(order.note) }}</div>
+                  <div v-if="extractedNotes.length > 0" class="space-y-1 mt-1">
+                    <div v-for="(nt, nidx) in extractedNotes" :key="nidx" class="text-caption text-primary bg-primary-lighten-5 px-2 py-1 rounded border">
+                      📌 {{ nt }}
+                    </div>
                   </div>
-                </div>
-                <div v-if="!cleanNote(order.note) && extractedNotes.length === 0" class="text-body-2 text-medium-emphasis font-italic">Không có ghi chú thêm</div>
+                  <div v-if="!cleanNote(order.note) && extractedNotes.length === 0" class="text-body-2 text-medium-emphasis font-italic">Không có ghi chú thêm</div>
+                </template>
+
+                <!-- Edit Mode Notes -->
+                <template v-else>
+                  <v-textarea
+                    v-model="editedNote"
+                    variant="outlined"
+                    density="compact"
+                    rows="3"
+                    auto-grow
+                    hide-details
+                    placeholder="Nhập ghi chú đơn hàng..."
+                    class="rounded-lg"
+                  />
+                </template>
               </v-card>
             </v-col>
 
@@ -245,21 +450,18 @@
               <v-card variant="outlined" class="rounded-lg pa-4 bg-surface">
                 <div class="space-y-2 text-body-2">
                   <div class="d-flex justify-space-between text-medium-emphasis">
-                    <span>Tổng tiền hàng (chưa giảm):</span>
-                    <span class="font-monospace">{{ formatVND(order.amountUndiscounted || order.amountUntaxed) }}</span>
+                    <span>Tổng tiền hàng:</span>
+                    <span class="font-monospace">
+                      {{ formatVND(isEditing ? calculatedSubtotal : (order.amountUndiscounted || order.amountUntaxed)) }}
+                    </span>
                   </div>
 
-                  <div v-if="order.amountUndiscounted > order.amountUntaxed" class="d-flex justify-space-between text-error">
+                  <div v-if="!isEditing && order.amountUndiscounted > order.amountUntaxed" class="d-flex justify-space-between text-error">
                     <span>Tổng chiết khấu:</span>
                     <span class="font-monospace">-{{ formatVND(order.amountUndiscounted - order.amountUntaxed) }}</span>
                   </div>
 
-                  <div class="d-flex justify-space-between text-medium-emphasis">
-                    <span>Tiền trước thuế:</span>
-                    <span class="font-monospace">{{ formatVND(order.amountUntaxed) }}</span>
-                  </div>
-
-                  <div v-if="order.amountTax > 0" class="d-flex justify-space-between text-medium-emphasis">
+                  <div v-if="!isEditing && order.amountTax > 0" class="d-flex justify-space-between text-medium-emphasis">
                     <span>Thuế VAT:</span>
                     <span class="font-monospace">{{ formatVND(order.amountTax) }}</span>
                   </div>
@@ -269,7 +471,9 @@
                   <!-- Tổng thanh toán -->
                   <div class="d-flex justify-space-between align-center">
                     <span class="text-subtitle-1 font-weight-bold">Tổng thanh toán:</span>
-                    <span class="text-h6 font-weight-bold text-primary font-monospace">{{ formatVND(order.amountTotal) }}</span>
+                    <span class="text-h6 font-weight-bold text-primary font-monospace">
+                      {{ formatVND(isEditing ? calculatedSubtotal : order.amountTotal) }}
+                    </span>
                   </div>
                 </div>
               </v-card>
@@ -281,38 +485,132 @@
       <v-divider />
 
       <v-card-actions class="px-4 px-md-6 py-3 bg-surface d-flex align-center justify-space-between flex-wrap ga-2" style="gap: 8px;">
-        <div v-if="canApproveOrReject" class="d-flex align-center ga-2" style="gap: 8px;">
-          <v-btn
-            color="success"
-            variant="flat"
-            prepend-icon="lucide-check-circle-2"
-            class="text-none font-weight-bold"
-            @click="$emit('confirm', order!)"
-          >
-            Duyệt
-          </v-btn>
-          <v-btn
-            color="error"
-            variant="outlined"
-            prepend-icon="lucide-x-circle"
-            class="text-none font-weight-bold"
-            @click="$emit('reject', order!)"
-          >
-            Từ chối
-          </v-btn>
-        </div>
-        <v-spacer v-else />
-        <v-btn variant="outlined" color="grey" @click="$emit('update:modelValue', false)">Đóng</v-btn>
+        <!-- Edit Mode Actions -->
+        <template v-if="isEditing">
+          <div class="d-flex align-center ga-2" style="gap: 8px;">
+            <v-btn
+              color="primary"
+              variant="flat"
+              prepend-icon="lucide-save"
+              class="text-none font-weight-bold px-4"
+              :loading="saving"
+              @click="saveOrderChanges"
+            >
+              Lưu thay đổi
+            </v-btn>
+            <v-btn
+              variant="outlined"
+              color="grey"
+              class="text-none"
+              :disabled="saving"
+              @click="cancelEdit"
+            >
+              Hủy
+            </v-btn>
+          </div>
+          <v-spacer />
+        </template>
+
+        <!-- Read Only Mode Actions -->
+        <template v-else>
+          <div v-if="canApproveOrReject" class="d-flex align-center ga-2" style="gap: 8px;">
+            <v-btn
+              color="success"
+              variant="flat"
+              prepend-icon="lucide-check-circle-2"
+              class="text-none font-weight-bold"
+              @click="$emit('confirm', order!)"
+            >
+              Duyệt
+            </v-btn>
+            <v-btn
+              color="error"
+              variant="outlined"
+              prepend-icon="lucide-x-circle"
+              class="text-none font-weight-bold"
+              @click="$emit('reject', order!)"
+            >
+              Từ chối
+            </v-btn>
+          </div>
+          <v-spacer v-else />
+          <v-btn variant="outlined" color="grey" @click="$emit('update:modelValue', false)">Đóng</v-btn>
+        </template>
       </v-card-actions>
     </v-card>
+
+    <!-- Product Picker Modal for Adding Products to Order -->
+    <ProductPickerDialog
+      v-model="showAddProductDialog"
+      @select="onProductFromPicker"
+    />
+
+    <!-- Feedback Snackbar -->
+    <!-- Dialog Thêm / Sửa Ghi chú giao việc -->
+    <v-dialog v-model="activityDialog.show" max-width="440px">
+      <v-card class="rounded-xl pa-4">
+        <div class="d-flex align-center justify-space-between mb-2">
+          <div class="text-subtitle-1 font-weight-bold d-flex align-center gap-2">
+            <v-icon color="amber-darken-3" size="20">lucide-clipboard-list</v-icon>
+            <span>{{ activityDialog.isEdit ? 'Sửa ghi chú giao việc' : 'Thêm ghi chú giao việc' }}</span>
+          </div>
+          <v-btn icon size="28" variant="text" @click="activityDialog.show = false">
+            <v-icon size="18">lucide-x</v-icon>
+          </v-btn>
+        </div>
+        <div class="text-caption text-medium-emphasis mb-3">
+          Nội dung này được đồng bộ vào Hoạt động (Activity) của đơn hàng trên Odoo.
+        </div>
+        <v-textarea
+          v-model="activityDialog.text"
+          label="Nội dung ghi chú giao việc / Hoạt động"
+          placeholder="Ví dụ: ĐÃ THANH TOÁN CK 28/7, Giao trước 16h..."
+          variant="outlined"
+          density="compact"
+          rows="3"
+          auto-grow
+          autofocus
+          hide-details
+          class="mb-4 text-caption"
+        />
+        <div class="d-flex justify-end gap-2">
+          <v-btn variant="text" class="text-none" @click="activityDialog.show = false">Hủy</v-btn>
+          <v-btn
+            color="amber-darken-3"
+            variant="flat"
+            class="text-none font-weight-bold"
+            :loading="activityDialog.saving"
+            :disabled="!activityDialog.text.trim()"
+            @click="saveActivityNote"
+          >
+            Lưu ghi chú
+          </v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar
+      v-model="snackbar.show"
+      :color="snackbar.color"
+      timeout="3500"
+      location="top"
+      class="rounded-xl"
+    >
+      <div class="d-flex align-center gap-2 font-weight-medium">
+        <v-icon size="18">{{ snackbar.color === 'success' ? 'lucide-check-circle' : 'lucide-alert-circle' }}</v-icon>
+        <span>{{ snackbar.text }}</span>
+      </div>
+    </v-snackbar>
   </v-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useDisplay } from 'vuetify';
+import { api } from '@/api';
 import { useOrders } from '@/composables/use-orders';
 import type { OrderItem } from '@/composables/use-orders';
+import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
 
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
@@ -323,10 +621,11 @@ const props = defineProps<{
   loading?: boolean;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'update:modelValue', val: boolean): void;
   (e: 'confirm', order: OrderItem): void;
   (e: 'reject', order: OrderItem): void;
+  (e: 'saved', order: OrderItem): void;
 }>();
 
 const {
@@ -338,10 +637,205 @@ const {
   invoiceStatusLabel,
 } = useOrders();
 
+// ── Edit Mode State ─────────────────────────────────────────────────────────
+const isEditing = ref(false);
+const saving = ref(false);
+const showAddProductDialog = ref(false);
+const editedNote = ref('');
+const editedActivitySummary = ref('');
+const deletingActivity = ref(false);
+const activityDialog = ref({
+  show: false,
+  isEdit: false,
+  text: '',
+  saving: false,
+});
+const editedLines = ref<Array<{
+  id?: string;
+  odooLineId?: number;
+  odooProductId?: number;
+  productName: string;
+  productSku?: string;
+  uomName?: string;
+  quantity: number;
+  priceUnit: number;
+  discount: number;
+}>>([]);
+
+const snackbar = ref({
+  show: false,
+  text: '',
+  color: 'success',
+});
+
+// Reset edit mode when modal is toggled or order changes
+watch(
+  () => [props.modelValue, props.order?.id],
+  () => {
+    isEditing.value = false;
+  }
+);
+
+function formatThousand(val: number | string | undefined | null): string {
+  if (val === undefined || val === null || val === '') return '0';
+  const num = typeof val === 'number' ? Math.round(val) : parseInt(String(val).replace(/\D/g, ''), 10) || 0;
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function onPriceUnitInput(line: any, event: Event) {
+  const input = event.target as HTMLInputElement;
+  const rawDigits = input.value.replace(/\D/g, '');
+  const numericVal = rawDigits ? parseInt(rawDigits, 10) : 0;
+  line.priceUnit = numericVal;
+  input.value = formatThousand(numericVal);
+}
+
+function startEdit() {
+  if (!props.order) return;
+  editedNote.value = cleanNote(props.order.note);
+  editedActivitySummary.value = props.order.activitySummary || '';
+  editedLines.value = (props.order.lines || []).map((l) => ({
+    id: l.id,
+    odooLineId: l.odooLineId,
+    odooProductId: (l as any).odooProductId,
+    productName: l.productName,
+    productSku: l.productSku || undefined,
+    uomName: l.uomName || 'Units',
+    quantity: l.quantity,
+    priceUnit: l.priceUnit,
+    discount: l.discount || 0,
+  }));
+  isEditing.value = true;
+}
+
+function cancelEdit() {
+  isEditing.value = false;
+}
+
+function removeEditedLine(idx: number) {
+  editedLines.value.splice(idx, 1);
+}
+
+function onProductFromPicker(product: any, qty: number) {
+  editedLines.value.push({
+    odooProductId: Number(product.odoo_id || product.id),
+    productName: product.name || product.display_name,
+    productSku: product.default_code || product.sku,
+    uomName: product.uom_name || 'Gói',
+    quantity: qty || 1,
+    priceUnit: product.list_price || product.wholesale_price || 0,
+    discount: 0,
+  });
+  showAddProductDialog.value = false;
+}
+
+const calculatedSubtotal = computed(() => {
+  return editedLines.value.reduce(
+    (sum, l) => sum + Math.round((Number(l.quantity) || 0) * (Number(l.priceUnit) || 0) * (1 - (Number(l.discount) || 0) / 100)),
+    0
+  );
+});
+
+async function saveOrderChanges() {
+  if (!props.order) return;
+  saving.value = true;
+  try {
+    const res = await api.put(`/orders/${props.order.id}`, {
+      note: editedNote.value,
+      activitySummary: editedActivitySummary.value,
+      lines: editedLines.value,
+    });
+    if (res.data?.success) {
+      if (res.data.order) {
+        Object.assign(props.order, res.data.order);
+      }
+      isEditing.value = false;
+      snackbar.value = {
+        show: true,
+        text: res.data.message || 'Cập nhật đơn hàng thành công!',
+        color: res.data.odooWarning ? 'warning' : 'success',
+      };
+      emit('saved', res.data.order || props.order);
+    }
+  } catch (err: any) {
+    console.error('Save order error:', err);
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || 'Lỗi khi lưu đơn hàng',
+      color: 'error',
+    };
+  } finally {
+    saving.value = false;
+  }
+}
+
+// ── Quick Activity (Ghi chú giao việc) Actions ──────────────────────────────
+function openActivityModal(currentText?: string | null) {
+  activityDialog.value = {
+    show: true,
+    isEdit: Boolean(currentText),
+    text: currentText || '',
+    saving: false,
+  };
+}
+
+async function saveActivityNote() {
+  if (!props.order) return;
+  activityDialog.value.saving = true;
+  try {
+    const res = await api.post(`/orders/${props.order.id}/activity`, {
+      summary: activityDialog.value.text.trim(),
+    });
+    if (res.data?.success) {
+      props.order.activitySummary = res.data.activitySummary;
+      activityDialog.value.show = false;
+      snackbar.value = {
+        show: true,
+        text: 'Cập nhật ghi chú giao việc thành công!',
+        color: 'success',
+      };
+      emit('saved', props.order);
+    }
+  } catch (err: any) {
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || 'Lỗi khi lưu ghi chú giao việc',
+      color: 'error',
+    };
+  } finally {
+    activityDialog.value.saving = false;
+  }
+}
+
+async function deleteActivityNote() {
+  if (!props.order) return;
+  deletingActivity.value = true;
+  try {
+    const res = await api.delete(`/orders/${props.order.id}/activity`);
+    if (res.data?.success) {
+      props.order.activitySummary = null;
+      snackbar.value = {
+        show: true,
+        text: 'Đã xóa ghi chú giao việc!',
+        color: 'success',
+      };
+      emit('saved', props.order);
+    }
+  } catch (err: any) {
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || 'Lỗi khi xóa ghi chú giao việc',
+      color: 'error',
+    };
+  } finally {
+    deletingActivity.value = false;
+  }
+}
+
+// ── Read Only Computed Helpers ──────────────────────────────────────────────
 const productLines = computed(() => {
   if (!props.order?.lines) return [];
-  return props.order.lines.filter(l => {
-    // Filter out note / section items
+  return props.order.lines.filter((l) => {
     if (!l.odooProductId && !l.productSku && Number(l.quantity) === 0 && Number(l.priceUnit) === 0) {
       return false;
     }
@@ -352,8 +846,8 @@ const productLines = computed(() => {
 const extractedNotes = computed(() => {
   if (!props.order?.lines) return [];
   return props.order.lines
-    .filter(l => !l.odooProductId && !l.productSku && Number(l.quantity) === 0 && Number(l.priceUnit) === 0)
-    .map(l => l.productName)
+    .filter((l) => !l.odooProductId && !l.productSku && Number(l.quantity) === 0 && Number(l.priceUnit) === 0)
+    .map((l) => l.productName)
     .filter(Boolean);
 });
 
@@ -374,36 +868,46 @@ function formatDateTime(d?: string | null) {
 }
 
 function copyOrderCode() {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(window.location.href);
+  if (props.order?.orderCode && navigator.clipboard) {
+    navigator.clipboard.writeText(props.order.orderCode);
+    snackbar.value = {
+      show: true,
+      text: `Đã sao chép mã đơn ${props.order.orderCode}`,
+      color: 'success',
+    };
   }
 }
 
 function cleanNote(note: string | null | undefined) {
   if (!note) return '';
-  let cleaned = note;
-  
-  // Remove anchor tags containing "terms" link: <a href="...terms...">...</a>
-  cleaned = cleaned.replace(/<a\s+[^>]*href=["'][^"']*terms[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, '');
-  
-  // Remove text strings with terms and conditions link
-  cleaned = cleaned.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*https?:\/\/[^\s<]+/gi, '');
-  cleaned = cleaned.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*/gi, '');
-  
-  // Clean up residual empty paragraphs or line breaks
-  cleaned = cleaned.replace(/<p>\s*(?:<br\s*\/?>)?\s*<\/p>/gi, '');
-  cleaned = cleaned.replace(/<br\s*\/?>\s*<br\s*\/?>/gi, '<br />');
-  
-  return cleaned.trim();
+  let text = note;
+  // Gỡ bỏ liên kết điều khoản điều kiện mặc định
+  text = text.replace(/<a\s+[^>]*href=["'][^"']*terms[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, '');
+  text = text.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*https?:\/\/[^\s<]+/gi, '');
+  text = text.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*/gi, '');
+  // Đổi các thẻ xuống dòng sang ký tự newline
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n');
+  text = text.replace(/<\/div>/gi, '\n');
+  // Lọc sạch toàn bộ thẻ HTML còn lại
+  text = text.replace(/<[^>]+>/g, '');
+  // Giải mã các thực thể HTML phổ biến
+  text = text.replace(/&nbsp;/gi, ' ');
+  text = text.replace(/&amp;/gi, '&');
+  text = text.replace(/&lt;/gi, '<');
+  text = text.replace(/&gt;/gi, '>');
+  text = text.replace(/&quot;/gi, '"');
+  text = text.replace(/&#39;/gi, "'");
+  // Chuẩn hóa nhiều dòng trắng liên tiếp
+  text = text.replace(/\n\s*\n\s*\n+/g, '\n\n');
+  return text.trim();
 }
 
 const canApproveOrReject = computed(() => {
   if (!props.order) return false;
-  // Đơn hàng đã có trên Odoo (đang nằm trong danh sách đơn hàng) -> không hiển thị Duyệt/Từ chối
   if (props.order.odooOrderId && typeof props.order.odooOrderId === 'number' && props.order.odooOrderId > 0) {
     return false;
   }
-  // Chỉ hiển thị cho đơn nháp AI đang chờ xác nhận
   return Boolean(props.order.isAiDraft);
 });
 </script>
@@ -451,5 +955,22 @@ const canApproveOrReject = computed(() => {
 .order-note-content :deep(a) {
   color: var(--v-theme-primary);
   text-decoration: underline;
+}
+.activity-summary-badge {
+  background-color: rgba(255, 179, 0, 0.12);
+  color: #b45309;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: normal;
+  text-align: left;
+  max-width: 280px;
+}
+:deep(.v-theme--dark) .activity-summary-badge {
+  background-color: rgba(255, 179, 0, 0.18);
+  color: #fcd34d;
 }
 </style>

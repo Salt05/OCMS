@@ -15,7 +15,7 @@
           </v-avatar>
           <div class="overflow-hidden">
             <div class="text-subtitle-1 font-weight-bold text-high-emphasis text-truncate leading-tight">
-              Chọn sản phẩm từ Directus
+              Chọn sản phẩm (Directus & Odoo ERP)
             </div>
             <div class="text-caption text-medium-emphasis text-truncate">
               Danh mục sản phẩm & giá sỉ đại lý
@@ -197,7 +197,7 @@
           </div>
 
           <!-- Product List Body -->
-          <v-card-text class="pa-3.5 product-dialog-body flex-grow-1 overflow-y-auto" style="min-height: 380px; max-height: 520px;">
+          <v-card-text class="pa-3.5 product-dialog-body flex-grow-1 overflow-y-auto" style="min-height: 380px; max-height: 560px; padding-bottom: 36px !important;">
             <!-- Loading Skeleton -->
             <div v-if="loading" class="d-flex flex-column gap-3 pa-2">
               <v-skeleton-loader
@@ -221,14 +221,14 @@
             </div>
 
             <!-- Product Cards List -->
-            <div v-else class="d-flex flex-column gap-2.5">
+            <div v-else class="d-flex flex-column gap-2.5 pb-3">
               <div
                 v-for="prod in filteredList"
                 :key="prod.id"
-                class="product-modal-card border bg-surface d-flex align-center justify-space-between flex-wrap gap-3"
+                class="product-modal-card border bg-surface d-flex align-center justify-space-between gap-3"
               >
                 <!-- Left: Product Image & Information -->
-                <div class="d-flex align-center gap-3.5 overflow-hidden flex-grow-1" style="min-width: 220px;">
+                <div class="d-flex align-center gap-3.5 overflow-hidden flex-grow-1" style="min-width: 0;">
                   <!-- Image Box -->
                   <div class="product-thumb-wrapper flex-shrink-0 rounded-lg overflow-hidden border bg-surface">
                     <img
@@ -236,6 +236,7 @@
                       :src="prod.image_url"
                       :alt="prod.name"
                       class="product-thumb-img"
+                      loading="lazy"
                       @error="() => { prod.image_url = undefined; }"
                     />
                     <div v-else class="w-100 h-100 d-flex align-center justify-center text-medium-emphasis">
@@ -245,98 +246,102 @@
 
                   <!-- Product Info: SKU, Name, and Price (UOM line removed) -->
                   <div class="product-info-block d-flex flex-column justify-center overflow-hidden flex-grow-1 pl-1">
-                    <div class="d-flex align-center gap-2 mb-1 overflow-hidden">
+                    <div class="d-flex align-center gap-1.5 mb-1 overflow-hidden flex-wrap">
                       <span v-if="prod.default_code || prod.sku" class="sku-badge flex-shrink-0">
                         {{ prod.default_code || prod.sku }}
                       </span>
+                      <v-chip
+                        size="x-small"
+                        :color="prod.source === 'odoo' ? 'teal' : 'primary'"
+                        variant="tonal"
+                        class="font-weight-medium flex-shrink-0 px-1 text-2xs"
+                        style="height: 18px; font-size: 10px;"
+                      >
+                        {{ prod.source === 'odoo' ? 'Odoo' : 'Directus' }}
+                      </v-chip>
                       <span class="product-title font-weight-bold text-high-emphasis text-truncate" :title="prod.name || prod.display_name">
                         {{ prod.name || prod.display_name }}
                       </span>
                     </div>
-                    <!-- Price Info directly under the name (No ĐVT line) -->
-                    <div class="d-flex align-center gap-2">
+                    <!-- Price Info & Inline Added Badge -->
+                    <div class="d-flex align-center gap-2 flex-wrap">
                       <span class="product-price-val font-weight-bold">
                         {{ formatCurrency(prod.list_price || prod.wholesale_price || 0) }}
                       </span>
+                      <v-chip
+                        v-if="hasAdded(prod)"
+                        size="x-small"
+                        color="amber-darken-2"
+                        variant="tonal"
+                        class="font-weight-bold px-1.5"
+                      >
+                        Đã thêm: {{ getAddedCount(prod) }}
+                      </v-chip>
                     </div>
                   </div>
                 </div>
 
-                <!-- Right: Action Buttons & Stepper & Added Badge -->
-                <div class="d-flex flex-column align-end flex-shrink-0 gap-1 justify-center ml-auto">
-                  <!-- Added Count Badge if already added -->
-                  <v-chip
-                    v-if="hasAdded(prod)"
-                    size="x-small"
-                    color="amber-darken-2"
-                    variant="flat"
-                    class="font-weight-bold px-2 mb-1"
+                <!-- Right: Action Controls Row: [Chi tiết] [ - 1 + ] [ + Chọn ] with unified alignment -->
+                <div class="d-flex align-center gap-2 flex-shrink-0 ml-auto">
+                  <!-- Detail button -->
+                  <v-btn
+                    size="small"
+                    variant="outlined"
+                    height="32"
+                    class="detail-btn rounded-lg font-weight-medium px-3 text-none"
+                    title="Xem thông tin chi tiết sản phẩm"
+                    aria-label="Xem chi tiết sản phẩm"
+                    @click.stop="openProductDetail(prod)"
                   >
-                    Đã thêm: {{ getAddedCount(prod) }}
-                  </v-chip>
+                    <v-icon size="14" class="mr-1.5 opacity-80">lucide-info</v-icon>
+                    Chi tiết
+                  </v-btn>
 
-                  <!-- Action Controls Row: [Chi tiết] [ - 1 + ] [ + Chọn ] with padding/gap -->
-                  <div class="d-flex align-center gap-2">
-                    <!-- Detail button -->
-                    <v-btn
-                      size="small"
-                      variant="outlined"
-                      height="32"
-                      class="detail-btn rounded-lg font-weight-medium px-3"
-                      title="Xem thông tin chi tiết sản phẩm"
-                      aria-label="Xem chi tiết sản phẩm"
-                      @click.stop="openProductDetail(prod)"
+                  <!-- Quantity Stepper Control -->
+                  <div class="quantity-stepper d-inline-flex align-center border rounded-lg overflow-hidden bg-surface" style="height: 32px;" @click.stop>
+                    <button
+                      type="button"
+                      class="stepper-btn stepper-btn-minus"
+                      :disabled="getQty(prod.id) <= 1"
+                      aria-label="Giảm số lượng"
+                      title="Giảm 1"
+                      @click.stop="decrementQty(prod.id)"
                     >
-                      <v-icon size="14" class="mr-1.5 opacity-80">lucide-info</v-icon>
-                      Chi tiết
-                    </v-btn>
-
-                    <!-- Quantity Stepper Control -->
-                    <div class="quantity-stepper d-inline-flex align-center border rounded-lg overflow-hidden bg-surface" @click.stop>
-                      <button
-                        type="button"
-                        class="stepper-btn stepper-btn-minus"
-                        :disabled="getQty(prod.id) <= 1"
-                        aria-label="Giảm số lượng"
-                        title="Giảm 1"
-                        @click.stop="decrementQty(prod.id)"
-                      >
-                        <v-icon size="12">lucide-minus</v-icon>
-                      </button>
-                      <input
-                        type="number"
-                        :value="getQty(prod.id)"
-                        min="1"
-                        class="stepper-input text-center font-weight-bold text-high-emphasis"
-                        aria-label="Số lượng sản phẩm"
-                        @input="onQtyInput(prod.id, $event)"
-                        @click.stop
-                      />
-                      <button
-                        type="button"
-                        class="stepper-btn stepper-btn-plus"
-                        aria-label="Tăng số lượng"
-                        title="Tăng 1"
-                        @click.stop="incrementQty(prod.id)"
-                      >
-                        <v-icon size="12">lucide-plus</v-icon>
-                      </button>
-                    </div>
-
-                    <!-- Select button -->
-                    <v-btn
-                      size="small"
-                      color="primary"
-                      variant="flat"
-                      height="32"
-                      class="select-btn rounded-lg font-weight-bold px-3.5 shadow-xs"
-                      prepend-icon="lucide-plus"
-                      aria-label="Chọn sản phẩm"
-                      @click.stop="selectProduct(prod)"
+                      <v-icon size="12">lucide-minus</v-icon>
+                    </button>
+                    <input
+                      type="number"
+                      :value="getQty(prod.id)"
+                      min="1"
+                      class="stepper-input text-center font-weight-bold text-high-emphasis"
+                      aria-label="Số lượng sản phẩm"
+                      @input="onQtyInput(prod.id, $event)"
+                      @click.stop
+                    />
+                    <button
+                      type="button"
+                      class="stepper-btn stepper-btn-plus"
+                      aria-label="Tăng số lượng"
+                      title="Tăng 1"
+                      @click.stop="incrementQty(prod.id)"
                     >
-                      Chọn
-                    </v-btn>
+                      <v-icon size="12">lucide-plus</v-icon>
+                    </button>
                   </div>
+
+                  <!-- Select button -->
+                  <v-btn
+                    size="small"
+                    color="primary"
+                    variant="flat"
+                    height="32"
+                    class="select-btn rounded-lg font-weight-bold px-3.5 shadow-xs text-none"
+                    prepend-icon="lucide-plus"
+                    aria-label="Chọn sản phẩm"
+                    @click.stop="selectProduct(prod)"
+                  >
+                    Chọn
+                  </v-btn>
                 </div>
               </div>
             </div>
@@ -407,6 +412,9 @@
                 <div class="text-h6 font-weight-bold text-high-emphasis mb-1">{{ detailProduct.name }}</div>
                 <div class="d-flex align-center gap-2 flex-wrap text-caption text-medium-emphasis mb-2">
                   <v-chip size="x-small" color="primary" variant="tonal">Odoo ID: {{ detailProduct.odoo_id || detailProduct.id }}</v-chip>
+                  <v-chip size="x-small" :color="detailProduct.source === 'odoo' ? 'teal' : 'indigo'" variant="tonal">
+                    {{ detailProduct.source === 'odoo' ? 'Nguồn: Odoo ERP' : 'Nguồn: Directus' }}
+                  </v-chip>
                   <v-chip v-if="detailProduct.product_group_name" size="x-small" color="secondary" variant="tonal">
                     {{ detailProduct.product_group_name }}
                   </v-chip>
@@ -559,7 +567,7 @@ function onQtyInput(id: number | string, event: Event) {
   setQty(id, isNaN(val) ? 1 : val);
 }
 
-// Compute distinct product groups from Directus products
+// Compute distinct product groups from Directus and Odoo products
 const productGroups = computed(() => {
   const map = new Map<number | string, { id: number | string; name: string; count: number }>();
   for (const p of products.value) {
@@ -571,7 +579,11 @@ const productGroups = computed(() => {
     map.get(gId)!.count++;
   }
   return Array.from(map.values()).sort((a, b) => {
-    if (typeof a.id === 'number' && typeof b.id === 'number') return a.id - b.id;
+    const aIsNum = typeof a.id === 'number';
+    const bIsNum = typeof b.id === 'number';
+    if (aIsNum && bIsNum) return (a.id as number) - (b.id as number);
+    if (aIsNum) return -1;
+    if (bIsNum) return 1;
     return String(a.name).localeCompare(String(b.name));
   });
 });
@@ -731,6 +743,7 @@ function addFromDetail(product: OdooProduct) {
 .product-modal-card {
   padding: 10px 14px !important;
   border-radius: 10px !important;
+  min-height: 76px !important;
   border-color: var(--color-chalk, #e2e8f0) !important;
   background-color: var(--color-paper-white, #ffffff) !important;
   transition: all 0.18s ease-in-out;

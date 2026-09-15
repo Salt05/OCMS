@@ -40,6 +40,13 @@
         :is-mobile="isMobile"
         @back="onMobileBack"
         @toggle-pin="onTogglePin"
+        :send-fn="sendMessage"
+        :send-attachment-fn="sendAttachment"
+        :undo-fn="undoMessage"
+        :get-friend-status-fn="getFriendStatus"
+        :send-friend-request-fn="sendFriendRequest"
+        :accept-friend-request-fn="acceptFriendRequest"
+        :undo-friend-request-fn="undoFriendRequest"
         @send="sendMessage"
         @send-attachment="sendAttachment"
         @retry-message="retrySendMessage"
@@ -209,6 +216,7 @@
         v-if="showOrderPanel"
         :contact="selectedConv.contact || null"
         :conversation-id="selectedConv.id"
+        :conversation="selectedConv"
         @close="showOrderPanel = false"
         @created="fetchConversations()"
       />
@@ -278,6 +286,7 @@
               v-else-if="showOrderPanel"
               :contact="selectedConv.contact || null"
               :conversation-id="selectedConv.id"
+              :conversation="selectedConv"
               @close="closeMobilePanels"
               @created="fetchConversations()"
             />
@@ -335,7 +344,7 @@ const {
   loadingConvs, loadingMsgs, loadingMoreMsgs, sendingMsg, hasMoreMessages,
   searchQuery, accountFilter,
   fetchConversations, selectConversation, sendMessage, retrySendMessage, sendAttachment, retrySendAttachment, removeOptimisticMessage,
-  sendReaction,
+  sendReaction, undoMessage, getFriendStatus, sendFriendRequest, acceptFriendRequest, undoFriendRequest,
   loadMoreMessages,
   pauseAi, resumeAi, toggleAi,
   setContextBoundary,

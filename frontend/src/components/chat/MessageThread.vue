@@ -54,6 +54,82 @@
 
         <!-- Right: Action Icons (Add User, Video, Search, Info Sidebar Toggle) -->
         <div class="d-flex align-center gap-1 gap-md-2 flex-shrink-0">
+          <!-- Zalo Friend Status & Action Buttons (Only for 1-1 chats) -->
+          <template v-if="conversation.threadType === 'user' && !isMobile">
+            <!-- 1. Đã là bạn bè -->
+            <v-chip
+              v-if="friendState?.isFriend"
+              size="small"
+              color="success"
+              variant="tonal"
+              class="font-weight-medium px-2"
+              style="height: 28px;"
+              title="Đã là bạn bè trên Zalo"
+            >
+              <v-icon start size="14">lucide-user-check</v-icon>
+              Bạn bè
+            </v-chip>
+
+            <!-- 2. Đã gửi lời mời (Chờ khách đồng ý) -->
+            <v-menu v-else-if="friendState?.isRequesting" location="bottom end">
+              <template v-slot:activator="{ props: reqMenuProps }">
+                <v-chip
+                  v-bind="reqMenuProps"
+                  size="small"
+                  color="warning"
+                  variant="tonal"
+                  class="font-weight-medium px-2 cursor-pointer"
+                  style="height: 28px;"
+                  title="Đã gửi lời mời kết bạn"
+                >
+                  <v-icon start size="14">lucide-clock</v-icon>
+                  Đã gửi kết bạn
+                  <v-icon end size="12" class="ml-0.5 opacity-70">lucide-chevron-down</v-icon>
+                </v-chip>
+              </template>
+              <v-list density="compact" class="py-1 elevation-4 rounded-lg">
+                <v-list-item
+                  prepend-icon="lucide-user-x"
+                  title="Thu hồi lời mời kết bạn"
+                  class="text-error"
+                  :disabled="actionFriendLoading"
+                  @click="handleUndoFriendRequest"
+                />
+              </v-list>
+            </v-menu>
+
+            <!-- 3. Khách gửi lời mời kết bạn đến mình (Chờ mình đồng ý) -->
+            <v-btn
+              v-else-if="friendState?.isRequested"
+              size="small"
+              color="primary"
+              variant="flat"
+              class="text-none font-weight-bold px-2.5"
+              style="height: 28px;"
+              :loading="actionFriendLoading"
+              @click="handleAcceptFriend"
+              title="Chấp nhận lời mời kết bạn từ khách hàng"
+            >
+              <v-icon start size="14">lucide-user-plus</v-icon>
+              Đồng ý kết bạn
+            </v-btn>
+
+            <!-- 4. Chưa kết bạn: Nút Kết bạn -->
+            <v-btn
+              v-else-if="friendState && !friendState.isFriend && !friendState.loading"
+              size="small"
+              color="primary"
+              variant="outlined"
+              class="text-none font-weight-bold px-2.5"
+              style="height: 28px;"
+              @click="openSendFriendDialog"
+              title="Gửi lời mời kết bạn Zalo"
+            >
+              <v-icon start size="14">lucide-user-plus</v-icon>
+              Kết bạn
+            </v-btn>
+          </template>
+
           <!-- AI Auto Chat Control Badge (Only visible for 'customer' contacts) -->
           <v-menu
             v-if="conversation.threadType === 'user' && conversation.contact?.contactType === 'customer'"
@@ -237,6 +313,18 @@
                     <v-icon size="16" color="grey-darken-2">lucide-reply</v-icon>
                   </button>
 
+                  <!-- Undo Button (Chỉ dành cho tin nhắn của mình gửi và chưa bị thu hồi) -->
+                  <template v-if="msg.senderType === 'self' && !msg.isDeleted">
+                    <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
+                    <button
+                      class="reaction-btn"
+                      title="Thu hồi tin nhắn trên Zalo"
+                      @click.stop="openUndoConfirm(msg)"
+                    >
+                      <v-icon size="15" color="warning">lucide-undo-2</v-icon>
+                    </button>
+                  </template>
+
                   <!-- AI Context Marker Button -->
                   <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
                   <v-menu location="top center" :close-on-content-click="true">
@@ -301,9 +389,20 @@
                   )
                 ),
                 getImageCaption(msg) ? 'bubble-with-image-caption' : '',
-                msg.status === 'failed' ? 'bubble-failed-border' : ''
+                msg.status === 'failed' ? 'bubble-failed-border' : '',
+                msg.isDeleted ? 'bubble-revoked' : ''
               ]"
               style="word-wrap: break-word;">
+              <!-- Revoked Notice Banner (OCMS Anti-Delete Audit: Vẫn hiển thị nội dung gốc trên OCMS) -->
+              <div
+                v-if="msg.isDeleted"
+                class="revoked-notice-banner d-inline-flex align-center gap-1.5 px-2 py-0.5 mb-1.5 rounded font-weight-bold"
+                :class="msg.senderType === 'self' ? 'revoked-banner-self' : 'revoked-banner-contact'"
+              >
+                <v-icon size="12">lucide-undo-2</v-icon>
+                <span>{{ msg.senderType === 'self' ? 'Bạn đã thu hồi tin nhắn trên Zalo' : 'Khách đã thu hồi tin nhắn trên Zalo' }}</span>
+              </div>
+
               <!-- Quote Block -->
               <div v-if="msg.replyTo" class="quoted-message-box pa-2 mb-2 rounded text-caption border-l-2">
                 <div class="font-weight-bold text-caption text-truncate text-warning">
@@ -426,6 +525,101 @@
                     <div class="call-subtitle text-caption text-grey-darken-1 mt-0.5">
                       {{ getCallInfo(msg).subtitle }}
                     </div>
+                  </div>
+                </div>
+              </div>
+              <!-- Bank Card (Thẻ tài khoản ngân hàng / VietQR) -->
+              <div v-else-if="isBankCardMessage(msg)" class="zalo-bank-card-bubble">
+                <div 
+                  class="bank-card-surface" 
+                  :style="getBankCardSurfaceStyle(msg)"
+                >
+                  <!-- Header: Bank Logo + Bank Name -->
+                  <div class="bank-card-header d-flex align-center justify-space-between mb-3">
+                    <div class="d-flex align-center gap-2">
+                      <img 
+                        v-if="getBankCardData(msg)?.logoUrl" 
+                        :src="getBankCardData(msg)!.logoUrl" 
+                        alt="Bank Logo" 
+                        class="bank-card-logo"
+                      />
+                      <v-icon v-else color="white" size="20">lucide-credit-card</v-icon>
+                      <div class="bank-card-name text-body-2 font-weight-bold text-white">
+                        {{ getBankCardData(msg)?.bankName || 'Tài khoản ngân hàng' }}
+                      </div>
+                    </div>
+                    <v-chip size="x-small" color="white" variant="tonal" class="text-caption font-weight-bold px-1.5" style="height: 18px;">
+                      VietQR
+                    </v-chip>
+                  </div>
+
+                  <!-- Body: Account Info & QR -->
+                  <div class="bank-card-body d-flex align-center justify-space-between gap-3">
+                    <div class="bank-card-account-info flex-grow-1 min-w-0">
+                      <div class="text-caption font-weight-medium text-uppercase text-white" style="letter-spacing: 0.5px; opacity: 0.8; font-size: 11px;">
+                        Số tài khoản
+                      </div>
+                      <div class="bank-card-number text-h6 font-weight-bold text-white my-1 font-mono d-flex align-center gap-2">
+                        <span>{{ formatBankNumber(getBankCardData(msg)?.bankNum) || (getBankCardData(msg)?.loading ? 'Đang tải...' : 'Chưa có STK') }}</span>
+                        <v-btn
+                          v-if="getBankCardData(msg)?.bankNum"
+                          icon
+                          size="x-small"
+                          variant="text"
+                          color="white"
+                          class="bank-copy-btn"
+                          :title="copiedBankNum === getBankCardData(msg)?.bankNum ? 'Đã chép!' : 'Sao chép số tài khoản'"
+                          @click.stop="copyBankNumber(getBankCardData(msg)!.bankNum)"
+                        >
+                          <v-icon size="14">{{ copiedBankNum === getBankCardData(msg)?.bankNum ? 'lucide-check' : 'lucide-copy' }}</v-icon>
+                        </v-btn>
+                      </div>
+                      <div class="text-caption text-white text-truncate" style="opacity: 0.85; font-size: 11.5px;">
+                        Quét để chuyển khoản nhanh
+                      </div>
+                    </div>
+
+                    <!-- QR Code Thumbnail -->
+                    <div 
+                      v-if="getBankCardData(msg)?.qrUrl" 
+                      class="bank-card-qr-box flex-shrink-0 cursor-pointer"
+                      title="Bấm để phóng to mã QR"
+                      @click.stop="openSingleImagePreview(getBankCardData(msg)!.qrUrl!, 'Mã QR - ' + (getBankCardData(msg)?.bankName || 'Chuyển khoản'))"
+                    >
+                      <img 
+                        :src="getBankCardData(msg)!.qrUrl" 
+                        alt="QR Code" 
+                        class="bank-card-qr-img"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- Footer action buttons -->
+                  <div class="bank-card-actions mt-3 pt-2 d-flex align-center gap-2" style="border-top: 1px solid rgba(255,255,255,0.2) !important;">
+                    <v-btn
+                      v-if="getBankCardData(msg)?.bankNum"
+                      size="x-small"
+                      variant="elevated"
+                      color="white"
+                      class="text-none font-weight-bold text-primary flex-grow-1 elevation-1"
+                      style="height: 28px; border-radius: 6px; font-size: 12px;"
+                      @click.stop="copyBankNumber(getBankCardData(msg)!.bankNum)"
+                    >
+                      <v-icon size="13" class="mr-1">{{ copiedBankNum === getBankCardData(msg)?.bankNum ? 'lucide-check' : 'lucide-copy' }}</v-icon>
+                      {{ copiedBankNum === getBankCardData(msg)?.bankNum ? 'Đã chép STK' : 'Sao chép STK' }}
+                    </v-btn>
+                    <v-btn
+                      v-if="getBankCardData(msg)?.qrUrl"
+                      size="x-small"
+                      variant="tonal"
+                      color="white"
+                      class="text-none font-weight-bold flex-grow-1"
+                      style="height: 28px; border-radius: 6px; background: rgba(255,255,255,0.25); font-size: 12px;"
+                      @click.stop="openSingleImagePreview(getBankCardData(msg)!.qrUrl!, 'Mã QR - ' + (getBankCardData(msg)?.bankName || 'Chuyển khoản'))"
+                    >
+                      <v-icon size="13" class="mr-1">lucide-maximize-2</v-icon>
+                      Xem mã QR
+                    </v-btn>
                   </div>
                 </div>
               </div>
@@ -622,7 +816,7 @@
               <v-icon size="14">lucide-x</v-icon>
             </v-btn>
           </div>
-          <div class="quick-messages-list overflow-y-auto" style="max-height: 200px;">
+          <div class="quick-messages-list overflow-y-auto" style="max-height: 250px;">
             <div
               v-for="(msg, idx) in filteredQuickMessages"
               :key="msg.id"
@@ -637,12 +831,68 @@
                   <span class="text-caption text-grey font-weight-medium">— {{ msg.title }}</span>
                 </div>
                 <div class="text-caption text-grey-darken-1 text-truncate" style="max-width: 480px;">
-                  {{ msg.content }}
+                  <span v-if="msg.content?.trim()">{{ msg.content }}</span>
+                  <span v-else class="text-grey font-italic">(Chỉ gửi tệp / ảnh đính kèm)</span>
                 </div>
               </div>
-              <v-icon v-if="idx === activeQuickMessageIndex" size="16" color="primary">
-                lucide-corner-down-left
-              </v-icon>
+
+              <!-- Right: Attachments (images & files) on the far right + selection enter icon -->
+              <div class="d-flex align-center gap-2 flex-shrink-0 ml-2">
+                <!-- Images preview -->
+                <div
+                  v-if="getQuickMessageImages(msg).length > 0"
+                  class="quick-msg-images-preview d-flex align-center gap-1"
+                >
+                  <div
+                    v-for="(imgUrl, imgIdx) in getQuickMessageImages(msg).slice(0, 3)"
+                    :key="imgIdx"
+                    class="quick-msg-img-container"
+                    :title="`Xem ảnh ${imgIdx + 1}`"
+                    @click.stop="openSingleImagePreview(imgUrl, msg.title)"
+                  >
+                    <img
+                      :src="imgUrl"
+                      class="quick-msg-thumb"
+                      alt="Ảnh mẫu tin nhắn"
+                      loading="lazy"
+                    />
+                  </div>
+                </div>
+
+                <!-- Files preview chips -->
+                <div
+                  v-if="getQuickMessageFiles(msg).length > 0"
+                  class="quick-msg-files-preview d-flex align-center gap-1"
+                >
+                  <v-chip
+                    v-for="(fileItem, fIdx) in getQuickMessageFiles(msg).slice(0, 2)"
+                    :key="fIdx"
+                    size="x-small"
+                    variant="tonal"
+                    color="primary"
+                    class="px-1.5 font-weight-medium text-truncate"
+                    style="max-width: 110px; height: 20px;"
+                    :title="fileItem.name"
+                  >
+                    <v-icon size="11" class="mr-1">lucide-paperclip</v-icon>
+                    <span class="text-truncate">{{ fileItem.name }}</span>
+                  </v-chip>
+                  <v-chip
+                    v-if="getQuickMessageFiles(msg).length > 2"
+                    size="x-small"
+                    variant="tonal"
+                    color="primary"
+                    class="px-1 font-weight-bold"
+                    style="height: 20px;"
+                  >
+                    +{{ getQuickMessageFiles(msg).length - 2 }}
+                  </v-chip>
+                </div>
+
+                <v-icon v-if="idx === activeQuickMessageIndex" size="16" color="primary">
+                  lucide-corner-down-left
+                </v-icon>
+              </div>
             </div>
           </div>
         </div>
@@ -1019,6 +1269,67 @@
       </v-card>
     </v-dialog>
 
+    <!-- Dialog xác nhận thu hồi tin nhắn trên Zalo -->
+    <v-dialog v-model="undoDialogVisible" max-width="440">
+      <v-card class="rounded-xl pa-4">
+        <div class="d-flex align-center gap-2 mb-2 text-warning">
+          <v-icon size="22">lucide-alert-triangle</v-icon>
+          <span class="text-h6 font-weight-bold" style="font-size: 17px !important;">Thu hồi tin nhắn</span>
+        </div>
+        <p class="text-body-2 text-grey-darken-1 mb-4" style="line-height: 1.5;">
+          Tin nhắn này sẽ được thu hồi trên ứng dụng Zalo của khách hàng.
+          <br/>
+          <strong class="text-high-emphasis">Hệ thống OCMS vẫn lưu trữ và hiển thị nội dung gốc</strong> để đối soát nội bộ.
+        </p>
+        <div class="d-flex justify-end gap-2">
+          <v-btn variant="text" class="text-none font-weight-medium" @click="undoDialogVisible = false" :disabled="undoLoading">
+            Hủy
+          </v-btn>
+          <v-btn color="warning" variant="flat" class="text-none font-weight-bold" :loading="undoLoading" @click="executeUndoMessage">
+            <v-icon start size="16">lucide-undo-2</v-icon>
+            Thu hồi trên Zalo
+          </v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
+    <!-- Dialog gửi lời mời kết bạn Zalo -->
+    <v-dialog v-model="friendDialogVisible" max-width="460">
+      <v-card class="rounded-xl pa-4">
+        <div class="d-flex align-center justify-space-between mb-3 pb-2 border-b">
+          <div class="d-flex align-center gap-2 text-primary font-weight-bold">
+            <v-icon size="20">lucide-user-plus</v-icon>
+            <span style="font-size: 16px;">Gửi lời mời kết bạn Zalo</span>
+          </div>
+          <v-btn icon size="x-small" variant="text" @click="friendDialogVisible = false">
+            <v-icon size="16">lucide-x</v-icon>
+          </v-btn>
+        </div>
+        <p class="text-caption text-grey-darken-1 mb-2">
+          Gửi lời mời kết bạn từ tài khoản <strong>{{ conversation?.zaloAccount?.displayName || 'Zalo' }}</strong> đến khách hàng <strong>{{ getContactDisplayName(conversation) }}</strong>:
+        </p>
+        <v-textarea
+          v-model="friendGreetingMsg"
+          rows="3"
+          variant="outlined"
+          density="comfortable"
+          counter
+          maxlength="150"
+          placeholder="Nhập lời chào kết bạn..."
+          class="mb-2"
+        />
+        <div class="d-flex justify-end gap-2">
+          <v-btn variant="text" class="text-none" @click="friendDialogVisible = false" :disabled="actionFriendLoading">
+            Hủy
+          </v-btn>
+          <v-btn color="primary" variant="flat" class="text-none font-weight-bold" :loading="actionFriendLoading" @click="handleSendFriendRequest">
+            <v-icon start size="16">lucide-send</v-icon>
+            Gửi lời mời
+          </v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
     <!-- Sync snackbar -->
     <v-snackbar v-model="syncSnack.show" :color="syncSnack.color" timeout="3000">{{ syncSnack.text }}</v-snackbar>
   </div>
@@ -1053,6 +1364,13 @@ const props = defineProps<{
   showContactPanel?: boolean;
   showOrderPanel?: boolean;
   isMobile?: boolean;
+  sendFn?: (content: string, contentType?: string, isNote?: boolean, replyToId?: string) => Promise<any>;
+  sendAttachmentFn?: (file: File) => Promise<any>;
+  undoFn?: (conversationId: string, messageId: string) => Promise<any>;
+  getFriendStatusFn?: (conversationId: string) => Promise<any>;
+  sendFriendRequestFn?: (conversationId: string, msg?: string) => Promise<any>;
+  acceptFriendRequestFn?: (conversationId: string) => Promise<any>;
+  undoFriendRequestFn?: (conversationId: string) => Promise<any>;
 }>();
 
 const emit = defineEmits<{
@@ -1101,6 +1419,154 @@ function isContextStart(msg: Message): boolean {
 function isContextEnd(msg: Message): boolean {
   if (!props.conversation?.contextEndMsgId) return false;
   return props.conversation.contextEndMsgId === msg.id || props.conversation.contextEndMsgId === msg.zaloMsgId;
+}
+
+// ── Zalo Friend State & Methods ──────────────────────────────────────────────
+interface FriendStatusState {
+  isFriend: boolean;
+  isRequested: boolean;
+  isRequesting: boolean;
+  loading: boolean;
+}
+
+const friendState = ref<FriendStatusState | null>(null);
+const friendDialogVisible = ref(false);
+const friendGreetingMsg = ref('Xin chào! Mình kết bạn để trao đổi thông tin nhé.');
+const actionFriendLoading = ref(false);
+
+async function loadFriendStatus() {
+  if (!props.conversation || props.conversation.threadType !== 'user') {
+    friendState.value = null;
+    return;
+  }
+  const convId = props.conversation.id;
+  friendState.value = { isFriend: false, isRequested: false, isRequesting: false, loading: true };
+  try {
+    const data = props.getFriendStatusFn
+      ? await props.getFriendStatusFn(convId)
+      : (await api.get('/zalo/friend-status', { params: { conversationId: convId } })).data;
+    if (props.conversation?.id === convId) {
+      friendState.value = {
+        isFriend: Boolean(data.isFriend),
+        isRequested: Boolean(data.isRequested),
+        isRequesting: Boolean(data.isRequesting),
+        loading: false,
+      };
+    }
+  } catch (err) {
+    if (props.conversation?.id === convId) {
+      friendState.value = null;
+    }
+  }
+}
+
+watch(
+  () => props.conversation?.id,
+  () => {
+    loadFriendStatus();
+  },
+  { immediate: true },
+);
+
+function openSendFriendDialog() {
+  friendGreetingMsg.value = 'Xin chào! Mình kết bạn để trao đổi thông tin nhé.';
+  friendDialogVisible.value = true;
+}
+
+async function handleSendFriendRequest() {
+  if (!props.conversation) return;
+  actionFriendLoading.value = true;
+  try {
+    if (props.sendFriendRequestFn) {
+      await props.sendFriendRequestFn(props.conversation.id, friendGreetingMsg.value);
+    } else {
+      await api.post('/zalo/friend-request', {
+        conversationId: props.conversation.id,
+        msg: friendGreetingMsg.value,
+      });
+    }
+    friendDialogVisible.value = false;
+    syncSnack.value = { show: true, text: 'Đã gửi lời mời kết bạn thành công', color: 'success' };
+    await loadFriendStatus();
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'Không thể gửi lời mời kết bạn';
+    syncSnack.value = { show: true, text: msg, color: 'error' };
+  } finally {
+    actionFriendLoading.value = false;
+  }
+}
+
+async function handleAcceptFriend() {
+  if (!props.conversation) return;
+  actionFriendLoading.value = true;
+  try {
+    if (props.acceptFriendRequestFn) {
+      await props.acceptFriendRequestFn(props.conversation.id);
+    } else {
+      await api.post('/zalo/accept-friend', {
+        conversationId: props.conversation.id,
+      });
+    }
+    syncSnack.value = { show: true, text: 'Đã chấp nhận kết bạn thành công', color: 'success' };
+    await loadFriendStatus();
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'Không thể chấp nhận kết bạn';
+    syncSnack.value = { show: true, text: msg, color: 'error' };
+  } finally {
+    actionFriendLoading.value = false;
+  }
+}
+
+async function handleUndoFriendRequest() {
+  if (!props.conversation) return;
+  actionFriendLoading.value = true;
+  try {
+    if (props.undoFriendRequestFn) {
+      await props.undoFriendRequestFn(props.conversation.id);
+    } else {
+      await api.post('/zalo/undo-friend-request', {
+        conversationId: props.conversation.id,
+      });
+    }
+    syncSnack.value = { show: true, text: 'Đã thu hồi lời mời kết bạn', color: 'info' };
+    await loadFriendStatus();
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'Không thể thu hồi lời mời kết bạn';
+    syncSnack.value = { show: true, text: msg, color: 'error' };
+  } finally {
+    actionFriendLoading.value = false;
+  }
+}
+
+// ── Undo Message Logic ───────────────────────────────────────────────────────
+const undoDialogVisible = ref(false);
+const messageToUndo = ref<Message | null>(null);
+const undoLoading = ref(false);
+
+function openUndoConfirm(msg: Message) {
+  messageToUndo.value = msg;
+  undoDialogVisible.value = true;
+}
+
+async function executeUndoMessage() {
+  if (!messageToUndo.value || !props.conversation) return;
+  const msg = messageToUndo.value;
+  undoLoading.value = true;
+  try {
+    if (props.undoFn) {
+      await props.undoFn(props.conversation.id, msg.id);
+    } else {
+      await api.post(`/conversations/${props.conversation.id}/messages/${msg.id}/undo`);
+      msg.isDeleted = true;
+    }
+    undoDialogVisible.value = false;
+    syncSnack.value = { show: true, text: 'Đã thu hồi tin nhắn trên Zalo', color: 'success' };
+  } catch (err: any) {
+    const errorMsg = err?.response?.data?.error || err?.message || 'Không thể thu hồi tin nhắn';
+    syncSnack.value = { show: true, text: errorMsg, color: 'error' };
+  } finally {
+    undoLoading.value = false;
+  }
 }
 
 const isNoteMode = ref(false);
@@ -1451,7 +1917,62 @@ function selectMentionUser(u: any) {
   showMentionsDropdown.value = false;
 }
 
+interface QuickAttachmentItem {
+  type: 'image' | 'file';
+  url: string;
+  name: string;
+}
+
+function isImageUrlPath(url: string): boolean {
+  if (!url) return false;
+  const clean = url.split('?')[0].toLowerCase();
+  return /\.(jpe?g|png|webp|gif|svg|bmp|ico)$/i.test(clean);
+}
+
+function getQuickMessageAttachments(msg: any): QuickAttachmentItem[] {
+  if (!msg || !msg.attachments) return [];
+  let raw: any[] = [];
+  if (Array.isArray(msg.attachments)) {
+    raw = msg.attachments;
+  } else if (typeof msg.attachments === 'string') {
+    try {
+      const parsed = JSON.parse(msg.attachments);
+      if (Array.isArray(parsed)) raw = parsed;
+      else if (msg.attachments.startsWith('http')) raw = [{ url: msg.attachments }];
+    } catch {
+      if (msg.attachments.startsWith('http')) raw = [{ url: msg.attachments }];
+    }
+  }
+
+  return raw.map<QuickAttachmentItem>((a: any) => {
+    if (typeof a === 'string') {
+      const isImg = isImageUrlPath(a);
+      const name = a.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
+      return { type: isImg ? 'image' : 'file', url: a, name };
+    }
+    const url = a?.url || '';
+    const isImg = a?.type === 'image' || (!a?.type && isImageUrlPath(url));
+    const name = a?.name || url.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
+    return {
+      type: (a?.type === 'file' || (!isImg && a?.type !== 'image')) ? 'file' : 'image',
+      url,
+      name,
+    };
+  }).filter((a: QuickAttachmentItem) => typeof a.url === 'string' && a.url.trim().length > 0);
+}
+
+function getQuickMessageImages(msg: any): string[] {
+  return getQuickMessageAttachments(msg)
+    .filter(a => a.type === 'image')
+    .map(a => a.url);
+}
+
+function getQuickMessageFiles(msg: any): QuickAttachmentItem[] {
+  return getQuickMessageAttachments(msg).filter(a => a.type === 'file');
+}
+
 function selectQuickMessage(msg: any) {
+  if (!msg) return;
 
   let content = msg.content || '';
   if (content && props.conversation?.contact?.fullName) {
@@ -1459,7 +1980,6 @@ function selectQuickMessage(msg: any) {
   }
 
   const match = inputText.value.match(/(?:^|\s)\/[a-zA-Z0-9_-]*$/);
-  const imageObj = Array.isArray(msg.attachments) ? msg.attachments.find((a: any) => a.type === 'image') : null;
 
   // Populate text into input area
   if (content.trim()) {
@@ -1477,15 +1997,16 @@ function selectQuickMessage(msg: any) {
     }
   }
 
-  // Queue image as pending attachment instead of sending immediately
-  if (imageObj?.url) {
-    const fileName = imageObj.url.split('/').pop()?.split('?')[0] || 'image.jpg';
+  // Queue ALL attachments (images & files) as pending attachments
+  const attachments = getQuickMessageAttachments(msg);
+  for (const att of attachments) {
+    const isImg = att.type === 'image';
     pendingAttachments.value.push({
       id: generateUUID(),
-      url: imageObj.url,
-      name: fileName,
-      type: 'image',
-      preview: imageObj.url,
+      url: att.url,
+      name: att.name,
+      type: isImg ? 'image' : 'file',
+      preview: isImg ? att.url : '',
     });
   }
 
@@ -1860,16 +2381,29 @@ async function handleSend() {
   // Reset quote reply state
   replyingToMessage.value = null;
 
-  // 1. Send text message if present
-  if (textToSend.trim()) {
-    emit('send', textToSend, 'text', finalIsNote, quoteReplyId);
-  }
-
-  // 2. Send all pending attachments (but ONLY if not in note mode)
   const attachmentsToSend = finalIsNote ? [] : [...pendingAttachments.value];
   pendingAttachments.value = [];
   inputText.value = '';
 
+  // 1. Ưu tiên gửi tin nhắn văn bản trước và chờ hoàn tất
+  if (textToSend.trim()) {
+    try {
+      if (props.sendFn) {
+        await props.sendFn(textToSend, 'text', finalIsNote, quoteReplyId);
+      } else {
+        emit('send', textToSend, 'text', finalIsNote, quoteReplyId);
+      }
+    } catch (sendErr) {
+      console.error('Failed to send text message:', sendErr);
+    }
+
+    // Nếu có cả tệp/ảnh đính kèm theo sau, tạm dừng ngắn để Zalo tiếp nhận và hiển thị tin nhắn chữ trước
+    if (attachmentsToSend.length > 0) {
+      await new Promise(resolve => setTimeout(resolve, 800));
+    }
+  }
+
+  // 2. Gửi các tệp/hình ảnh đính kèm sau khi tin nhắn chữ đã gửi
   for (const att of attachmentsToSend) {
     try {
       let fileToSend: File | null = null;
@@ -1882,20 +2416,26 @@ async function handleSend() {
         try {
           const response = await fetch(att.url);
           const blob = await response.blob();
-          const ext = att.name.split('.').pop() || 'jpg';
-          const mimeType = blob.type || `image/${ext}`;
-          fileToSend = new File([blob], att.name, { type: mimeType });
+          const cleanName = att.name || 'file';
+          const ext = cleanName.split('.').pop() || (att.type === 'image' ? 'jpg' : 'bin');
+          const isImg = att.type === 'image' || isImageUrlPath(att.url || cleanName);
+          const mimeType = blob.type || (isImg ? `image/${ext}` : 'application/octet-stream');
+          fileToSend = new File([blob], cleanName, { type: mimeType });
         } catch (fetchErr) {
-          console.error('Failed to fetch image URL for upload:', fetchErr);
-          syncSnack.value = { show: true, text: `Không thể tải ảnh: ${att.name}`, color: 'error' };
+          console.error('Failed to fetch attachment URL for upload:', fetchErr);
+          syncSnack.value = { show: true, text: `Không thể tải tệp: ${att.name}`, color: 'error' };
           continue;
         }
       }
 
       if (fileToSend) {
-        emit('send-attachment', fileToSend);
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 300));
+        if (props.sendAttachmentFn) {
+          await props.sendAttachmentFn(fileToSend);
+        } else {
+          emit('send-attachment', fileToSend);
+        }
+        // Giãn cách giữa các lần gửi file liên tiếp để tránh nghẽn và đảm bảo thứ tự
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     } catch (err) {
       console.error('Failed to send attachment:', att.name, err);
@@ -2043,6 +2583,146 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
   return null;
 }
 
+interface BankCardData {
+  bankName: string;
+  bankNum: string;
+  bankBin?: string;
+  qrUrl?: string;
+  bgUrl?: string;
+  logoUrl?: string;
+  dataUrl?: string;
+  loading?: boolean;
+}
+
+const bankCardCache = ref<Record<string, BankCardData>>({});
+const bankCardFetching = new Set<string>();
+const copiedBankNum = ref<string | null>(null);
+
+function isBankCardMessage(msg: Message | any): boolean {
+  if (!msg) return false;
+  if (msg.contentType === 'bank_card') return true;
+  if (!msg.content) return false;
+  if (typeof msg.content === 'string') {
+    return msg.content.includes('zinstant.bankcard') || msg.content.includes('templateId=11845');
+  }
+  return false;
+}
+
+function copyBankNumber(num: string) {
+  if (!num) return;
+  const clean = num.replace(/\s+/g, '');
+  navigator.clipboard?.writeText(clean);
+  copiedBankNum.value = num;
+  setTimeout(() => {
+    if (copiedBankNum.value === num) {
+      copiedBankNum.value = null;
+    }
+  }, 2000);
+}
+
+function formatBankNumber(num?: string): string {
+  if (!num) return '';
+  const clean = num.replace(/\s+/g, '');
+  return clean.replace(/(\d{4})(?=\d)/g, '$1 ');
+}
+
+async function loadBankCardDetails(msgId: string, content: string) {
+  if (bankCardCache.value[msgId] && !bankCardCache.value[msgId].loading) return;
+  if (bankCardFetching.has(msgId)) return;
+  bankCardFetching.add(msgId);
+
+  let dataUrl = '';
+  let fallbackName = 'Tài khoản ngân hàng';
+  try {
+    const p = typeof content === 'string' ? JSON.parse(content) : content;
+    let params = p.params;
+    if (typeof params === 'string') {
+      try { params = JSON.parse(params); } catch {}
+    }
+    dataUrl = params?.pcItem?.data_url || params?.item?.data_url || params?.bubbleItem?.data_url || '';
+  } catch {}
+
+  bankCardCache.value[msgId] = {
+    bankName: fallbackName,
+    bankNum: '',
+    loading: !!dataUrl,
+    dataUrl
+  };
+
+  if (!dataUrl) {
+    bankCardFetching.delete(msgId);
+    return;
+  }
+
+  try {
+    const res = await fetch(dataUrl);
+    if (!res.ok) throw new Error('Failed to fetch bankcard template');
+    const t = await res.text();
+
+    const bankNameMatch = t.match(/class=\"normal_text[^\"]*\">([^<]+)<\/p>/) || t.match(/\"bankName\":\\\"([^\\\"]+)\\\"/);
+    const bankNumMatch = t.match(/class=\"number_text[^\"]*\">([0-9\s]+)<\/p>/) || t.match(/\"bankNum\":\\\"([0-9\s]+)\\\"/);
+    const qrMatch = t.match(/content:\s*url\((https:\/\/group-qr\.zdn\.vn\/[^\)]+)\)/);
+    const bgMatch = t.match(/url\((https:\/\/res-zalo\.zadn\.vn\/upload\/media\/[^\)]+_BG_[^\)]+)\)/);
+    const logoMatch = t.match(/content:\s*url\((https:\/\/res-zalo\.zadn\.vn\/upload\/media\/[^\)]+_LOGO_[^\)]+)\)/);
+    const binMatch = t.match(/id=\"bank_bin\">([0-9]+)<\/p>/);
+
+    const bName = bankNameMatch ? bankNameMatch[1].trim() : fallbackName;
+    const bNum = bankNumMatch ? bankNumMatch[1].trim() : '';
+    const bBin = binMatch ? binMatch[1].trim() : '';
+
+    let qrUrl = qrMatch ? qrMatch[1] : undefined;
+    if (!qrUrl && bNum) {
+      qrUrl = `https://img.vietqr.io/image/${bBin || 'MB'}-${bNum}-compact2.png`;
+    }
+
+    bankCardCache.value[msgId] = {
+      bankName: bName,
+      bankNum: bNum,
+      bankBin: bBin,
+      qrUrl,
+      bgUrl: bgMatch ? bgMatch[1] : undefined,
+      logoUrl: logoMatch ? logoMatch[1] : undefined,
+      dataUrl,
+      loading: false
+    };
+  } catch (err) {
+    console.warn('[BankCard] Error loading card details:', err);
+    bankCardCache.value[msgId] = {
+      ...bankCardCache.value[msgId],
+      loading: false
+    };
+  } finally {
+    bankCardFetching.delete(msgId);
+  }
+}
+
+function getBankCardData(msg: Message | any): BankCardData {
+  const id = msg.id || 'temp_' + (msg.sentAt || Date.now());
+  if (!bankCardCache.value[id]) {
+    loadBankCardDetails(id, msg.content || '');
+    return {
+      bankName: 'Tài khoản ngân hàng',
+      bankNum: '',
+      loading: true
+    };
+  }
+  return bankCardCache.value[id];
+}
+
+function getBankCardSurfaceStyle(msg: Message | any) {
+  const data = getBankCardData(msg);
+  if (data?.bgUrl) {
+    return {
+      backgroundImage: `url(${data.bgUrl})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center'
+    };
+  }
+  return {
+    background: 'linear-gradient(135deg, #0e1e40 0%, #173b80 50%, #0052cc 100%)'
+  };
+}
+
 function isTransparentBubble(msg: Message): boolean {
   if (msg.isDeleted || isUndoSyncMessage(msg)) return false;
   if (getImageUrl(msg) && getImageCaption(msg)) return false;
@@ -2050,11 +2730,10 @@ function isTransparentBubble(msg: Message): boolean {
     msg.contentType === 'sticker' ||
     msg.contentType === 'gif' ||
     getImageUrl(msg) ||
-    isVideoMessage(msg)
+    isVideoMessage(msg) ||
+    isBankCardMessage(msg)
   );
 }
-
-
 
 function parseDisplayContentHtml(content: string | null): string {
   if (!content) return '';
@@ -2065,6 +2744,9 @@ function parseDisplayContentHtml(content: string | null): string {
       if (p.action?.includes('call') || p.action === 'recommened.calltime' || isCallMessage({ content })) {
         const info = getCallInfo({ content });
         return `${info.title}${info.subtitle ? ` (${info.subtitle})` : ''}`;
+      }
+      if (p.action === 'zinstant.bankcard' || (typeof p.action === 'string' && p.action.includes('bankcard')) || isBankCardMessage({ content })) {
+        return '💳 [Tài khoản ngân hàng]';
       }
       if (p.title && p.title !== 'sendBubbleMessage' && p.href) text = `🔗 ${p.title}`;
       else if (p.title && p.title !== 'sendBubbleMessage') text = p.title;
@@ -2601,6 +3283,55 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   background-color: rgba(255, 255, 255, 0.08);
 }
 
+/* Quick message attached images in autocomplete dropdown */
+.quick-msg-images-preview {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-msg-img-container {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.quick-msg-thumb {
+  width: 38px;
+  height: 38px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1.5px solid rgba(0, 0, 0, 0.12);
+  background-color: #f1f3f5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s ease, border-color 0.2s ease;
+  cursor: pointer;
+  display: block;
+  transform-origin: center right;
+}
+
+.quick-msg-thumb:hover {
+  transform: scale(2.2);
+  position: relative;
+  z-index: 50;
+  border-color: #1976d2;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.v-theme--dark .quick-msg-thumb {
+  border-color: rgba(255, 255, 255, 0.2);
+  background-color: #2a2a2a;
+}
+
+.v-theme--dark .quick-msg-thumb:hover {
+  border-color: #64b5f6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
 /* ── Pending Attachments Preview Bar ── */
 .pending-attachments-bar {
   background: rgba(0, 0, 0, 0.02);
@@ -3124,6 +3855,96 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 
 .chat-input-area.is-drag-over {
   border-color: rgba(var(--v-theme-primary), 0.8) !important;
+}
+
+/* ── Bank Card Bubble Styles (Zalo Zinstant Bankcard) ── */
+.zalo-bank-card-bubble {
+  max-width: 320px;
+  width: 100%;
+}
+
+.bank-card-surface {
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  position: relative;
+  overflow: hidden;
+  background-color: #0e1e40;
+}
+
+.bank-card-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 1px;
+}
+
+.bank-card-number {
+  font-family: 'Consolas', 'Courier New', monospace;
+  letter-spacing: 0.5px;
+}
+
+.bank-copy-btn {
+  width: 24px;
+  height: 24px;
+  opacity: 0.85;
+}
+.bank-copy-btn:hover {
+  opacity: 1;
+}
+
+.bank-card-qr-box {
+  width: 74px;
+  height: 74px;
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.bank-card-qr-box:hover {
+  transform: scale(1.05);
+}
+
+.bank-card-qr-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* ── Revoked Message Bubble (OCMS Anti-Revoke Audit) ── */
+.bubble-revoked {
+  border: 1.5px dashed rgba(245, 158, 11, 0.7) !important;
+  position: relative;
+}
+.bubble-revoked.bubble-outbound {
+  background-color: rgba(26, 115, 232, 0.88) !important;
+}
+.bubble-revoked.bubble-inbound {
+  background-color: rgba(243, 244, 246, 0.95) !important;
+  border-color: rgba(239, 68, 68, 0.6) !important;
+}
+.revoked-notice-banner {
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.1px;
+  width: fit-content;
+}
+.revoked-banner-self {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+.revoked-banner-contact {
+  background: rgba(239, 68, 68, 0.14);
+  color: #dc2626;
 }
 </style>
 

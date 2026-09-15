@@ -1,0 +1,1774 @@
+openapi: 3.0.3
+info:
+  title: OCMS & Store LaPet Omnichannel Master API
+  description: >
+    Hợp đồng giao tiếp API chuẩn hóa toàn diện (Master OpenAPI Specification) giữa
+    Hệ thống Quản trị Vận hành Đa kênh OCMS và Website Bán Hàng / Cổng Đại lý (store-lapet),
+    đồng thời tích hợp liên thông với ERP Odoo và Kênh Zalo OA.
+    
+    Tài liệu này bao quát toàn bộ các nhóm tính năng vận hành:
+    1. **Orders (Đơn hàng & Tiếp nhận chuẩn):** Cổng tiếp nhận đơn hàng bất đồng bộ, tra cứu trạng thái, duyệt đơn Odoo, hủy đơn và thống kê.
+    2. **Products & Inventory (Sản phẩm & Tồn kho):** Danh mục sản phẩm, bảng giá đại lý/bán lẻ, kiểm tra tồn kho Odoo thời gian thực.
+    3. **Promotions & Pricing Engine (Khuyến mãi & Động cơ tính giá):** Động cơ tính chiết khấu bậc thang tự động cho giỏ hàng, tư vấn ưu đãi bằng AI.
+    4. **Customers & Dealers (Khách hàng & Đại lý B2B):** Xác thực OTP/Mật khẩu, hồ sơ đại lý, hạn mức công nợ, doanh số và quản lý danh bạ CRM.
+    5. **Omnichannel Chat (Hội thoại & Zalo):** Quản lý luồng trò chuyện, gửi tin nhắn trao đổi, tự động bóc tách đơn hàng AI từ chat.
+    6. **Webhooks & Sync (Thanh toán & Đồng bộ):** Webhook thanh toán tự động VietQR và kích hoạt đồng bộ dữ liệu Odoo ERP.
+  version: 2.0.0
+  contact:
+    name: OCMS Integration Architecture Team
+    email: dev@lapet.vn
+
+servers:
+  - url: http://localhost:3000
+    description: Môi trường phát triển cục bộ (Local Development)
+  - url: https://api.ocms.lapet.vn
+    description: Môi trường Production
+
+tags:
+  - name: Orders
+    description: Tiếp nhận, quản lý và xử lý đơn hàng chuẩn hóa liên thông Odoo & Zalo
+  - name: Products
+    description: Quản lý danh mục sản phẩm, bảng giá và tra cứu tồn kho thực tế
+  - name: Pricing & Promotions
+    description: Động cơ tính giá, chiết khấu bậc thang và chính sách khuyến mãi tự động
+  - name: Customers & Auth
+    description: Xác thực người dùng, hồ sơ đại lý B2B và quản lý danh bạ khách hàng
+  - name: Chat & Zalo
+    description: Hội thoại đa kênh, gửi tin nhắn Zalo và bóc tách đơn bằng AI
+  - name: Webhooks & Sync
+    description: Webhook thanh toán VietQR và kích hoạt đồng bộ dữ liệu Odoo ERP
+  - name: Universal Router
+    description: Cổng điều phối trung tâm Universal Router (Gateway đa hệ thống sang Odoo Test/Prod)
+
+paths:
+  # ============================================================================
+  # 1. ORDERS MODULE (QUẢN LÝ ĐƠN HÀNG)
+  # ============================================================================
+
+  /api/v1/orders/standard:
+    post:
+      tags:
+        - Orders
+      summary: Cổng tiếp nhận đơn hàng chuẩn hóa từ Web Bán Hàng (Hàng đợi bất đồng bộ)
+      description: >
+        Nhận gói đơn hàng hoàn chỉnh từ Web Bán Hàng (store-lapet), kiểm duyệt dữ liệu tự động
+        qua bộ kiểm duyệt Schema, ghi nhận trạng thái ban đầu `pending` vào CSDL OCMS, và ném gói việc
+        vào Trục Hàng Đợi (Redis Queue) để Worker tạo Sale Order trên Odoo và gửi tin Zalo ngầm.
+      operationId: createStandardOrder
+      requestBody:
+        required: true
+        description: Dữ liệu đơn hàng đóng gói từ giỏ hàng và thanh toán trên Web
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StandardOrderPayload'
+            example:
+              order_code: "WEB-20260909-8A1B"
+              partner_id: 17871
+              customer_name: "Nguyễn Văn An"
+              customer_phone: "0901234567"
+              customer_email: "nguyenvanan@example.com"
+              company_name: "Công Ty TNHH Thú Cưng PetCare"
+              vat_number: "0312345678"
+              shipping_address: "123 Đường Nguyễn Trãi, Phường 2, Quận 5, TP. Hồ Chí Minh"
+              items:
+                - sku: "PAT-LAMB-100"
+                  product_name: "Pate Thịt Cừu Cho Chó 100g"
+                  odoo_product_id: 1042
+                  quantity: 10
+                  price: 25000
+                - sku: "BONE-BEEF-M"
+                  product_name: "Xương Gặm Vị Bò Size M"
+                  odoo_product_id: 1058
+                  quantity: 2
+                  price: 45000
+              subtotal_amount: 340000
+              discount_amount: 20000
+              shipping_fee: 30000
+              total_amount: 350000
+              voucher_code: "LAPETHE2026"
+              payment_method: "cod"
+              note: "Giao trong giờ hành chính, gọi trước khi giao 15 phút"
+      responses:
+        '201':
+          description: Đơn hàng hợp lệ và đã được đưa vào hàng đợi xử lý thành công (< 0.1s)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCreatedResponse'
+        '400':
+          description: Dữ liệu đơn hàng sai định dạng hoặc thiếu các trường bắt buộc
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '500':
+          description: Lỗi máy chủ nội bộ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalErrorResponse'
+
+  /api/v1/orders/standard/{order_code}:
+    get:
+      tags:
+        - Orders
+      summary: Tra cứu tiến độ & trạng thái đơn hàng thời gian thực
+      description: >
+        Cho phép Web Bán Hàng hoặc khách hàng tra cứu trạng thái đơn hàng theo mã `order_code`
+        hoặc mã theo dõi `tracking_id`. Trả về trạng thái xử lý trên OCMS và liên kết đơn hàng Odoo nếu đã tạo thành công.
+      operationId: getStandardOrderStatus
+      parameters:
+        - name: order_code
+          in: path
+          required: true
+          description: Mã đơn hàng (ví dụ WEB-20260909-8A1B) hoặc UUID tracking_id
+          schema:
+            type: string
+          example: "WEB-20260909-8A1B"
+      responses:
+        '200':
+          description: Thông tin tiến độ đơn hàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusDetailResponse'
+        '404':
+          description: Không tìm thấy đơn hàng với mã tương ứng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/orders/standard/{order_code}/cancel:
+    post:
+      tags:
+        - Orders
+      summary: Yêu cầu hủy đơn hàng từ phía Web
+      description: Hủy đơn hàng nếu đơn vẫn còn ở trạng thái `pending` hoặc `draft` chưa xuất kho.
+      operationId: cancelStandardOrder
+      parameters:
+        - name: order_code
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "WEB-20260909-8A1B"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Lý do hủy đơn
+                  example: "Khách đổi ý muốn thay đổi số lượng sản phẩm"
+      responses:
+        '200':
+          description: Hủy đơn hàng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleSuccessResponse'
+        '400':
+          description: Không thể hủy đơn do đơn hàng đã được giao hoặc hoàn tất
+
+  /api/v1/orders:
+    get:
+      tags:
+        - Orders
+      summary: Danh sách đơn hàng trong trung tâm quản trị OCMS
+      description: Lấy danh sách đơn hàng đã lưu trong OCMS, hỗ trợ bộ lọc nâng cao và phân trang.
+      operationId: listOrders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 25
+        - name: search
+          in: query
+          description: Tìm theo mã đơn, tên khách, số điện thoại
+          schema:
+            type: string
+        - name: state
+          in: query
+          description: Trạng thái đơn hàng Odoo (draft, sale, done, cancel, pending)
+          schema:
+            type: string
+        - name: salesperson
+          in: query
+          description: Lọc theo nhân viên phụ trách bán hàng
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Ngày bắt đầu (YYYY-MM-DD)
+          schema:
+            type: string
+        - name: to
+          in: query
+          description: Ngày kết thúc (YYYY-MM-DD)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách đơn hàng phân trang
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+
+  /api/v1/orders/{id}:
+    get:
+      tags:
+        - Orders
+      summary: Chi tiết đơn hàng nội bộ kèm toàn bộ dòng sản phẩm
+      description: Lấy đầy đủ chi tiết đơn hàng, dòng sản phẩm, chính sách khuyến mãi đã áp dụng và file PDF báo giá Odoo.
+      operationId: getOrderDetail
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID đơn hàng nội bộ OCMS (UUID) hoặc Odoo Order ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Chi tiết đơn hàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDetailResponse'
+        '404':
+          description: Không tìm thấy đơn hàng
+
+    put:
+      tags:
+        - Orders
+      summary: Chỉnh sửa chi tiết đơn hàng (sản phẩm, giá, CK, ghi chú) qua Router
+      description: >
+        Cho phép nhân viên điều chỉnh danh sách sản phẩm, số lượng, đơn giá, chiết khấu, ghi chú đơn và ghi chú giao việc.
+        Lệnh cập nhật tự động đi qua Universal Router Gateway (cổng 3001) sang đúng máy chủ Odoo đích (Test hoặc Prod).
+      operationId: updateOrderDetail
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID đơn hàng nội bộ OCMS hoặc Odoo Order ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderUpdatePayload'
+      responses:
+        '200':
+          description: Cập nhật đơn hàng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderUpdateResponse'
+        '404':
+          description: Không tìm thấy đơn hàng cần chỉnh sửa
+
+  /api/v1/orders/{id}/activity:
+    post:
+      tags:
+        - Orders
+      summary: Thêm mới hoặc cập nhật Ghi chú giao việc (Hoạt động Odoo mail.activity) qua Router
+      description: >
+        Tạo mới hoặc cập nhật nội dung ghi chú giao việc cho đơn hàng.
+        Hành động được tự động điều phối qua Universal Router Gateway sang đúng máy chủ Odoo đích (Test hoặc Prod).
+      operationId: saveOrderActivity
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID đơn hàng nội bộ OCMS hoặc Odoo Order ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - summary
+              properties:
+                summary:
+                  type: string
+                  description: Nội dung ghi chú giao việc
+                  example: "đã giao 4/9 xuat nhap PTQuyen"
+      responses:
+        '200':
+          description: Cập nhật ghi chú giao việc thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  activitySummary:
+                    type: string
+                    nullable: true
+                    example: "đã giao 4/9 xuat nhap PTQuyen"
+
+    delete:
+      tags:
+        - Orders
+      summary: Xóa Ghi chú giao việc (Hoạt động Odoo mail.activity) qua Router
+      description: >
+        Xóa bỏ hoạt động / ghi chú giao việc khỏi đơn hàng.
+        Lệnh xóa được tự động điều phối qua Universal Router Gateway sang Odoo đích (mail.activity.unlink).
+      operationId: deleteOrderActivity
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID đơn hàng nội bộ OCMS hoặc Odoo Order ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Đã xóa ghi chú giao việc thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  activitySummary:
+                    type: string
+                    nullable: true
+                    example: null
+
+  /api/v1/orders/{id}/confirm:
+    post:
+      tags:
+        - Orders
+      summary: Duyệt đơn hàng nháp, tạo đơn chính thức trên Odoo và gửi thông báo Zalo
+      description: >
+        Duyệt đơn hàng (từ Web hoặc Chatbot AI), gọi dịch vụ Odoo ERP để tạo Báo giá/Sale Order chính thức,
+        đồng thời kích hoạt gửi tin nhắn xác nhận Zalo và đính kèm file báo giá PDF cho khách hàng.
+      operationId: confirmOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                customNote:
+                  type: string
+                  example: "Đơn duyệt gấp giao trước 16h"
+                customZaloMessage:
+                  type: string
+                  example: "Dạ đơn hàng đã được duyệt, nhân viên kho đang tiến hành đóng hàng ạ!"
+      responses:
+        '200':
+          description: Xác nhận đơn và tạo đơn Odoo thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderConfirmedResponse'
+
+  /api/v1/orders/stats:
+    get:
+      tags:
+        - Orders
+      summary: Thống kê tổng quan đơn hàng & doanh số
+      operationId: getOrderStats
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dữ liệu thống kê doanh số và số lượng đơn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatsResponse'
+
+  /api/v1/orders/ai-extract:
+    post:
+      tags:
+        - Orders
+      summary: Tự động bóc tách đơn hàng từ tin nhắn chat bằng AI
+      description: Phân tích hội thoại Zalo để tự động trích xuất danh sách sản phẩm, số lượng, tên người nhận và địa chỉ giao hàng.
+      operationId: extractOrderAi
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                conversationId:
+                  type: string
+                  description: ID cuộc trò chuyện cần bóc tách đơn
+                text:
+                  type: string
+                  description: Đoạn văn bản chỉ đạo của nhân viên (nếu có)
+      responses:
+        '200':
+          description: Kết quả đơn hàng nháp do AI trích xuất
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiDraftOrderResponse'
+
+  # ============================================================================
+  # 2. PRODUCTS MODULE (SẢN PHẨM & BẢNG GIÁ)
+  # ============================================================================
+
+  /api/v1/products:
+    get:
+      tags:
+        - Products
+      summary: Danh mục sản phẩm (Đồng bộ từ Odoo & Directus)
+      description: >
+        Lấy danh sách sản phẩm phục vụ hiển thị trên Web Bán Hàng và trung tâm OCMS.
+        Bao gồm tên, SKU, giá niêm yết bán lẻ, giá sỉ đại lý, hình ảnh và phân loại.
+      operationId: listProducts
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: search
+          in: query
+          description: Tìm kiếm theo tên sản phẩm hoặc SKU
+          schema:
+            type: string
+        - name: category
+          in: query
+          description: Lọc theo danh mục (Pate, Xương gặm, Bánh thưởng...)
+          schema:
+            type: string
+        - name: brand
+          in: query
+          description: Lọc theo thương hiệu (Lapati, Dexinbone, INU...)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách sản phẩm thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductListResponse'
+
+  /api/v1/products/{id}:
+    get:
+      tags:
+        - Products
+      summary: Xem chi tiết sản phẩm
+      description: Trả về thông tin đầy đủ gồm mô tả, thành phần dinh dưỡng, hướng dẫn bảo quản và giá bán.
+      operationId: getProductDetail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID sản phẩm hoặc SKU
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Chi tiết sản phẩm
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductDetailResponse'
+        '404':
+          description: Không tìm thấy sản phẩm
+
+  /api/v1/products/inventory/{id}:
+    get:
+      tags:
+        - Products
+      summary: Kiểm tra tồn kho thời gian thực từ kho Odoo ERP
+      description: Tra cứu trực tiếp số lượng tồn kho khả dụng (`qty_available`) để hiển thị trạng thái "Còn hàng", "Hết hàng" trên Web.
+      operationId: checkProductInventory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Odoo Product ID hoặc SKU
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trạng thái tồn kho của sản phẩm
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sku:
+                    type: string
+                  odooId:
+                    type: integer
+                  isInStock:
+                    type: boolean
+                  qtyAvailable:
+                    type: number
+                  statusText:
+                    type: string
+                    enum: [Còn hàng, Sắp hết, Hết hàng]
+
+  # ============================================================================
+  # 3. PRICING & PROMOTIONS (ĐỘNG CƠ TÍNH GIÁ & KHUYẾN MÃI)
+  # ============================================================================
+
+  /api/v1/promotions:
+    get:
+      tags:
+        - Pricing & Promotions
+      summary: Danh sách chương trình ưu đãi & chiết khấu đang áp dụng
+      description: Lấy danh sách các mốc chiết khấu doanh số và chính sách quà tặng kèm đang có hiệu lực.
+      operationId: listPromotions
+      responses:
+        '200':
+          description: Danh sách chương trình khuyến mãi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromotionListResponse'
+
+  /api/v1/pricing/evaluate:
+    post:
+      tags:
+        - Pricing & Promotions
+      summary: Động cơ tính giá & chiết khấu giỏ hàng tự động (Pricing Engine)
+      description: >
+        Nhận danh sách sản phẩm trong giỏ hàng và thông tin khách hàng, chạy qua Động cơ Khuyến mãi (Promotion Engine)
+        để tự động tính toán: tỷ lệ chiết khấu doanh số theo mốc, quà tặng kèm miễn phí (Free items) và tổng tiền cuối cùng.
+      operationId: evaluatePricing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingEvaluationRequest'
+      responses:
+        '200':
+          description: Kết quả tính toán giá và khuyến mãi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricingEvaluationResponse'
+
+  /api/v1/pricing/ai-promotions:
+    post:
+      tags:
+        - Pricing & Promotions
+      summary: Tư vấn khuyến mãi tối ưu bằng AI cho khách hàng
+      description: AI gợi ý khách hàng mua thêm để đạt mốc chiết khấu cao hơn (Upselling).
+      operationId: getAiPromotionConsultation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingEvaluationRequest'
+      responses:
+        '200':
+          description: Đề xuất ưu đãi tối ưu từ AI
+
+  # ============================================================================
+  # 4. CUSTOMERS & AUTH (KHÁCH HÀNG & ĐẠI LÝ B2B)
+  # ============================================================================
+
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Customers & Auth
+      summary: Đăng nhập hệ thống (Mật khẩu hoặc Token)
+      operationId: authLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Đăng nhập thành công, trả về JWT Token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '401':
+          description: Sai thông tin đăng nhập
+
+  /api/v1/auth/send-otp:
+    post:
+      tags:
+        - Customers & Auth
+      summary: Gửi mã OTP xác thực đăng nhập nhanh cho Đại lý (Email/SMS)
+      operationId: sendOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - target
+              properties:
+                target:
+                  type: string
+                  description: Email hoặc số điện thoại của đại lý
+                  example: "daily@lapet.vn"
+      responses:
+        '200':
+          description: Mã OTP đã được gửi thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleSuccessResponse'
+
+  /api/v1/auth/verify-otp:
+    post:
+      tags:
+        - Customers & Auth
+      summary: Xác thực mã OTP đăng nhập cho Đại lý
+      operationId: verifyOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - target
+                - otp
+              properties:
+                target:
+                  type: string
+                otp:
+                  type: string
+                  example: "123456"
+      responses:
+        '200':
+          description: Xác thực thành công, cấp quyền truy cập đại lý
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+
+  /api/v1/customers/me:
+    get:
+      tags:
+        - Customers & Auth
+      summary: Lấy thông tin hồ sơ đại lý hiện tại (store-lapet)
+      description: Trả về thông tin đại lý, mã đối tác Odoo, bảng giá đang áp dụng, danh sách địa chỉ giao hàng đã lưu.
+      operationId: getCustomerProfile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Thông tin hồ sơ đại lý
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerProfileResponse'
+
+  /api/v1/customers/{partner_id}/sales-summary:
+    get:
+      tags:
+        - Customers & Auth
+      summary: Tóm tắt doanh số & chỉ tiêu bán hàng của đại lý từ Odoo
+      operationId: getCustomerSalesSummary
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Báo cáo doanh số và đơn hàng của đại lý
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  partnerId:
+                    type: integer
+                  totalOrders:
+                    type: integer
+                  totalRevenue:
+                    type: number
+                  lastOrderDate:
+                    type: string
+
+  /api/v1/contacts:
+    get:
+      tags:
+        - Customers & Auth
+      summary: Quản lý danh bạ khách hàng CRM (Nội bộ OCMS)
+      operationId: listContacts
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Danh sách liên hệ CRM
+
+  /api/v1/contacts/{id}/orders:
+    get:
+      tags:
+        - Customers & Auth
+      summary: Lịch sử đơn hàng của một khách hàng cụ thể
+      operationId: getContactOrders
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách đơn hàng của khách hàng
+
+  # ============================================================================
+  # 5. CHAT & ZALO MODULE (HỘI THOẠI & TIN NHẮN)
+  # ============================================================================
+
+  /api/v1/conversations:
+    get:
+      tags:
+        - Chat & Zalo
+      summary: Danh sách hội thoại tin nhắn khách hàng (Zalo OA / Bot)
+      operationId: listConversations
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Danh sách cuộc trò chuyện đang hoạt động
+
+  /api/v1/conversations/{id}/messages:
+    get:
+      tags:
+        - Chat & Zalo
+      summary: Lịch sử tin nhắn trong một cuộc trò chuyện
+      operationId: getConversationMessages
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách tin nhắn
+
+    post:
+      tags:
+        - Chat & Zalo
+      summary: Gửi tin nhắn phản hồi cho khách hàng qua Zalo
+      operationId: sendChatMessage
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - content
+              properties:
+                content:
+                  type: string
+                  example: "Dạ em đã nhận được yêu cầu của anh chị ạ!"
+      responses:
+        '200':
+          description: Tin nhắn đã được gửi thành công
+
+  # ============================================================================
+  # 6. WEBHOOKS & SYNC (THANH TOÁN & ĐỒNG BỘ)
+  # ============================================================================
+
+  /api/v1/webhooks/vietqr:
+    post:
+      tags:
+        - Webhooks & Sync
+      summary: Webhook nhận thông báo biến động số dư VietQR / Ngân hàng
+      description: Khi khách chuyển khoản thanh toán đơn hàng, hệ thống ngân hàng bắn webhook về đây để OCMS tự động cập nhật đơn hàng thành Đã Thanh Toán.
+      operationId: receiveVietQrWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transactionId:
+                  type: string
+                amount:
+                  type: number
+                content:
+                  type: string
+                  description: Nội dung chuyển khoản (chứa mã đơn hàng WEB-...)
+                  example: "WEB-20260909-8A1B THANH TOAN DON HANG"
+                transDate:
+                  type: string
+      responses:
+        '200':
+          description: Đã xác nhận giao dịch thanh toán thành công
+
+  /api/v1/sync/odoo/{model}:
+    post:
+      tags:
+        - Webhooks & Sync
+      summary: Kích hoạt đồng bộ hóa dữ liệu thủ công từ Odoo ERP
+      operationId: triggerOdooSync
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          description: Tên bảng dữ liệu cần đồng bộ (products, orders, customers)
+          schema:
+            type: string
+            enum: [products, orders, customers]
+      responses:
+        '200':
+          description: Quá trình đồng bộ đã được khởi chạy thành công
+
+  # ============================================================================
+  # 7. UNIVERSAL ROUTER GATEWAY (ĐIỀU PHỐI ĐA MÔI TRƯỜNG ODOO)
+  # ============================================================================
+
+  /api/v1/router/odoo/update-order:
+    post:
+      tags:
+        - Universal Router
+      summary: Router Gateway - Điều phối cập nhật đơn hàng sang máy chủ Odoo đích (Test/Prod)
+      description: >
+        Nhận gói cập nhật chi tiết đơn hàng (dòng sản phẩm, số lượng, đơn giá, chiết khấu, ghi chú),
+        Router tự động chuyển tiếp sang máy chủ Odoo đích (odoo_test hoặc odoo_prod) theo cấu hình active.
+      operationId: routerUpdateOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouterUpdateOrderPayload'
+      responses:
+        '200':
+          description: Cập nhật đơn hàng thành công qua Router Gateway
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  odoo_order_id:
+                    type: integer
+                    example: 2374
+                  updated:
+                    type: boolean
+                    example: true
+                  target:
+                    type: string
+                    example: "odoo_test"
+                  target_name:
+                    type: string
+                    example: "Odoo ERP (Môi trường Test)"
+
+  /api/v1/router/odoo/manage-activity:
+    post:
+      tags:
+        - Universal Router
+      summary: Router Gateway - Điều phối thêm / sửa / xóa Hoạt động (Ghi chú giao việc)
+      description: >
+        Thực thi tạo mới, chỉnh sửa hoặc hủy hoạt động mail.activity trên máy chủ Odoo đích được chỉ định bởi Router.
+      operationId: routerManageActivity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouterActivityPayload'
+      responses:
+        '200':
+          description: Thao tác hoạt động thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  action:
+                    type: string
+                    example: "update"
+                  activitySummary:
+                    type: string
+                    nullable: true
+                    example: "đã giao 4/9 xuat nhap PTQuyen"
+                  target:
+                    type: string
+                    example: "odoo_test"
+                  target_name:
+                    type: string
+                    example: "Odoo ERP (Môi trường Test)"
+
+# ==============================================================================
+# COMPONENTS SCHEMAS (CÁC ĐỊNH DẠNG DỮ LIỆU CHUẨN)
+# ==============================================================================
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    # ── ĐIỀU CHỈNH ĐƠN HÀNG VÀ HOẠT ĐỘNG (ORDER UPDATE & ROUTER) ───────────
+    OrderUpdatePayload:
+      type: object
+      properties:
+        client_order_ref:
+          type: string
+          nullable: true
+          description: Ghi chú đơn hàng (chỉ dẫn giao nhận / client reference)
+          example: "Giao trong giờ hành chính"
+        activity_summary:
+          type: string
+          nullable: true
+          description: Ghi chú giao việc (Hoạt động Odoo mail.activity)
+          example: "đã giao 4/9 xuat nhap PTQuyen"
+        lines:
+          type: array
+          description: Danh sách chi tiết các dòng sản phẩm của đơn hàng
+          items:
+            $ref: '#/components/schemas/OrderUpdateLineItem'
+
+    OrderUpdateLineItem:
+      type: object
+      required:
+        - product_id
+        - product_uom_qty
+        - price_unit
+      properties:
+        id:
+          type: integer
+          nullable: true
+          description: ID dòng sản phẩm Odoo (sale.order.line). Bỏ trống nếu là dòng thêm mới.
+          example: 12580
+        product_id:
+          type: integer
+          description: ID biến thể sản phẩm Odoo (product.product)
+          example: 1042
+        product_uom_qty:
+          type: number
+          minimum: 0
+          description: Số lượng sản phẩm
+          example: 5
+        price_unit:
+          type: number
+          minimum: 0
+          description: Đơn giá sản phẩm (VND)
+          example: 25000
+        discount:
+          type: number
+          minimum: 0
+          maximum: 100
+          default: 0
+          description: Tỷ lệ chiết khấu theo dòng (%)
+          example: 10
+        name:
+          type: string
+          nullable: true
+          description: Tên / mô tả dòng sản phẩm
+          example: "Pate Thịt Cừu Cho Chó 100g"
+        _deleted:
+          type: boolean
+          default: false
+          description: Đánh dấu true nếu muốn xóa dòng sản phẩm này khỏi đơn hàng
+          example: false
+
+    OrderUpdateResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Cập nhật đơn hàng thành công"
+        order:
+          type: object
+        router:
+          type: object
+          properties:
+            routed:
+              type: boolean
+              example: true
+            target:
+              type: string
+              example: "odoo_test"
+            target_name:
+              type: string
+              example: "Odoo ERP (Môi trường Test)"
+
+    RouterUpdateOrderPayload:
+      type: object
+      required:
+        - odoo_order_id
+        - lines
+      properties:
+        odoo_order_id:
+          type: integer
+          description: ID đơn hàng Odoo (sale.order)
+          example: 2374
+        lines:
+          type: array
+          description: Danh sách dòng sản phẩm cần cập nhật/thêm/xóa
+          items:
+            $ref: '#/components/schemas/OrderUpdateLineItem'
+        client_order_ref:
+          type: string
+          nullable: true
+          description: Ghi chú đơn hàng Odoo
+          example: "Giao trong giờ hành chính"
+        author_name:
+          type: string
+          nullable: true
+          description: Tên nhân viên thao tác trên OCMS
+          example: "Admin Quyen"
+        author_id:
+          type: integer
+          nullable: true
+          description: ID tài khoản Odoo của nhân viên thực hiện cập nhật
+          example: 2
+
+    RouterActivityPayload:
+      type: object
+      required:
+        - odoo_order_id
+        - action
+      properties:
+        odoo_order_id:
+          type: integer
+          description: ID đơn hàng Odoo (sale.order)
+          example: 2374
+        action:
+          type: string
+          enum: [create, update, delete]
+          description: Hành động thao tác ghi chú giao việc
+          example: "update"
+        summary:
+          type: string
+          nullable: true
+          description: Nội dung ghi chú giao việc (Hoạt động)
+          example: "đã giao 4/9 xuat nhap PTQuyen"
+        author_id:
+          type: integer
+          nullable: true
+          description: ID tài khoản Odoo của người được giao việc
+          example: 2
+
+    # ── ĐƠN HÀNG ĐẦU VÀO (REQUEST) ──────────────────────────────────────────
+    StandardOrderPayload:
+      type: object
+      required:
+        - order_code
+        - customer_name
+        - customer_phone
+        - shipping_address
+        - items
+        - total_amount
+      properties:
+        order_code:
+          type: string
+          description: Mã định danh duy nhất từ Web Bán Hàng (Idempotency Key chống gửi trùng)
+          minLength: 3
+          maxLength: 80
+          example: "WEB-20260909-8A1B"
+        partner_id:
+          type: integer
+          nullable: true
+          description: ID đối tác Odoo ERP (`res.partner.id`) nếu là đại lý đã đăng nhập
+          example: 17871
+        customer_name:
+          type: string
+          description: Họ tên người nhận hàng hoặc tên Đại lý
+          minLength: 2
+          maxLength: 150
+          example: "Nguyễn Văn An"
+        customer_phone:
+          type: string
+          description: Số điện thoại người nhận hàng (hỗ trợ cả dạng 090... và +8490...)
+          pattern: "^(0|\\+84)[35789][0-9]{8}$"
+          example: "0901234567"
+        customer_email:
+          type: string
+          format: email
+          nullable: true
+          description: Địa chỉ email của khách hàng
+          example: "nguyenvanan@example.com"
+        company_name:
+          type: string
+          nullable: true
+          description: Tên doanh nghiệp đại lý xuất hóa đơn VAT (nếu có)
+          example: "Công Ty TNHH Thú Cưng PetCare"
+        vat_number:
+          type: string
+          nullable: true
+          description: Mã số thuế doanh nghiệp xuất hóa đơn VAT (nếu có)
+          example: "0312345678"
+        shipping_address:
+          type: string
+          description: Địa chỉ giao hàng chi tiết đầy đủ
+          minLength: 5
+          maxLength: 500
+          example: "123 Đường Nguyễn Trãi, Phường 2, Quận 5, TP. Hồ Chí Minh"
+        items:
+          type: array
+          description: Danh sách các sản phẩm đặt mua (tối thiểu 1 sản phẩm)
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/StandardOrderItem'
+        subtotal_amount:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Tổng tiền niêm yết trước chiết khấu (VND)
+          example: 340000
+        discount_amount:
+          type: number
+          minimum: 0
+          default: 0
+          description: Tổng số tiền được giảm giá / chiết khấu (VND)
+          example: 20000
+        shipping_fee:
+          type: number
+          minimum: 0
+          default: 0
+          description: Phí vận chuyển giao hàng (VND, mặc định 0đ nếu miễn phí ship)
+          example: 30000
+        total_amount:
+          type: number
+          minimum: 0
+          description: Tổng số tiền thực tế khách phải thanh toán cuối cùng (VND)
+          example: 350000
+        voucher_code:
+          type: string
+          nullable: true
+          maxLength: 50
+          description: Mã voucher khuyến mãi (nếu có)
+          example: "LAPETHE2026"
+        payment_method:
+          type: string
+          enum: [cod, bank_transfer, debt, vnpay, momo]
+          default: cod
+          description: Hình thức thanh toán
+          example: "cod"
+        note:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: Ghi chú hoặc lời nhắn giao hàng
+          example: "Giao trong giờ hành chính, gọi trước khi giao 15 phút"
+
+    # ── DÒNG SẢN PHẨM (ORDER ITEM) ──────────────────────────────────────────
+    StandardOrderItem:
+      type: object
+      required:
+        - sku
+        - quantity
+        - price
+      properties:
+        sku:
+          type: string
+          description: Mã SKU sản phẩm (khớp `default_code` trong Odoo)
+          minLength: 1
+          maxLength: 100
+          example: "PAT-LAMB-100"
+        product_name:
+          type: string
+          nullable: true
+          description: Tên sản phẩm hiển thị
+          example: "Pate Thịt Cừu Cho Chó 100g"
+        odoo_product_id:
+          type: integer
+          nullable: true
+          description: ID sản phẩm Odoo nếu Web Bán Hàng đã có sẵn
+          example: 1042
+        quantity:
+          type: integer
+          description: Số lượng đặt mua (nguyên dương >= 1)
+          minimum: 1
+          example: 10
+        price:
+          type: number
+          description: Đơn giá sản phẩm sau chiết khấu (VND, >= 0)
+          minimum: 0
+          example: 25000
+        original_price:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Giá niêm yết gốc trước giảm
+          example: 28000
+        discount:
+          type: number
+          minimum: 0
+          maximum: 100
+          default: 0
+          description: Tỷ lệ chiết khấu theo dòng (%)
+          example: 0
+
+    # ── PHẢN HỒI THÀNH CÔNG (RESPONSE 201) ──────────────────────────────────
+    OrderCreatedResponse:
+      type: object
+      required:
+        - success
+        - message
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Đơn hàng đã được tiếp nhận thành công và đang được phân luồng xử lý"
+        data:
+          type: object
+          required:
+            - order_code
+            - tracking_id
+            - status
+            - received_at
+          properties:
+            order_code:
+              type: string
+              example: "WEB-20260909-8A1B"
+            tracking_id:
+              type: string
+              format: uuid
+              example: "e58b14a2-97b1-4f8a-9366-4c4f3c830912"
+            status:
+              type: string
+              enum: [pending, queued]
+              example: "pending"
+            received_at:
+              type: string
+              format: date-time
+              example: "2026-09-09T09:45:00.000Z"
+
+    # ── TIẾN ĐỘ ĐƠN HÀNG CHI TIẾT (ORDER STATUS RESPONSE) ───────────────────
+    OrderStatusDetailResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            order_code:
+              type: string
+              example: "WEB-20260909-8A1B"
+            tracking_id:
+              type: string
+              example: "e58b14a2-97b1-4f8a-9366-4c4f3c830912"
+            status:
+              type: string
+              enum: [pending, queued, odoo_synced, confirmed, shipping, delivered, cancelled]
+              example: "odoo_synced"
+            odoo_order_id:
+              type: integer
+              nullable: true
+              example: 2304
+            odoo_order_name:
+              type: string
+              nullable: true
+              example: "S02304"
+            zalo_notified:
+              type: boolean
+              example: true
+            total_amount:
+              type: number
+              example: 350000
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    # ── PHẢN HỒI LỖI VALIDATION (RESPONSE 400) ──────────────────────────────
+    ValidationErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+        - details
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Dữ liệu đơn hàng không hợp lệ"
+        details:
+          type: array
+          items:
+            type: object
+            required:
+              - field
+              - message
+            properties:
+              field:
+                type: string
+                example: "customer_phone"
+              message:
+                type: string
+                example: "Số điện thoại không đúng định dạng số điện thoại Việt Nam"
+
+    # ── DANH SÁCH SẢN PHẨM (PRODUCT LIST RESPONSE) ──────────────────────────
+    ProductListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductItem'
+        total:
+          type: integer
+          example: 120
+        page:
+          type: integer
+          example: 1
+        totalPages:
+          type: integer
+          example: 3
+
+    ProductItem:
+      type: object
+      properties:
+        id:
+          type: string
+        odooId:
+          type: integer
+        sku:
+          type: string
+          example: "PAT-LAMB-100"
+        name:
+          type: string
+          example: "Pate Thịt Cừu Cho Chó 100g"
+        listPrice:
+          type: number
+          example: 28000
+        wholesalePrice:
+          type: number
+          example: 22000
+        category:
+          type: string
+          example: "Pate cho chó"
+        brand:
+          type: string
+          example: "Lapati"
+        imageUrl:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+          example: true
+
+    ProductDetailResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        product:
+          $ref: '#/components/schemas/ProductItem'
+
+    # ── ĐỘNG CƠ TÍNH GIÁ & KHUYẾN MÃI (PRICING SCHEMAS) ────────────────────
+    PricingEvaluationRequest:
+      type: object
+      required:
+        - items
+      properties:
+        customerId:
+          type: string
+          nullable: true
+        customerType:
+          type: string
+          enum: [RETAIL, DEALER]
+          default: DEALER
+        items:
+          type: array
+          items:
+            type: object
+            required:
+              - sku
+              - quantity
+            properties:
+              sku:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+              price:
+                type: number
+                nullable: true
+
+    PricingEvaluationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        result:
+          type: object
+          properties:
+            originalSubtotal:
+              type: number
+              example: 5000000
+            discountAmount:
+              type: number
+              example: 250000
+            finalTotal:
+              type: number
+              example: 4750000
+            discountPercent:
+              type: number
+              example: 5
+            appliedPromotions:
+              type: array
+              items:
+                type: object
+                properties:
+                  promotionName:
+                    type: string
+                  promotionCode:
+                    type: string
+                  discountAmount:
+                    type: number
+            freeItems:
+              type: array
+              items:
+                type: object
+                properties:
+                  sku:
+                    type: string
+                  name:
+                    type: string
+                  quantity:
+                    type: integer
+
+    PromotionListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        promotions:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              code:
+                type: string
+              status:
+                type: string
+              startDate:
+                type: string
+              endDate:
+                type: string
+
+    # ── HỒ SƠ KHÁCH HÀNG / ĐẠI LÝ (CUSTOMER PROFILE) ────────────────────────
+    CustomerProfileResponse:
+      type: object
+      properties:
+        authenticated:
+          type: boolean
+          example: true
+        isDealer:
+          type: boolean
+          example: true
+        partner:
+          type: object
+          properties:
+            id:
+              type: integer
+              example: 17871
+            name:
+              type: string
+              example: "Đại Lý Thú Cưng PetCare"
+            ref:
+              type: string
+              example: "DL-PETCARE"
+            phone:
+              type: string
+              example: "0901234567"
+            email:
+              type: string
+              example: "petcare@example.com"
+            pricelist:
+              type: string
+              example: "Bảng giá sỉ đại lý Cấp 1"
+            shipping_address:
+              type: string
+              example: "123 Đường Nguyễn Trãi, Quận 5, TP.HCM"
+            delivery_addresses:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  street:
+                    type: string
+
+    AuthTokenResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            role:
+              type: string
+
+    # ── DANH SÁCH ĐƠN HÀNG (ORDER LIST RESPONSE) ────────────────────────────
+    OrderListResponse:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderSummaryItem'
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        totalPages:
+          type: integer
+
+    OrderSummaryItem:
+      type: object
+      properties:
+        id:
+          type: string
+        orderCode:
+          type: string
+        odooOrderId:
+          type: integer
+          nullable: true
+        partnerName:
+          type: string
+        dateOrder:
+          type: string
+          format: date-time
+        amountTotal:
+          type: number
+        state:
+          type: string
+        salesperson:
+          type: string
+
+    OrderDetailResponse:
+      type: object
+      properties:
+        order:
+          type: object
+          properties:
+            id:
+              type: string
+            orderCode:
+              type: string
+            odooOrderId:
+              type: integer
+            partnerName:
+              type: string
+            amountTotal:
+              type: number
+            lines:
+              type: array
+              items:
+                type: object
+                properties:
+                  productName:
+                    type: string
+                  productSku:
+                    type: string
+                  quantity:
+                    type: number
+                  priceUnit:
+                    type: number
+                  priceSubtotal:
+                    type: number
+
+    OrderConfirmedResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Đã xác nhận và tạo báo giá #S02304 trên Odoo ERP"
+        order:
+          type: object
+
+    OrderStatsResponse:
+      type: object
+      properties:
+        totalOrders:
+          type: integer
+        confirmedOrders:
+          type: integer
+        draftOrders:
+          type: integer
+        totalRevenue:
+          type: number
+        todayRevenue:
+          type: number
+
+    AiDraftOrderResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        draft:
+          type: object
+
+    # ── CÁC PHẢN HỒI CHUNG (COMMON RESPONSES) ──────────────────────────────
+    SimpleSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Thao tác thành công"
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Không tìm thấy dữ liệu yêu cầu"
+
+    InternalErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Lỗi hệ thống máy chủ nội bộ"

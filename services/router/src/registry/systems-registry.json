@@ -1,0 +1,45 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-09-10T10:13:00.000Z",
+  "active_odoo_target": "odoo_test",
+  "systems": {
+    "ocms": {
+      "id": "ocms",
+      "name": "OCMS Core & CRM Zalo",
+      "type": "crm_backend",
+      "url": "http://app:3000",
+      "status": "active",
+      "description": "Trung tâm vận hành, kho lưu CRM và cổng phát tin nhắn Zalo OA"
+    },
+    "store_lapet": {
+      "id": "store_lapet",
+      "name": "Web Store LaPet",
+      "type": "ecommerce",
+      "url": "http://localhost:4321",
+      "status": "active",
+      "description": "Website bán hàng trực tuyến và đại lý thú cưng LaPet"
+    },
+    "odoo_test": {
+      "id": "odoo_test",
+      "name": "Odoo ERP (Môi trường Test)",
+      "type": "erp_test",
+      "url": "https://test-odoo.fonti.vn",
+      "db": "odoo_it_test_20260905",
+      "user": "sale.order01@gmai.com",
+      "apiKey": "b09c7fa1deb1103abb6820be7d1d99c16129a243",
+      "status": "active",
+      "description": "Máy chủ Odoo thử nghiệm, chạy đơn an toàn không ảnh hưởng số liệu thực tế"
+    },
+    "odoo_prod": {
+      "id": "odoo_prod",
+      "name": "Odoo ERP (Môi trường Chính thức)",
+      "type": "erp_prod",
+      "url": "https://odooo.fonti.vn",
+      "db": "odoo",
+      "user": "sale.order01@gmai.com",
+      "apiKey": "8da04c7fddd03867a41f8acfca0bbb6ddc2d8caf",
+      "status": "active",
+      "description": "Máy chủ Odoo ERP sản xuất chính thức của công ty"
+    }
+  }
+}

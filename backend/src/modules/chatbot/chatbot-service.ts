@@ -729,6 +729,8 @@ class ChatbotService {
               return `${idx + 1}. [Mã ${p.sku}] ${p.name}${catStr}${brandStr} - Giá sỉ: ${p.formatted_price} (${p.specification}) - Đặc điểm: ${p.highlights}`;
             })
             .join('\n');
+        } else {
+          toolResultsSummary = `KẾT QUẢ TÌM KIẾM: Không tìm thấy sản phẩm nào trong kho khớp với từ khóa "${queryParams.query || ''}". CẤM TUYỆT ĐỐI tự bịa mã SKU hoặc sản phẩm! Báo khách hệ thống chưa có dòng này hoặc hỏi thêm nhu cầu.`;
         }
       }
 
@@ -934,6 +936,20 @@ class ChatbotService {
 
           const toolResult = await toolExecutor.executeTool(fnName, fnArgs);
 
+          if (fnName === 'search_product') {
+            if (toolResult?.products && toolResult.products.length > 0) {
+              toolResultsSummary = toolResult.products
+                .map((p: any, idx: number) => {
+                  const catStr = p.category ? ` (Ngành: ${p.category})` : '';
+                  const brandStr = p.brand ? ` (Brand: ${p.brand})` : '';
+                  return `${idx + 1}. [Mã ${p.sku}] ${p.name}${catStr}${brandStr} - Giá sỉ: ${p.formatted_price} (${p.specification}) - Đặc điểm: ${p.highlights}`;
+                })
+                .join('\n');
+            } else {
+              toolResult.antiHallucinationNote = 'Hệ thống xác nhận KHÔNG CÓ sản phẩm nào khớp với từ khóa tìm kiếm này. TUYỆT ĐỐI KHÔNG tự bịa mã SKU, tên sản phẩm, quy cách hoặc giá bán! Hãy thông báo lịch sự là hệ thống chưa có dòng sản phẩm này.';
+            }
+          }
+
           if (fnName === 'extract_order_draft' && toolResult?.draft) {
             const d = toolResult.draft;
             if (d.items && d.items.length > 0) {
@@ -998,6 +1014,13 @@ class ChatbotService {
 
       // Product Claim Validation
       generatedReply = ClaimValidator.validate(generatedReply);
+
+      // Product SKU & Grounding Integrity Check
+      generatedReply = await ChatbotGuardrails.validateProductSkuGrounding(
+        generatedReply,
+        orgId,
+        toolResultsSummary
+      );
 
       const hasExtractedDraft = executedTools.some(t => t.name === 'extract_order_draft');
       const draftItems = memory.sessionState.draftOrder?.items || [];
