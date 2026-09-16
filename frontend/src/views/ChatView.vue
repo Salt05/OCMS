@@ -53,6 +53,7 @@
         @send-attachment="selectedConvId === 'bulk_session' ? handleBulkSendAttachment($event) : sendAttachment($event)"
         @send-bulk="handleTriggerSendBulk"
         @send-bulk-batch="handleTriggerSendBulkBatch"
+        @retry-failed-bulk="handleRetryFailedBulk"
         @delete-bulk-message="deleteBulkMessage"
         @retry-message="retrySendMessage"
         @retry-attachment="retrySendAttachment"
@@ -84,6 +85,7 @@
       <!-- BULK MESSAGING CONTACT PANEL (replaces info/order/chatbot) -->
       <BulkContactListPanel
         v-if="selectedConvId === 'bulk_session'"
+        :account-id="accountFilter"
         @close="showBulkContactPanel = false"
       />
 
@@ -245,7 +247,7 @@
         class="mobile-chat-panel-overlay position-fixed top-0 left-0 w-100 h-100 d-flex flex-column bg-surface"
         style="z-index: 500;"
       >
-        <BulkContactListPanel @close="showBulkContactPanel = false" />
+        <BulkContactListPanel :account-id="accountFilter" @close="showBulkContactPanel = false" />
       </div>
     </transition>
 
@@ -388,6 +390,8 @@ const {
   sendBulkMessage,
   sendBulkMessagesBatch,
   loadSession: loadBulkSession,
+  switchZaloAccount: switchBulkZaloAccount,
+  retryFailedRecipients: retryFailedBulkRecipients,
   isSendingAny: isSendingAnyBulk,
 } = useBulkMessages();
 
@@ -493,6 +497,14 @@ async function handleTriggerSendBulkBatch(messageIds: string[]) {
   }
 }
 
+async function handleRetryFailedBulk(msg: any) {
+  try {
+    await retryFailedBulkRecipients(msg.id);
+  } catch (err: any) {
+    console.error('Failed to retry failed bulk recipients:', err);
+  }
+}
+
 function onTogglePin(payload: { conversationId: string; pinned: boolean }) {
   togglePin(payload.conversationId, payload.pinned);
 }
@@ -508,6 +520,7 @@ async function handleSetContextBoundary(payload: { startMessageId?: string | nul
 
 function onFilterAccount(id: string | null) {
   accountFilter.value = id;
+  switchBulkZaloAccount(id);
   fetchConversations();
 }
 
@@ -523,7 +536,7 @@ function onSelectConversation(id: string) {
   if (id === 'bulk_session') {
     selectedConvId.value = 'bulk_session';
     showBulkContactPanel.value = true;
-    loadBulkSession();
+    switchBulkZaloAccount(accountFilter.value);
     if (isMobile.value) {
       router.replace({ path: '/chat', query: { mode: 'bulk' } });
     }

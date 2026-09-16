@@ -205,6 +205,24 @@
           <div v-if="item.disabled" class="text-caption text-warning font-weight-medium" style="font-size: 10.5px; line-height: 1.2;">
             Vô hiệu hóa (không gửi tin)
           </div>
+          <div
+            v-else-if="getRecipientLastError(item.id)"
+            class="text-caption text-error font-weight-medium d-flex align-center gap-1 mt-0.5"
+            style="font-size: 11px; line-height: 1.2;"
+            :title="getRecipientLastError(item.id)!"
+          >
+            <v-icon size="12" color="error">lucide-alert-triangle</v-icon>
+            <span class="text-truncate">{{ getRecipientLastError(item.id) }}</span>
+          </div>
+          <div
+            v-else-if="!item.phone && !item.zaloUid && !item.isGroup"
+            class="text-caption text-warning font-weight-medium d-flex align-center gap-1 mt-0.5"
+            style="font-size: 10.5px; line-height: 1.2;"
+            title="Thiếu số điện thoại và UID Zalo"
+          >
+            <v-icon size="11" color="warning">lucide-info</v-icon>
+            <span>Thiếu SĐT / Zalo UID</span>
+          </div>
         </div>
 
         <!-- Row Hover Actions: Disable Toggle & Remove -->
@@ -237,6 +255,7 @@
     <BulkContactPickerDialog
       v-model="showPicker"
       :existing-contacts="recipients"
+      :initial-account-id="props.accountId"
       @confirm="onAddContactsFromPicker"
       @selected="onAddContactsFromPicker"
     />
@@ -247,8 +266,11 @@
 import { ref, computed, onMounted } from 'vue';
 import { useBulkMessages } from '@/composables/use-bulk-messages';
 import { useTags } from '@/composables/use-tags';
-import { api } from '@/api/index';
 import BulkContactPickerDialog from '@/components/chat/BulkContactPickerDialog.vue';
+
+const props = defineProps<{
+  accountId?: string | null;
+}>();
 
 const emit = defineEmits<{
   close: [];
@@ -256,11 +278,11 @@ const emit = defineEmits<{
 
 const {
   recipients,
+  messages,
   activeCount,
   selectedCount,
   totalCount,
   allSelected,
-  addRecipients,
   syncRecipients,
   toggleSelectRecipient,
   selectAll,
@@ -396,36 +418,23 @@ function onAddContactsFromPicker(selectedContacts: any[]) {
   }
 }
 
-// Initial load: load stored session and, if empty, populate with recent active contacts/conversations
-onMounted(async () => {
-  await loadSession();
-  if (recipients.value.length === 0) {
-    try {
-      const res = await api.get('/conversations', { params: { limit: 50 } });
-      const convs = res.data?.conversations || res.data || [];
-      if (Array.isArray(convs) && convs.length > 0) {
-        const initialContacts = convs.slice(0, 15).map((conv: any) => ({
-          id: conv.contact?.id || conv.id,
-          conversationId: conv.id,
-          name: conv.contact?.fullName || conv.contact?.zaloName || conv.name || (conv.threadType === 'group' ? 'Nhóm Zalo' : 'Khách hàng'),
-          phone: conv.contact?.phone || null,
-          avatarUrl: conv.contact?.avatarUrl || null,
-          customerId: conv.contact?.customerId || null,
-          tags: conv.contact?.tags || [],
-          threadType: conv.threadType,
-          zaloUid: conv.contact?.zaloUid || null,
-          createdAt: conv.contact?.createdAt || conv.createdAt || null,
-          updatedAt: conv.contact?.updatedAt || conv.updatedAt || null,
-        }));
-        addRecipients(initialContacts);
-        if (initialContacts.length > 0) {
-          activeContactId.value = initialContacts[0].id;
-        }
+function getRecipientLastError(recipientId: string): string | null {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const stats = messages.value[i].sendStats;
+    if (stats?.recipientResults) {
+      const res = stats.recipientResults.find((r) => r.recipientId === recipientId);
+      if (res && res.status === 'failed') {
+        return res.error || 'Gửi thất bại';
       }
-    } catch (err) {
-      console.warn('Could not auto-populate recent bulk contacts:', err);
     }
-  } else if (!activeContactId.value && recipients.value.length > 0) {
+  }
+  return null;
+}
+
+// Initial load: load stored session (strictly without auto-picking any contacts)
+onMounted(async () => {
+  await loadSession(false, props.accountId);
+  if (!activeContactId.value && recipients.value.length > 0) {
     activeContactId.value = recipients.value[0].id;
   }
 });

@@ -19,7 +19,10 @@ export async function bulkChatRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/bulk-chat/session', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
-      const settingKey = `bulk_chat_session_${user.id}`;
+      const { accountId } = request.query as { accountId?: string };
+      const settingKey = accountId
+        ? `bulk_chat_session_${user.id}_${accountId}`
+        : `bulk_chat_session_${user.id}`;
 
       const setting = await prisma.appSetting.findFirst({
         where: {
@@ -48,8 +51,10 @@ export async function bulkChatRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/v1/bulk-chat/session', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
-      const settingKey = `bulk_chat_session_${user.id}`;
-      const { session } = request.body as { session: any };
+      const { session, accountId } = request.body as { session: any; accountId?: string };
+      const settingKey = accountId
+        ? `bulk_chat_session_${user.id}_${accountId}`
+        : `bulk_chat_session_${user.id}`;
 
       if (!session) {
         return reply.status(400).send({ error: 'Session data is required' });

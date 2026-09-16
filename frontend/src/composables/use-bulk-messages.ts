@@ -54,13 +54,12 @@ export interface BulkMessage {
   sendStats?: BulkMessageSendStats;
 }
 
-const STORAGE_KEY = 'ocms_bulk_chat_session';
-
 // Module-level reactive singleton state so all components share the same session
 const recipients = ref<BulkRecipient[]>([]);
 const messages = ref<BulkMessage[]>([]);
 const isSendingAny = ref(false);
 const currentSendingMsgId = ref<string | null>(null);
+const currentAccountId = ref<string | null>(null);
 const isInitialized = ref(false);
 
 export function useBulkMessages() {
@@ -82,6 +81,12 @@ export function useBulkMessages() {
       recipients.value.every((r) => r.selected)
   );
 
+  // ── Dynamic storage key per user & Zalo account ───────────────────────────
+  function getStorageKey(accountId: string | null = currentAccountId.value) {
+    const userId = authStore.user?.id || 'guest';
+    return `ocms_bulk_chat_session_${userId}_${accountId || 'all'}`;
+  }
+
   // ── Session persistence ───────────────────────────────────────────────────
 
   function saveSession() {
@@ -90,11 +95,16 @@ export function useBulkMessages() {
         recipients: recipients.value,
         messages: messages.value,
         savedAt: new Date().toISOString(),
+        accountId: currentAccountId.value,
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      const key = getStorageKey();
+      localStorage.setItem(key, JSON.stringify(data));
 
       // Asynchronously sync to backend
-      api.post('/bulk-chat/session', { session: data }).catch(() => {
+      api.post('/bulk-chat/session', {
+        session: data,
+        accountId: currentAccountId.value || undefined,
+      }).catch(() => {
         // Ignore background sync errors
       });
     } catch (err) {
@@ -102,25 +112,37 @@ export function useBulkMessages() {
     }
   }
 
-  async function loadSession() {
-    if (isInitialized.value) return;
+  async function loadSession(forceReload = false, targetAccountId?: string | null) {
+    if (targetAccountId !== undefined) {
+      currentAccountId.value = targetAccountId;
+    }
+    if (!forceReload && isInitialized.value) return;
     isInitialized.value = true;
+
+    const key = getStorageKey();
 
     // 1. Instant load from localStorage
     try {
-      const localRaw = localStorage.getItem(STORAGE_KEY);
+      const localRaw = localStorage.getItem(key);
       if (localRaw) {
         const parsed = JSON.parse(localRaw);
-        if (Array.isArray(parsed.recipients)) recipients.value = parsed.recipients;
-        if (Array.isArray(parsed.messages)) messages.value = parsed.messages;
+        recipients.value = Array.isArray(parsed.recipients) ? parsed.recipients : [];
+        messages.value = Array.isArray(parsed.messages) ? parsed.messages : [];
+      } else {
+        recipients.value = [];
+        messages.value = [];
       }
     } catch (err) {
       console.warn('Failed to parse local bulk chat session:', err);
+      recipients.value = [];
+      messages.value = [];
     }
 
     // 2. Fetch fresh session from backend if local was empty
     try {
-      const res = await api.get('/bulk-chat/session');
+      const res = await api.get('/bulk-chat/session', {
+        params: { accountId: currentAccountId.value || undefined },
+      });
       if (res.data?.session) {
         const s = res.data.session;
         if (recipients.value.length === 0 && Array.isArray(s.recipients)) {
@@ -133,6 +155,22 @@ export function useBulkMessages() {
     } catch {
       // Backend may not have session yet, ignore
     }
+  }
+
+  async function switchZaloAccount(accountId: string | null) {
+    if (currentAccountId.value === accountId && isInitialized.value) return;
+    if (isInitialized.value && (recipients.value.length > 0 || messages.value.length > 0)) {
+      saveSession();
+    }
+    currentAccountId.value = accountId;
+    await loadSession(true, accountId);
+  }
+
+  function resetSession() {
+    recipients.value = [];
+    messages.value = [];
+    isInitialized.value = false;
+    currentAccountId.value = null;
   }
 
   // ── Recipient management ──────────────────────────────────────────────────
@@ -371,6 +409,7 @@ export function useBulkMessages() {
             try {
               const openRes = await api.post('/contacts/bulk-open-chat', {
                 contactIds: [target.contactId || target.id],
+                accountId: currentAccountId.value || undefined,
               });
               if (openRes.data?.conversationIds?.[0]) {
                 convId = openRes.data.conversationIds[0];
@@ -467,6 +506,102 @@ export function useBulkMessages() {
     };
   }
 
+  async function retryFailedRecipients(messageId: string): Promise<{ success: boolean; sent: number; total: number }> {
+    const msg = messages.value.find((m) => m.id === messageId);
+    if (!msg || !msg.sendStats?.recipientResults) throw new Error('Không tìm thấy thông tin tin nhắn');
+
+    const failedTargets = msg.sendStats.recipientResults.filter((r) => r.status === 'failed');
+    if (failedTargets.length === 0) {
+      throw new Error('Không có khách hàng nào bị lỗi để gửi lại!');
+    }
+
+    if (isSendingAny.value) {
+      throw new Error('Hệ thống đang trong quá trình gửi một tin nhắn khác. Vui lòng đợi!');
+    }
+
+    isSendingAny.value = true;
+    currentSendingMsgId.value = messageId;
+    msg.sendStats.status = 'sending';
+
+    let newlySent = 0;
+    let stillFailed = 0;
+
+    try {
+      for (let i = 0; i < failedTargets.length; i++) {
+        const resItem = failedTargets[i];
+        const target = recipients.value.find((r) => r.id === resItem.recipientId);
+        if (!target) continue;
+
+        resItem.status = 'sending';
+        try {
+          let convId = target.conversationId;
+          if (!convId) {
+            const openRes = await api.post('/contacts/bulk-open-chat', {
+              contactIds: [target.contactId || target.id],
+              accountId: currentAccountId.value || undefined,
+            });
+            if (openRes.data?.conversationIds?.[0]) {
+              convId = openRes.data.conversationIds[0];
+              target.conversationId = convId;
+            }
+          }
+          if (!convId) {
+            throw new Error('Không tìm thấy hoặc không thể mở cuộc trò chuyện với khách hàng này');
+          }
+
+          if (msg.contentType === 'text') {
+            await api.post(`/conversations/${convId}/messages`, { content: msg.content, contentType: 'text', isNote: false }, { timeout: 30000 });
+          } else if (msg.contentType === 'image') {
+            const imageUrl = msg.fileInfo?.url || msg.content;
+            await api.post(`/conversations/${convId}/messages`, { content: imageUrl, contentType: 'image', isNote: false }, { timeout: 45000 });
+          } else {
+            const fileUrl = msg.fileInfo?.url || msg.content;
+            await api.post(`/conversations/${convId}/messages`, { content: fileUrl, contentType: 'file', isNote: false }, { timeout: 45000 });
+          }
+
+          resItem.status = 'success';
+          resItem.error = undefined;
+          resItem.sentAt = new Date().toISOString();
+          newlySent++;
+        } catch (err: any) {
+          resItem.status = 'failed';
+          resItem.error = err.response?.data?.error || err.message || 'Lỗi gửi tin nhắn';
+          stillFailed++;
+        }
+
+        // Update counts
+        const allResults = msg.sendStats.recipientResults;
+        msg.sendStats.sentCount = allResults.filter((r) => r.status === 'success').length;
+        msg.sendStats.failedCount = allResults.filter((r) => r.status === 'failed').length;
+        saveSession();
+
+        if (i < failedTargets.length - 1) {
+          await sleep(1300);
+        }
+      }
+    } finally {
+      isSendingAny.value = false;
+      currentSendingMsgId.value = null;
+      if (msg.sendStats) {
+        msg.sendStats.completedAt = new Date().toISOString();
+        if (msg.sendStats.failedCount === 0) {
+          msg.sendStats.status = 'success';
+        } else if (msg.sendStats.sentCount > 0) {
+          msg.sendStats.status = 'partial';
+        } else {
+          msg.sendStats.status = 'error';
+        }
+      }
+      saveSession();
+    }
+
+    return {
+      success: stillFailed === 0,
+      sent: newlySent,
+      total: failedTargets.length,
+    };
+  }
+
   async function sendBulkMessagesBatch(messageIds: string[]): Promise<void> {
     if (messageIds.length === 0) return;
     for (let i = 0; i < messageIds.length; i++) {
@@ -487,6 +622,7 @@ export function useBulkMessages() {
     messages,
     isSendingAny,
     currentSendingMsgId,
+    currentAccountId,
     totalCount,
     activeCount,
     selectedCount,
@@ -494,6 +630,8 @@ export function useBulkMessages() {
     allSelected,
     loadSession,
     saveSession,
+    switchZaloAccount,
+    resetSession,
     addRecipients,
     syncRecipients,
     removeRecipient,
@@ -508,6 +646,7 @@ export function useBulkMessages() {
     deleteMessage,
     clearAllMessages,
     sendBulkMessage,
+    retryFailedRecipients,
     sendBulkMessagesBatch,
   };
 }

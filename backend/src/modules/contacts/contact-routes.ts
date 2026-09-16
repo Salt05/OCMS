@@ -674,11 +674,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
   app.post<{
     Body: {
       contactIds: string[];
+      accountId?: string;
+      zaloAccountId?: string;
     };
   }>('/api/v1/contacts/bulk-open-chat', async (request, reply) => {
     try {
       const user = request.user!;
-      const { contactIds } = request.body || {};
+      const { contactIds, accountId, zaloAccountId } = request.body || {};
 
       if (!Array.isArray(contactIds) || contactIds.length === 0) {
         return reply.status(400).send({ error: 'Vui lòng cung cấp danh sách contactIds' });
@@ -689,7 +691,11 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         where: { orgId: user.orgId },
         select: { id: true },
       });
-      const targetAccountId = accs.find((a) => zaloPool.getStatus(a.id) === 'connected')?.id || accs[0]?.id;
+      const requestedAccountId = accountId || zaloAccountId;
+      const targetAccountId =
+        requestedAccountId && accs.some((a) => a.id === requestedAccountId)
+          ? requestedAccountId
+          : accs.find((a) => zaloPool.getStatus(a.id) === 'connected')?.id || accs[0]?.id;
 
       if (!targetAccountId) {
         return reply.status(400).send({ error: 'Chưa có tài khoản Zalo nào được kết nối trong hệ thống' });
@@ -703,6 +709,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         },
         include: {
           conversations: {
+            where: targetAccountId ? { zaloAccountId: targetAccountId } : undefined,
             select: { id: true, externalThreadId: true },
           },
         },

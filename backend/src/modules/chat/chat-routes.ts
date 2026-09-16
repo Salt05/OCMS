@@ -250,11 +250,12 @@ export async function chatRoutes(app: FastifyInstance) {
               { lastMessageAt: 'desc' },
             ],
 
-            skip:
-              (parseInt(page) - 1) *
-              parseInt(limit),
-
-            take: parseInt(limit),
+            ...(parseInt(limit) > 0
+              ? {
+                  skip: (parseInt(page) - 1) * parseInt(limit),
+                  take: parseInt(limit),
+                }
+              : {}),
           }),
 
           prisma.conversation.count({

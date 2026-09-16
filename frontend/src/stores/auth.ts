@@ -66,6 +66,11 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = '';
     user.value = null;
     localStorage.removeItem('token');
+    try {
+      import('@/composables/use-bulk-messages').then(({ useBulkMessages }) => {
+        useBulkMessages().resetSession();
+      });
+    } catch {}
   }
 
   async function init() {

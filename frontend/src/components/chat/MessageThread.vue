@@ -788,8 +788,10 @@
                   size="x-small"
                   color="success"
                   variant="flat"
-                  class="font-weight-medium"
+                  class="font-weight-medium cursor-pointer"
                   style="height: 22px; font-size: 11px;"
+                  title="Bấm để xem danh sách người nhận"
+                  @click.stop="openBulkStatsDialog(msg)"
                 >
                   <v-icon start size="13">lucide-check-circle-2</v-icon>
                   Đã gửi xong ({{ (msg as any).sendStats.sentCount }}/{{ (msg as any).sendStats.totalCount }})
@@ -797,14 +799,16 @@
                 <v-chip
                   v-else-if="(msg as any).sendStats.status === 'partial' || (msg as any).sendStats.status === 'error'"
                   size="x-small"
-                  color="warning"
+                  :color="(msg as any).sendStats.failedCount > 0 ? 'error' : 'warning'"
                   variant="tonal"
-                  class="font-weight-medium"
+                  class="font-weight-medium cursor-pointer"
                   style="height: 22px; font-size: 11px;"
+                  title="Bấm để xem chi tiết kết quả gửi và danh sách lỗi"
+                  @click.stop="openBulkStatsDialog(msg)"
                 >
-                  <v-icon start size="13">lucide-alert-circle</v-icon>
+                  <v-icon start size="13">{{ (msg as any).sendStats.failedCount > 0 ? 'lucide-alert-triangle' : 'lucide-alert-circle' }}</v-icon>
                   Đã gửi {{ (msg as any).sendStats.sentCount }}/{{ (msg as any).sendStats.totalCount }}
-                  <span v-if="(msg as any).sendStats.failedCount > 0" class="ml-0.5">({{ (msg as any).sendStats.failedCount }} lỗi)</span>
+                  <span v-if="(msg as any).sendStats.failedCount > 0" class="ml-0.5 font-weight-bold">({{ (msg as any).sendStats.failedCount }} lỗi - Xem)</span>
                 </v-chip>
               </div>
 
@@ -1510,6 +1514,127 @@
       </v-card>
     </v-dialog>
 
+    <!-- Dialog chi tiết kết quả gửi tin nhắn hàng loạt (Hiện thị lỗi danh sách khách hàng) -->
+    <v-dialog v-model="bulkStatsDialogVisible" width="620" max-width="95vw" scrollable>
+      <v-card v-if="activeBulkStatsMsg" class="rounded-xl overflow-hidden d-flex flex-column" style="max-height: 85vh;">
+        <!-- Header -->
+        <div class="px-5 py-3.5 border-b d-flex align-center justify-space-between bg-surface flex-shrink-0">
+          <div class="d-flex align-center gap-2">
+            <v-icon size="20" color="primary">lucide-layers</v-icon>
+            <div>
+              <div class="text-subtitle-1 font-weight-bold">Chi tiết gửi tin nhắn hàng loạt</div>
+              <div class="text-caption text-grey">Danh sách người nhận và chi tiết lỗi gửi</div>
+            </div>
+          </div>
+          <v-btn icon size="small" variant="text" @click="bulkStatsDialogVisible = false">
+            <v-icon size="18">lucide-x</v-icon>
+          </v-btn>
+        </div>
+
+        <!-- Summary Stats Pills -->
+        <div class="px-5 py-2.5 border-b bg-surface d-flex align-center gap-2 flex-wrap flex-shrink-0">
+          <v-chip size="small" variant="tonal" color="primary" class="font-weight-medium">
+            Tổng số: {{ activeBulkStatsMsg.sendStats?.totalCount || 0 }}
+          </v-chip>
+          <v-chip size="small" variant="tonal" color="success" class="font-weight-medium">
+            Thành công: {{ activeBulkStatsMsg.sendStats?.sentCount || 0 }}
+          </v-chip>
+          <v-chip
+            v-if="(activeBulkStatsMsg.sendStats?.failedCount || 0) > 0"
+            size="small"
+            variant="tonal"
+            color="error"
+            class="font-weight-bold"
+          >
+            Thất bại: {{ activeBulkStatsMsg.sendStats?.failedCount }}
+          </v-chip>
+
+          <v-spacer />
+
+          <!-- Filter Tab: Tất cả / Lỗi / Thành công -->
+          <v-btn-toggle
+            v-model="bulkStatsFilterTab"
+            mandatory
+            density="compact"
+            variant="outlined"
+            rounded="lg"
+          >
+            <v-btn value="all" size="x-small" class="text-none">Tất cả</v-btn>
+            <v-btn value="failed" size="x-small" class="text-none" color="error">
+              Lỗi ({{ (activeBulkStatsMsg.sendStats?.failedCount || 0) }})
+            </v-btn>
+            <v-btn value="success" size="x-small" class="text-none" color="success">
+              Thành công
+            </v-btn>
+          </v-btn-toggle>
+        </div>
+
+        <!-- Recipients List with Error Details -->
+        <div class="flex-grow-1 overflow-y-auto px-4 py-3">
+          <div v-if="filteredBulkRecipientResults.length === 0" class="text-center py-8 text-caption text-grey">
+            Không có khách hàng nào trong mục này
+          </div>
+
+          <div
+            v-for="r in filteredBulkRecipientResults"
+            :key="r.recipientId"
+            class="pa-3 mb-2 rounded-lg border d-flex flex-column gap-1 bg-surface"
+            :class="{ 'border-error bg-red-lighten-5': r.status === 'failed' }"
+          >
+            <div class="d-flex align-center justify-space-between">
+              <div class="d-flex align-center gap-2 overflow-hidden min-w-0">
+                <v-avatar size="28" color="primary">
+                  <span class="text-white font-weight-bold text-caption" style="font-size: 11px;">
+                    {{ (r.name || 'K').charAt(0).toUpperCase() }}
+                  </span>
+                </v-avatar>
+                <span class="text-body-2 font-weight-bold text-truncate">{{ r.name }}</span>
+              </div>
+
+              <!-- Status Badge -->
+              <v-chip
+                size="x-small"
+                :color="r.status === 'success' ? 'success' : (r.status === 'failed' ? 'error' : 'warning')"
+                variant="flat"
+                class="font-weight-bold"
+              >
+                {{ r.status === 'success' ? 'Thành công' : (r.status === 'failed' ? 'Thất bại' : 'Đang gửi') }}
+              </v-chip>
+            </div>
+
+            <!-- Error reason (Highlight if failed) -->
+            <div v-if="r.status === 'failed' && r.error" class="text-caption text-error font-weight-medium d-flex align-center gap-1.5 mt-1 pl-1">
+              <v-icon size="14" color="error" class="flex-shrink-0">lucide-alert-circle</v-icon>
+              <span>{{ r.error }}</span>
+            </div>
+            <div v-if="r.sentAt" class="text-caption text-grey pl-1" style="font-size: 10.5px;">
+              Thời gian: {{ new Date(r.sentAt).toLocaleTimeString('vi-VN') }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-5 py-3 border-t bg-surface d-flex align-center justify-space-between flex-shrink-0">
+          <v-btn variant="tonal" density="comfortable" class="text-none rounded-lg" @click="bulkStatsDialogVisible = false">
+            Đóng
+          </v-btn>
+
+          <v-btn
+            v-if="(activeBulkStatsMsg.sendStats?.failedCount || 0) > 0"
+            color="primary"
+            variant="flat"
+            density="comfortable"
+            prepend-icon="lucide-rotate-cw"
+            class="text-none font-weight-bold rounded-lg"
+            :loading="isMsgSending(activeBulkStatsMsg.id)"
+            @click="handleRetryFailedRecipients(activeBulkStatsMsg)"
+          >
+            Gửi lại cho {{ activeBulkStatsMsg.sendStats?.failedCount }} khách hàng lỗi
+          </v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
     <!-- Sync snackbar -->
     <v-snackbar v-model="syncSnack.show" :color="syncSnack.color" timeout="3000">{{ syncSnack.text }}</v-snackbar>
   </div>
@@ -1573,12 +1698,37 @@ const emit = defineEmits<{
   'toggle-ai': [convId: string, aiActive: boolean];
   'set-context-boundary': [payload: { startMessageId?: string | null; endMessageId?: string | null; resetDraft?: boolean }];
   'toggle-pin': [payload: { conversationId: string; pinned: boolean }];
+  'retry-failed-bulk': [msg: any];
   react: [messageId: string, icon: string];
   back: [];
 }>();
 
 // ── Bulk message selection & actions ─────────────────────────────────────────
 const selectedBulkMsgIds = ref<string[]>([]);
+const bulkStatsDialogVisible = ref(false);
+const activeBulkStatsMsg = ref<any>(null);
+const bulkStatsFilterTab = ref<'all' | 'failed' | 'success'>('all');
+
+function openBulkStatsDialog(msg: any) {
+  activeBulkStatsMsg.value = msg;
+  bulkStatsFilterTab.value = (msg.sendStats?.failedCount || 0) > 0 ? 'failed' : 'all';
+  bulkStatsDialogVisible.value = true;
+}
+
+const filteredBulkRecipientResults = computed(() => {
+  const results = activeBulkStatsMsg.value?.sendStats?.recipientResults || [];
+  if (bulkStatsFilterTab.value === 'failed') {
+    return results.filter((r: any) => r.status === 'failed');
+  }
+  if (bulkStatsFilterTab.value === 'success') {
+    return results.filter((r: any) => r.status === 'success');
+  }
+  return results;
+});
+
+function handleRetryFailedRecipients(msg: any) {
+  emit('retry-failed-bulk', msg);
+}
 
 const isAllBulkSelected = computed(() => {
   return props.messages.length > 0 && selectedBulkMsgIds.value.length === props.messages.length;
