@@ -229,8 +229,12 @@ export function attachZaloListener(ctx: ListenerContext): void {
   listener.on('undo', async (data: any) => {
     const msgId = data.data?.msgId || data.msgId;
     if (msgId) {
-      await handleMessageUndo(accountId, String(msgId));
-      io?.emit('chat:deleted', { accountId, msgId: String(msgId) });
+      const undoResult = await handleMessageUndo(accountId, String(msgId));
+      io?.emit('chat:deleted', {
+        accountId,
+        msgId: String(msgId),
+        deletedFromDb: undoResult?.isSelf || false,
+      });
     }
   });
 

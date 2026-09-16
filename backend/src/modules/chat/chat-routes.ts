@@ -1464,13 +1464,9 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(500).send({ error: `Lỗi thu hồi Zalo: ${errMsg || 'Không thể thu hồi tin nhắn'}` });
       }
 
-      // Mark isDeleted in database (keep original content for CRM audit)
-      await prisma.message.update({
+      // Delete message from database completely (yêu cầu: xóa tin nhắn khỏi DB luôn đối với tin của chúng ta thu hồi)
+      await prisma.message.delete({
         where: { id: message.id },
-        data: {
-          isDeleted: true,
-          deletedAt: new Date(),
-        },
       });
 
       // Broadcast socket event
@@ -1480,6 +1476,7 @@ export async function chatRoutes(app: FastifyInstance) {
         conversationId: conversation.id,
         msgId: String(message.zaloMsgId),
         messageId: message.id,
+        deletedFromDb: true,
       });
 
       return {

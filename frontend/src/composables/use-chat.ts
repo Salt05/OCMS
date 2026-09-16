@@ -653,10 +653,17 @@ export function useChat() {
       }
     });
 
-    socket.on('chat:deleted', (data: { msgId?: string; messageId?: string }) => {
-      const msg = messages.value.find(m => (data.msgId && m.zaloMsgId === data.msgId) || (data.messageId && m.id === data.messageId));
-      if (msg) {
-        msg.isDeleted = true;
+    socket.on('chat:deleted', (data: { msgId?: string; messageId?: string; deletedFromDb?: boolean }) => {
+      const idx = messages.value.findIndex(m => (data.msgId && m.zaloMsgId === data.msgId) || (data.messageId && m.id === data.messageId));
+      if (idx !== -1) {
+        const msg = messages.value[idx];
+        if (msg.senderType === 'self' || data.deletedFromDb) {
+          // Tin nhắn của chúng ta thu hồi -> xóa hoàn toàn khỏi giao diện
+          messages.value.splice(idx, 1);
+        } else {
+          // Tin nhắn khách hàng thu hồi -> giữ nguyên nội dung với trạng thái isDeleted
+          msg.isDeleted = true;
+        }
       }
     });
 
@@ -898,9 +905,9 @@ export function useChat() {
 
   async function undoMessage(conversationId: string, messageId: string) {
     const res = await api.post(`/conversations/${conversationId}/messages/${messageId}/undo`);
-    const msg = messages.value.find(m => m.id === messageId);
-    if (msg) {
-      msg.isDeleted = true;
+    const idx = messages.value.findIndex(m => m.id === messageId);
+    if (idx !== -1) {
+      messages.value.splice(idx, 1);
     }
     return res.data;
   }

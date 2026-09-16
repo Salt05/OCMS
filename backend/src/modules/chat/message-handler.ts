@@ -145,13 +145,25 @@ export async function handleIncomingMessage(
           }
         }
         if (idsToDelete.length > 0) {
-          await prisma.message.updateMany({
-            where: {
-              zaloMsgId: { in: idsToDelete },
-            },
-            data: { isDeleted: true, deletedAt: new Date() },
+          const matched = await prisma.message.findMany({
+            where: { zaloMsgId: { in: idsToDelete } },
+            select: { id: true, senderType: true },
           });
-          logger.info(`[message-handler] Processed batch delete for ${idsToDelete.length} messages`);
+          const selfIds = matched.filter(m => m.senderType === 'self').map(m => m.id);
+          const contactIds = matched.filter(m => m.senderType !== 'self').map(m => m.id);
+
+          if (selfIds.length > 0) {
+            await prisma.message.deleteMany({
+              where: { id: { in: selfIds } },
+            });
+          }
+          if (contactIds.length > 0) {
+            await prisma.message.updateMany({
+              where: { id: { in: contactIds } },
+              data: { isDeleted: true, deletedAt: new Date() },
+            });
+          }
+          logger.info(`[message-handler] Processed batch delete: ${selfIds.length} self deleted from DB, ${contactIds.length} contact soft-deleted`);
         }
       } catch (e) {
         logger.warn('[message-handler] Failed to parse delete sync event:', e);
@@ -578,16 +590,31 @@ async function updateConversationAfterMessage(
   await prisma.conversation.update({ where: { id: conversationId }, data: updateData });
 }
 
-// Soft-delete a message by its Zalo message ID
-export async function handleMessageUndo(accountId: string, zaloMsgId: string): Promise<void> {
+// Handle message undo (Zalo undo event): hard-delete if sent by us ('self'), soft-delete if sent by contact
+export async function handleMessageUndo(accountId: string, zaloMsgId: string): Promise<{ isSelf: boolean } | null> {
   try {
-    await prisma.message.updateMany({
+    const existingMessages = await prisma.message.findMany({
       where: { zaloMsgId: String(zaloMsgId) },
-      data: { isDeleted: true, deletedAt: new Date() },
     });
-    logger.info(`[message-handler] Undo message ${zaloMsgId} for account ${accountId}`);
+    if (existingMessages.length === 0) return null;
+
+    let hasSelf = false;
+    for (const msg of existingMessages) {
+      if (msg.senderType === 'self') {
+        hasSelf = true;
+        await prisma.message.delete({ where: { id: msg.id } });
+      } else {
+        await prisma.message.update({
+          where: { id: msg.id },
+          data: { isDeleted: true, deletedAt: new Date() },
+        });
+      }
+    }
+    logger.info(`[message-handler] Undo message ${zaloMsgId} for account ${accountId} (hasSelf: ${hasSelf})`);
+    return { isSelf: hasSelf };
   } catch (err) {
     logger.error('[message-handler] handleMessageUndo error:', err);
+    return null;
   }
 }
 

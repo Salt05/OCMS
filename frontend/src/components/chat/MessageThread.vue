@@ -1461,9 +1461,7 @@
           <span class="text-h6 font-weight-bold" style="font-size: 17px !important;">Thu hồi tin nhắn</span>
         </div>
         <p class="text-body-2 text-grey-darken-1 mb-4" style="line-height: 1.5;">
-          Tin nhắn này sẽ được thu hồi trên ứng dụng Zalo của khách hàng.
-          <br/>
-          <strong class="text-high-emphasis">Hệ thống OCMS vẫn lưu trữ và hiển thị nội dung gốc</strong> để đối soát nội bộ.
+          Tin nhắn này sẽ được thu hồi trên ứng dụng Zalo của khách hàng và xóa khỏi hệ thống.
         </p>
         <div class="d-flex justify-end gap-2">
           <v-btn variant="text" class="text-none font-weight-medium" @click="undoDialogVisible = false" :disabled="undoLoading">
@@ -1974,10 +1972,15 @@ async function executeUndoMessage() {
       await props.undoFn(props.conversation.id, msg.id);
     } else {
       await api.post(`/conversations/${props.conversation.id}/messages/${msg.id}/undo`);
-      msg.isDeleted = true;
+      const idx = props.messages?.findIndex(m => m.id === msg.id) ?? -1;
+      if (idx !== -1 && props.messages) {
+        props.messages.splice(idx, 1);
+      } else {
+        msg.isDeleted = true;
+      }
     }
     undoDialogVisible.value = false;
-    syncSnack.value = { show: true, text: 'Đã thu hồi tin nhắn trên Zalo', color: 'success' };
+    syncSnack.value = { show: true, text: 'Đã thu hồi tin nhắn trên Zalo và xóa khỏi hệ thống', color: 'success' };
   } catch (err: any) {
     const errorMsg = err?.response?.data?.error || err?.message || 'Không thể thu hồi tin nhắn';
     syncSnack.value = { show: true, text: errorMsg, color: 'error' };
@@ -4411,17 +4414,22 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   border-radius: 4px;
 }
 
-/* ── Revoked Message Bubble (OCMS Anti-Revoke Audit) ── */
+/* ── Revoked Message Bubble (OCMS Anti-Revoke Audit for Customer Messages) ── */
 .bubble-revoked {
-  border: 1.5px dashed rgba(245, 158, 11, 0.7) !important;
+  border: 1.5px dashed rgba(239, 68, 68, 0.55) !important;
   position: relative;
-}
-.bubble-revoked.bubble-outbound {
-  background-color: rgba(26, 115, 232, 0.88) !important;
+  background-color: #ffffff !important;
 }
 .bubble-revoked.bubble-inbound {
-  background-color: rgba(243, 244, 246, 0.95) !important;
-  border-color: rgba(239, 68, 68, 0.6) !important;
+  background-color: #ffffff !important;
+  color: #080808 !important;
+  border: 1.5px dashed rgba(239, 68, 68, 0.55) !important;
+}
+.v-theme--dark .bubble-revoked,
+.v-theme--dark .bubble-revoked.bubble-inbound {
+  background-color: #242526 !important;
+  color: #e4e6eb !important;
+  border-color: rgba(239, 68, 68, 0.55) !important;
 }
 .revoked-notice-banner {
   font-size: 11px;
@@ -4430,11 +4438,11 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   width: fit-content;
 }
 .revoked-banner-self {
-  background: rgba(255, 255, 255, 0.22);
-  color: #ffffff;
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
 }
 .revoked-banner-contact {
-  background: rgba(239, 68, 68, 0.14);
+  background: rgba(239, 68, 68, 0.12);
   color: #dc2626;
 }
 
