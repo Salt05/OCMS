@@ -13,9 +13,21 @@
           <v-icon size="20" color="primary">lucide-users-round</v-icon>
           <span class="text-subtitle-1 font-weight-bold">Chọn người nhận tin nhắn hàng loạt</span>
         </div>
-        <v-btn icon size="small" variant="text" @click="$emit('update:modelValue', false)">
-          <v-icon size="18">lucide-x</v-icon>
-        </v-btn>
+        <div class="d-flex align-center gap-1">
+          <v-btn
+            icon
+            size="small"
+            variant="text"
+            title="Làm mới danh bạ"
+            :loading="loading"
+            @click="loadData(true)"
+          >
+            <v-icon size="16">lucide-rotate-cw</v-icon>
+          </v-btn>
+          <v-btn icon size="small" variant="text" @click="$emit('update:modelValue', false)">
+            <v-icon size="18">lucide-x</v-icon>
+          </v-btn>
+        </div>
       </div>
 
       <!-- Main Content: Left Panel (Search & List) + Right Panel (Selected Items) -->
@@ -161,8 +173,8 @@
             <span class="text-caption text-grey">Đã tìm thấy {{ filteredList.length }} liên hệ</span>
           </div>
 
-          <!-- Contact items scroll list -->
-          <div class="flex-grow-1 overflow-y-auto px-2 py-1">
+          <!-- Contact items scroll list with Virtual Scroll for 60fps performance -->
+          <div class="flex-grow-1 overflow-hidden position-relative d-flex flex-column px-2 py-1" style="min-height: 0;">
             <div v-if="loading" class="d-flex align-center justify-center py-10">
               <v-progress-circular indeterminate size="32" color="primary" />
               <span class="text-caption text-grey ml-3">Đang tải danh bạ...</span>
@@ -173,7 +185,7 @@
               <v-icon color="error" size="30" class="mb-1">lucide-alert-circle</v-icon>
               <div class="text-body-2 font-weight-bold text-error">Lỗi khi tải danh sách khách hàng</div>
               <div class="text-caption text-grey-darken-1 mb-2">{{ loadError }}</div>
-              <v-btn size="small" color="error" variant="tonal" prepend-icon="lucide-rotate-cw" @click="loadData">
+              <v-btn size="small" color="error" variant="tonal" prepend-icon="lucide-rotate-cw" @click="loadData(true)">
                 Thử lại
               </v-btn>
             </div>
@@ -183,44 +195,51 @@
               <div>Không tìm thấy liên hệ phù hợp</div>
             </div>
 
-            <div
+            <v-virtual-scroll
               v-else
-              v-for="item in filteredList"
-              :key="item.id"
-              class="picker-contact-item px-3 py-2 rounded-lg d-flex align-center cursor-pointer my-0.5"
-              :class="{ 'is-selected': isSelected(item.id) }"
-              @click="toggleSelect(item)"
+              :items="filteredList"
+              item-height="54"
+              class="flex-grow-1"
             >
-              <!-- Checkbox -->
-              <div
-                class="custom-chk-box d-flex align-center justify-center flex-shrink-0 mr-3"
-                :class="{ 'is-checked': isSelected(item.id) }"
-              >
-                <v-icon v-if="isSelected(item.id)" size="12" color="white">lucide-check</v-icon>
-              </div>
+              <template #default="{ item }">
+                <div
+                  :key="item.id"
+                  class="picker-contact-item px-3 py-2 rounded-lg d-flex align-center cursor-pointer my-0.5"
+                  :class="{ 'is-selected': isSelected(item.id) }"
+                  @click="toggleSelect(item)"
+                >
+                  <!-- Checkbox -->
+                  <div
+                    class="custom-chk-box d-flex align-center justify-center flex-shrink-0 mr-3"
+                    :class="{ 'is-checked': isSelected(item.id) }"
+                  >
+                    <v-icon v-if="isSelected(item.id)" size="12" color="white">lucide-check</v-icon>
+                  </div>
 
-              <!-- Avatar -->
-              <v-avatar size="38" class="flex-shrink-0 mr-3" :color="item.isSpecial ? 'blue-lighten-4' : 'primary'">
-                <v-icon v-if="item.isSpecial" icon="lucide-folder" color="primary" size="20" />
-                <v-img v-else-if="item.avatarUrl" :src="item.avatarUrl">
-                  <template #error>
-                    <span class="text-white font-weight-bold text-caption">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
-                  </template>
-                </v-img>
-                <v-icon v-else-if="item.isGroup" icon="lucide-users" color="white" size="18" />
-                <span v-else class="text-white font-weight-bold text-caption">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
-              </v-avatar>
+                  <!-- Avatar -->
+                  <v-avatar size="38" class="flex-shrink-0 mr-3" :color="item.isSpecial ? 'blue-lighten-4' : 'primary'">
+                    <v-icon v-if="item.isSpecial" icon="lucide-folder" color="primary" size="20" />
+                    <v-img v-else-if="item.avatarUrl" :src="item.avatarUrl" loading="lazy">
+                      <template #error>
+                        <span class="text-white font-weight-bold text-caption">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
+                      </template>
+                    </v-img>
+                    <v-icon v-else-if="item.isGroup" icon="lucide-users" color="white" size="18" />
+                    <span v-else class="text-white font-weight-bold text-caption">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
+                  </v-avatar>
 
-              <!-- Name & Zalo Account badge -->
-              <div class="overflow-hidden flex-grow-1 min-w-0 mr-1">
-                <span class="text-body-2 font-weight-medium text-truncate d-block" style="font-size: 13.5px; line-height: 1.3;">
-                  {{ item.name }}
-                </span>
-                <span v-if="item.zaloAccountName" class="text-caption text-primary font-weight-medium d-block text-truncate" style="font-size: 11px; line-height: 1.1;">
-                  {{ item.zaloAccountName }}
-                </span>
-              </div>
-            </div>
+                  <!-- Name & Zalo Account badge -->
+                  <div class="overflow-hidden flex-grow-1 min-w-0 mr-1">
+                    <span class="text-body-2 font-weight-medium text-truncate d-block" style="font-size: 13.5px; line-height: 1.3;">
+                      {{ item.name }}
+                    </span>
+                    <span v-if="item.zaloAccountName" class="text-caption text-primary font-weight-medium d-block text-truncate" style="font-size: 11px; line-height: 1.1;">
+                      {{ item.zaloAccountName }}
+                    </span>
+                  </div>
+                </div>
+              </template>
+            </v-virtual-scroll>
           </div>
         </div>
 
@@ -229,61 +248,68 @@
           <!-- Top summary: Đã chọn: X / Y + Xóa tất cả -->
           <div class="px-4 py-3.5 border-b d-flex align-center justify-space-between flex-shrink-0">
             <span class="text-body-2 font-weight-bold">
-              Đã chọn: <span class="text-primary">{{ selectedMap.size }}</span>
+              Đã chọn: <span class="text-primary">{{ selectedCount }}</span>
             </span>
             <button
               type="button"
               class="text-caption text-primary font-weight-bold cursor-pointer border-0 bg-transparent"
-              :disabled="selectedMap.size === 0"
+              :disabled="selectedCount === 0"
               @click="clearSelected"
             >
               Xóa tất cả
             </button>
           </div>
 
-          <!-- List of selected contacts with (X) remove icon -->
-          <div class="flex-grow-1 overflow-y-auto px-3 py-2">
-            <div v-if="selectedMap.size === 0" class="text-center py-16 text-caption text-grey">
+          <!-- List of selected contacts with (X) remove icon (Virtual Scroll) -->
+          <div class="flex-grow-1 overflow-hidden px-2 py-1 position-relative d-flex flex-column" style="min-height: 0;">
+            <div v-if="selectedCount === 0" class="text-center py-16 text-caption text-grey">
               <v-icon size="32" class="mb-2 text-grey-lighten-2">lucide-user-check</v-icon>
               <div>Chưa có liên hệ nào được chọn</div>
               <div class="text-disabled" style="font-size: 11px;">Chọn từ danh sách bên trái</div>
             </div>
 
-            <div
+            <v-virtual-scroll
               v-else
-              v-for="item in Array.from(selectedMap.values())"
-              :key="item.id"
-              class="selected-item-row px-2.5 py-2 rounded-lg d-flex align-center justify-space-between gap-2.5 my-1 border"
+              :items="selectedList"
+              item-height="48"
+              class="flex-grow-1"
             >
-              <div class="d-flex align-center gap-2.5 overflow-hidden min-w-0 flex-grow-1">
-                <v-avatar size="32" class="flex-shrink-0 mr-3" :color="item.isSpecial ? 'blue-lighten-4' : 'primary'">
-                  <v-icon v-if="item.isSpecial" icon="lucide-folder" color="primary" size="16" />
-                  <v-img v-else-if="item.avatarUrl" :src="item.avatarUrl">
-                    <template #error>
-                      <span class="text-white font-weight-bold text-caption" style="font-size: 11px;">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
-                    </template>
-                  </v-img>
-                  <v-icon v-else-if="item.isGroup" icon="lucide-users" color="white" size="14" />
-                  <span v-else class="text-white font-weight-bold text-caption" style="font-size: 11px;">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
-                </v-avatar>
-                <!-- Name ONLY -->
-                <div class="overflow-hidden min-w-0 flex-grow-1">
-                  <div class="text-body-2 font-weight-medium text-truncate" style="font-size: 13px;">{{ item.name }}</div>
-                </div>
-              </div>
+              <template #default="{ item }">
+                <div
+                  :key="item.id"
+                  class="selected-item-row px-2.5 py-1.5 rounded-lg d-flex align-center justify-space-between gap-2.5 my-0.5 border mx-1"
+                >
+                  <div class="d-flex align-center gap-2.5 overflow-hidden min-w-0 flex-grow-1">
+                    <v-avatar size="30" class="flex-shrink-0 mr-2" :color="item.isSpecial ? 'blue-lighten-4' : 'primary'">
+                      <v-icon v-if="item.isSpecial" icon="lucide-folder" color="primary" size="15" />
+                      <v-img v-else-if="item.avatarUrl" :src="item.avatarUrl" loading="lazy">
+                        <template #error>
+                          <span class="text-white font-weight-bold text-caption" style="font-size: 10px;">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
+                        </template>
+                      </v-img>
+                      <v-icon v-else-if="item.isGroup" icon="lucide-users" color="white" size="14" />
+                      <span v-else class="text-white font-weight-bold text-caption" style="font-size: 10px;">{{ (item.name || 'U').charAt(0).toUpperCase() }}</span>
+                    </v-avatar>
+                    <!-- Name ONLY -->
+                    <div class="overflow-hidden min-w-0 flex-grow-1">
+                      <div class="text-body-2 font-weight-medium text-truncate" style="font-size: 13px;">{{ item.name }}</div>
+                    </div>
+                  </div>
 
-              <v-btn
-                icon
-                size="x-small"
-                variant="text"
-                color="medium-emphasis"
-                class="flex-shrink-0"
-                @click="unselect(item.id)"
-                title="Bỏ chọn"
-              >
-                <v-icon size="14">lucide-x</v-icon>
-              </v-btn>
-            </div>
+                  <v-btn
+                    icon
+                    size="x-small"
+                    variant="text"
+                    color="medium-emphasis"
+                    class="flex-shrink-0"
+                    @click="unselect(item.id)"
+                    title="Bỏ chọn"
+                  >
+                    <v-icon size="14">lucide-x</v-icon>
+                  </v-btn>
+                </div>
+              </template>
+            </v-virtual-scroll>
           </div>
         </div>
       </div>
@@ -303,10 +329,10 @@
           variant="flat"
           density="comfortable"
           class="text-none font-weight-bold rounded-lg px-5"
-          :disabled="selectedMap.size === 0"
+          :disabled="selectedCount === 0"
           @click="confirmSelection"
         >
-          Thêm vào danh sách ({{ selectedMap.size }})
+          Thêm vào danh sách ({{ selectedCount }})
         </v-btn>
       </div>
     </v-card>
@@ -335,6 +361,8 @@ interface PickerContactItem {
   zaloAccountName?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  searchKey?: string;
+  normalizedTags?: string[];
 }
 
 const props = defineProps<{
@@ -355,6 +383,16 @@ const { tags: systemTags } = useTags();
 const loading = ref(false);
 const loadError = ref<string | null>(null);
 const searchQuery = ref('');
+const debouncedSearch = ref('');
+let searchDebounceTimer: any = null;
+
+watch(searchQuery, (val) => {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    debouncedSearch.value = val;
+  }, 180);
+});
+
 const activeTab = ref<'friends' | 'groups'>('friends');
 const tagMenuOpen = ref(false);
 const selectedTags = ref<string[]>([]);
@@ -379,15 +417,19 @@ async function fetchZaloAccounts() {
 }
 
 function onZaloAccountChange() {
-  loadData();
+  loadData(true);
 }
 
 // Full pool of contacts and conversations
 const contactsList = ref<PickerContactItem[]>([]);
 const conversationsList = ref<PickerContactItem[]>([]);
 
-// Selected items map (id -> item)
+// Selected items state: Set for O(1) lookup + Map for object storage
+const selectedIds = ref<Set<string>>(new Set());
 const selectedMap = ref<Map<string, PickerContactItem>>(new Map());
+
+const selectedCount = computed(() => selectedIds.value.size);
+const selectedList = computed(() => Array.from(selectedMap.value.values()));
 
 function isLightColor(hex?: string | null): boolean {
   if (!hex || !hex.startsWith('#')) return false;
@@ -430,7 +472,7 @@ function toggleTagFilter(tagName: string) {
   }
 }
 
-// Filtered list based on active tab, search query, tag filter, and Zalo account
+// Highly optimized filtered list using pre-indexed searchKey and normalizedTags
 const filteredList = computed(() => {
   let list: PickerContactItem[] = [];
 
@@ -445,30 +487,25 @@ const filteredList = computed(() => {
 
   // Filter by selected Zalo account (if selected)
   if (selectedZaloAccountId.value) {
+    const targetAccountId = selectedZaloAccountId.value;
     list = list.filter((item) => {
       if (!item.zaloAccountId) return true;
-      return item.zaloAccountId === selectedZaloAccountId.value;
+      return item.zaloAccountId === targetAccountId;
     });
   }
 
-  // Filter by search text
-  const q = searchQuery.value.trim().toLowerCase();
+  // Filter by search text (fast pre-computed searchKey lookup)
+  const q = debouncedSearch.value.trim().toLowerCase();
   if (q) {
-    list = list.filter((item) => {
-      const nameMatch = item.name.toLowerCase().includes(q);
-      const phoneMatch = item.phone ? item.phone.toLowerCase().includes(q) : false;
-      const codeMatch = item.customerId ? item.customerId.toLowerCase().includes(q) : false;
-      return nameMatch || phoneMatch || codeMatch;
-    });
+    list = list.filter((item) => item.searchKey?.includes(q));
   }
 
   // Filter by selected tags from dropdown
   if (selectedTags.value.length > 0) {
+    const selectedTagsLower = selectedTags.value.map((t) => t.toLowerCase());
     list = list.filter((item) => {
-      const itemTags = (item.tags || []).map((t: any) =>
-        (typeof t === 'string' ? t : t?.name || '').toLowerCase()
-      );
-      return selectedTags.value.some((sel) => itemTags.includes(sel.toLowerCase()));
+      if (!item.normalizedTags || item.normalizedTags.length === 0) return false;
+      return selectedTagsLower.some((sel) => item.normalizedTags!.includes(sel));
     });
   }
 
@@ -476,44 +513,67 @@ const filteredList = computed(() => {
 });
 
 const isAllCurrentFilteredSelected = computed(() => {
-  if (filteredList.value.length === 0) return false;
-  return filteredList.value.every((item) => selectedMap.value.has(item.id));
+  const list = filteredList.value;
+  if (list.length === 0) return false;
+  const ids = selectedIds.value;
+  for (let i = 0; i < list.length; i++) {
+    if (!ids.has(list[i].id)) return false;
+  }
+  return true;
 });
 
-function isSelected(id: string) {
-  return selectedMap.value.has(id);
+function isSelected(id: string): boolean {
+  return selectedIds.value.has(id);
 }
 
 function toggleSelect(item: PickerContactItem) {
-  if (selectedMap.value.has(item.id)) {
-    selectedMap.value.delete(item.id);
+  const newIds = new Set(selectedIds.value);
+  const newMap = new Map(selectedMap.value);
+  if (newIds.has(item.id)) {
+    newIds.delete(item.id);
+    newMap.delete(item.id);
   } else {
-    selectedMap.value.set(item.id, item);
+    newIds.add(item.id);
+    newMap.set(item.id, item);
   }
-  selectedMap.value = new Map(selectedMap.value);
+  selectedIds.value = newIds;
+  selectedMap.value = newMap;
 }
 
 function unselect(id: string) {
-  selectedMap.value.delete(id);
-  selectedMap.value = new Map(selectedMap.value);
+  const newIds = new Set(selectedIds.value);
+  const newMap = new Map(selectedMap.value);
+  newIds.delete(id);
+  newMap.delete(id);
+  selectedIds.value = newIds;
+  selectedMap.value = newMap;
 }
 
 function clearSelected() {
-  selectedMap.value.clear();
+  selectedIds.value = new Set();
   selectedMap.value = new Map();
 }
 
 function toggleSelectCurrentFiltered() {
+  const newIds = new Set(selectedIds.value);
+  const newMap = new Map(selectedMap.value);
+  const list = filteredList.value;
+
   if (isAllCurrentFilteredSelected.value) {
-    for (const item of filteredList.value) {
-      selectedMap.value.delete(item.id);
+    for (let i = 0; i < list.length; i++) {
+      const id = list[i].id;
+      newIds.delete(id);
+      newMap.delete(id);
     }
   } else {
-    for (const item of filteredList.value) {
-      selectedMap.value.set(item.id, item);
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      newIds.add(item.id);
+      newMap.set(item.id, item);
     }
   }
-  selectedMap.value = new Map(selectedMap.value);
+  selectedIds.value = newIds;
+  selectedMap.value = newMap;
 }
 
 function confirmSelection() {
@@ -523,7 +583,21 @@ function confirmSelection() {
   emit('update:modelValue', false);
 }
 
-async function loadData() {
+// In-memory data cache to eliminate repeated 3-5MB JSON fetching on re-open
+const dataCache = new Map<string, { contacts: PickerContactItem[]; convs: PickerContactItem[]; timestamp: number }>();
+
+async function loadData(forceRefresh = false) {
+  const cacheKey = selectedZaloAccountId.value || '__all__';
+  const cached = dataCache.get(cacheKey);
+  const now = Date.now();
+
+  // If cache is fresh (< 3 minutes) and not force refresh, use instantly (0ms delay)
+  if (!forceRefresh && cached && now - cached.timestamp < 180000) {
+    contactsList.value = cached.contacts;
+    conversationsList.value = cached.convs;
+    return;
+  }
+
   loading.value = true;
   loadError.value = null;
   try {
@@ -540,52 +614,75 @@ async function loadData() {
     ]);
 
     // Parse conversations
+    let parsedConvs: PickerContactItem[] = [];
     if (convRes.status === 'fulfilled' && convRes.value.data?.conversations) {
-      conversationsList.value = convRes.value.data.conversations.map((c: any) => {
+      parsedConvs = convRes.value.data.conversations.map((c: any) => {
         const isSpecial = c.contact?.fullName === 'My Documents' || c.contact?.zaloName === 'My Documents';
+        const name = c.contact?.fullName || c.contact?.zaloName || (c.threadType === 'group' ? 'Nhóm Zalo' : 'Khách hàng');
+        const phone = c.contact?.phone || null;
+        const customerId = c.contact?.customerId || null;
+        const tags = Array.isArray(c.contact?.tags) ? c.contact.tags : [];
         return {
           id: c.contact?.id || c.id,
           contactId: c.contact?.id,
           conversationId: c.id,
-          name: c.contact?.fullName || c.contact?.zaloName || (c.threadType === 'group' ? 'Nhóm Zalo' : 'Khách hàng'),
-          phone: c.contact?.phone || null,
-          customerId: c.contact?.customerId || null,
+          name,
+          phone,
+          customerId,
           avatarUrl: c.contact?.avatarUrl || null,
           isGroup: c.threadType === 'group',
           isSpecial,
-          tags: Array.isArray(c.contact?.tags) ? c.contact.tags : [],
+          tags,
           lastMessageAt: c.lastMessageAt,
           zaloUid: c.contact?.zaloUid || null,
           zaloAccountId: c.zaloAccountId || c.zaloAccount?.id || null,
           zaloAccountName: c.zaloAccount?.displayName || null,
           createdAt: c.contact?.createdAt || null,
           updatedAt: c.contact?.updatedAt || null,
+          searchKey: `${name} ${phone || ''} ${customerId || ''}`.toLowerCase(),
+          normalizedTags: tags.map((t: any) => (typeof t === 'string' ? t : t?.name || '').toLowerCase()),
         };
       });
     }
 
     // Parse CRM contacts
+    let parsedContacts: PickerContactItem[] = [];
     if (contactsRes.status === 'fulfilled' && contactsRes.value.data?.contacts) {
-      contactsList.value = contactsRes.value.data.contacts.map((ct: any) => {
+      parsedContacts = contactsRes.value.data.contacts.map((ct: any) => {
         const firstConv = ct.conversations?.[0];
+        const name = ct.fullName || ct.zaloName || 'Khách hàng';
+        const phone = ct.phone || null;
+        const customerId = ct.customerId || null;
+        const tags = Array.isArray(ct.tags) ? ct.tags : [];
         return {
           id: ct.id,
           contactId: ct.id,
           conversationId: firstConv?.id || null,
-          name: ct.fullName || ct.zaloName || 'Khách hàng',
-          phone: ct.phone || null,
-          customerId: ct.customerId || null,
+          name,
+          phone,
+          customerId,
           avatarUrl: ct.avatarUrl || null,
           isGroup: false,
-          tags: Array.isArray(ct.tags) ? ct.tags : [],
+          tags,
           zaloUid: ct.zaloUid || null,
           zaloAccountId: firstConv?.zaloAccountId || firstConv?.zaloAccount?.id || null,
           zaloAccountName: firstConv?.zaloAccount?.displayName || null,
           createdAt: ct.createdAt || null,
           updatedAt: ct.updatedAt || null,
+          searchKey: `${name} ${phone || ''} ${customerId || ''}`.toLowerCase(),
+          normalizedTags: tags.map((t: any) => (typeof t === 'string' ? t : t?.name || '').toLowerCase()),
         };
       });
     }
+
+    conversationsList.value = parsedConvs;
+    contactsList.value = parsedContacts;
+
+    dataCache.set(cacheKey, {
+      contacts: parsedContacts,
+      convs: parsedConvs,
+      timestamp: Date.now(),
+    });
 
     if (convRes.status === 'rejected' && contactsRes.status === 'rejected') {
       const msg = (convRes.reason as any)?.response?.data?.error || (convRes.reason as any)?.message || 'Không thể kết nối đến máy chủ';
@@ -600,29 +697,39 @@ async function loadData() {
 }
 
 function initSelectedFromExisting() {
-  selectedMap.value.clear();
+  const newIds = new Set<string>();
+  const newMap = new Map<string, PickerContactItem>();
   const existing = props.existingContacts || [];
-  for (const c of existing) {
+  for (let i = 0; i < existing.length; i++) {
+    const c = existing[i];
     const id = String(c.id || c.contactId);
-    selectedMap.value.set(id, {
+    const name = c.name || c.fullName || c.zaloName || 'Khách hàng';
+    const phone = c.phone || null;
+    const customerId = c.customerId || null;
+    const tags = Array.isArray(c.tags) ? c.tags : [];
+    newIds.add(id);
+    newMap.set(id, {
       id,
       contactId: id,
       conversationId: c.conversationId || null,
-      name: c.name || c.fullName || c.zaloName || 'Khách hàng',
-      phone: c.phone || null,
-      customerId: c.customerId || null,
+      name,
+      phone,
+      customerId,
       avatarUrl: c.avatarUrl || null,
       isGroup: Boolean(c.isGroup || c.threadType === 'group'),
       isSpecial: Boolean(c.isSpecial),
-      tags: Array.isArray(c.tags) ? c.tags : [],
+      tags,
       zaloUid: c.zaloUid || null,
       zaloAccountId: c.zaloAccountId || null,
       zaloAccountName: c.zaloAccountName || null,
       createdAt: c.createdAt || null,
       updatedAt: c.updatedAt || null,
+      searchKey: `${name} ${phone || ''} ${customerId || ''}`.toLowerCase(),
+      normalizedTags: tags.map((t: any) => (typeof t === 'string' ? t : t?.name || '').toLowerCase()),
     });
   }
-  selectedMap.value = new Map(selectedMap.value);
+  selectedIds.value = newIds;
+  selectedMap.value = newMap;
 }
 
 watch(
@@ -705,7 +812,9 @@ onMounted(() => {
 }
 
 .picker-contact-item {
-  transition: background-color 0.15s ease-in-out;
+  transition: background-color 0.12s ease-in-out;
+  height: 52px;
+  box-sizing: border-box;
 }
 .picker-contact-item:hover {
   background-color: rgba(var(--v-theme-on-surface), 0.04);
@@ -716,7 +825,9 @@ onMounted(() => {
 
 .selected-item-row {
   background-color: rgba(var(--v-theme-on-surface), 0.02);
-  transition: background-color 0.15s ease;
+  transition: background-color 0.12s ease;
+  height: 46px;
+  box-sizing: border-box;
 }
 .selected-item-row:hover {
   background-color: rgba(var(--v-theme-on-surface), 0.05);

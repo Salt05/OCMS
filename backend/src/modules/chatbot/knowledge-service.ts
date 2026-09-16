@@ -116,11 +116,14 @@ class KnowledgeService {
     });
   }
 
-  async seedDefaultKnowledgeIfEmpty(orgId: string) {
-    try {
-      const count = await prisma.knowledgeBase.count({ where: { orgId } });
-      if (count > 0) return;
+  async deleteAllKnowledge(orgId: string) {
+    return prisma.knowledgeBase.deleteMany({
+      where: { orgId },
+    });
+  }
 
+  async seedDefaultKnowledge(orgId: string) {
+    try {
       const defaults: KnowledgeItemInput[] = [
         {
           category: 'policy',
@@ -163,8 +166,20 @@ class KnowledgeService {
         await this.createKnowledge(orgId, d);
       }
       logger.info(`[knowledge-service] Seeded ${defaults.length} default knowledge items for org ${orgId}`);
+      return defaults.length;
     } catch (err: any) {
       logger.warn('[knowledge-service] Failed to seed default knowledge:', err.message);
+      throw err;
+    }
+  }
+
+  async seedDefaultKnowledgeIfEmpty(orgId: string) {
+    try {
+      const count = await prisma.knowledgeBase.count({ where: { orgId } });
+      if (count > 0) return;
+      await this.seedDefaultKnowledge(orgId);
+    } catch (err: any) {
+      logger.warn('[knowledge-service] Failed to seed default knowledge if empty:', err.message);
     }
   }
 }

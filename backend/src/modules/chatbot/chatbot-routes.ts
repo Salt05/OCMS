@@ -245,9 +245,6 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
       const orgId = req.user?.orgId || req.query.orgId;
       if (!orgId) return reply.status(400).send({ error: 'orgId is required' });
 
-      // Seed default policies/guides if none exist yet for this org
-      await knowledgeService.seedDefaultKnowledgeIfEmpty(orgId);
-
       const items = await knowledgeService.listKnowledge(orgId, {
         category: req.query.category,
       });
@@ -306,12 +303,52 @@ export const knowledgeRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
     }
   };
 
+  const clearAllKnowledge = async (req: any, reply: any) => {
+    try {
+      const currentUser = req.user;
+      if (!['owner', 'admin'].includes(currentUser?.role)) {
+        return reply.status(403).send({ error: 'Chỉ Quản trị viên mới có quyền xóa toàn bộ tài liệu / chính sách' });
+      }
+
+      const orgId = currentUser?.orgId || req.body?.orgId || req.query?.orgId;
+      if (!orgId) return reply.status(400).send({ error: 'orgId is required' });
+
+      await knowledgeService.deleteAllKnowledge(orgId);
+      return reply.send({ success: true, message: 'Đã xóa toàn bộ tài liệu thành công' });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  };
+
+  const seedDefaults = async (req: any, reply: any) => {
+    try {
+      const currentUser = req.user;
+      if (!['owner', 'admin'].includes(currentUser?.role)) {
+        return reply.status(403).send({ error: 'Chỉ Quản trị viên mới có quyền nạp tài liệu mẫu' });
+      }
+
+      const orgId = currentUser?.orgId || req.body?.orgId;
+      if (!orgId) return reply.status(400).send({ error: 'orgId is required' });
+
+      const count = await knowledgeService.seedDefaultKnowledge(orgId);
+      return reply.send({ success: true, count, message: `Đã nạp thành công ${count} tài liệu mẫu` });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
+    }
+  };
+
   // Support directly mounted route '/' and sub-path '/knowledge'
   app.get('/', getKnowledge);
   app.get('/knowledge', getKnowledge);
 
   app.post('/', createKnowledge);
   app.post('/knowledge', createKnowledge);
+
+  app.post('/seed-defaults', seedDefaults);
+  app.post('/knowledge/seed-defaults', seedDefaults);
+
+  app.delete('/clear-all', clearAllKnowledge);
+  app.delete('/knowledge/clear-all', clearAllKnowledge);
 
   app.put('/:id', updateKnowledge);
   app.put('/knowledge/:id', updateKnowledge);

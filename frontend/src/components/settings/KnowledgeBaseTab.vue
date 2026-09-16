@@ -176,6 +176,32 @@
             </v-btn>
           </div>
         </template>
+
+        <!-- Empty State -->
+        <template #no-data>
+          <div class="py-10 text-center">
+            <v-avatar color="primary" variant="tonal" size="64" class="mb-3">
+              <v-icon size="32">lucide-book-marked</v-icon>
+            </v-avatar>
+            <div class="text-subtitle-1 font-weight-bold mb-1">
+              Chưa có tài liệu hoặc chính sách nào
+            </div>
+            <div class="text-caption text-medium-emphasis mb-4" style="max-width: 440px; margin: 0 auto;">
+              Hệ thống chưa có tài liệu chính sách nào. Nhấn nút bên dưới để tạo tài liệu mới.
+            </div>
+            <div v-if="authStore.isAdmin" class="d-flex justify-center gap-2">
+              <v-btn
+                color="primary"
+                variant="flat"
+                prepend-icon="lucide-plus"
+                size="small"
+                @click="openCreateDialog"
+              >
+                Tạo tài liệu mới
+              </v-btn>
+            </div>
+          </div>
+        </template>
       </v-data-table>
     </v-card>
 
