@@ -90,7 +90,7 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) return parsed;
           } catch {}
-          if (raw.startsWith('http')) {
+          if (raw.startsWith('http') || raw.startsWith('/uploads/')) {
             const isImg = /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(raw.split('?')[0]);
             return [{ type: isImg ? 'image' : 'file', url: raw }];
           }
@@ -198,7 +198,7 @@ export async function quickMessageRoutes(app: FastifyInstance): Promise<void> {
               const parsed = JSON.parse(raw);
               if (Array.isArray(parsed)) return parsed;
             } catch {}
-            if (raw.startsWith('http')) {
+            if (raw.startsWith('http') || raw.startsWith('/uploads/')) {
               const isImg = /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(raw.split('?')[0]);
               return [{ type: isImg ? 'image' : 'file', url: raw }];
             }

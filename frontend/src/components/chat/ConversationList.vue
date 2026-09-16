@@ -1,5 +1,5 @@
 <template>
-  <div class="conversation-list d-flex flex-column" style="width: 100%; border-right: 1px solid var(--v-border-color, rgba(128,128,128,0.15)); height: 100%;">
+  <div ref="listRootRef" class="conversation-list d-flex flex-column" style="width: 100%; border-right: 1px solid var(--v-border-color, rgba(128,128,128,0.15)); height: 100%;">
     <!-- 1. Zalo PC Top Header: Search Box with Search Button -->
     <div class="zalo-conv-header px-3 pt-3 pb-2 d-flex align-center gap-2">
       <div class="zalo-search-box flex-grow-1 d-flex align-center px-2.5 py-1 rounded-lg border bg-surface">
@@ -21,6 +21,17 @@
           <v-icon size="16">lucide-search</v-icon>
         </button>
       </div>
+
+      <!-- Bulk Message Button (Gửi tin nhắn hàng loạt) -->
+      <button
+        type="button"
+        class="zalo-conv-header-btn d-flex align-center justify-center rounded-lg border cursor-pointer flex-shrink-0"
+        :class="selectedId === 'bulk_session' ? 'bg-primary text-white border-primary' : 'bg-surface text-medium-emphasis'"
+        title="Gửi tin nhắn hàng loạt"
+        @click="$emit('select', 'bulk_session')"
+      >
+        <v-icon size="18">lucide-layers</v-icon>
+      </button>
     </div>
 
     <!-- Loading State when searching Zalo by phone -->
@@ -603,11 +614,11 @@
                   </span>
                 </div>
 
-                <!-- Extra row: Zone badge + Tags (if any) -->
-                <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone || (conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId)" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+                <!-- Extra row: Zone badge + Tags (Dynamic fitting single-row) -->
+                <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone || (conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId)" class="conv-tags-row d-flex align-center flex-nowrap overflow-hidden mt-1">
                   <span
                     v-if="conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId"
-                    class="conv-handoff-badge text-truncate mr-1"
+                    class="conv-handoff-badge text-truncate flex-shrink-0 mr-1"
                     :title="`Cần hỗ trợ: ${conv.handoffReason || 'Khách yêu cầu gặp nhân viên'}`"
                   >
                     <v-icon size="10" class="mr-0.5">lucide-user-check</v-icon>
@@ -615,23 +626,27 @@
                   </span>
                   <span
                     v-if="conv.contact?.zone"
-                    class="conv-zone-badge text-truncate"
+                    class="conv-zone-badge text-truncate flex-shrink-0"
                     :title="`Khu vực: ${conv.contact.zone}`"
                   >
                     <v-icon size="10" class="mr-0.5">lucide-map-pin</v-icon>
                     {{ conv.contact.zone }}
                   </span>
                   <span
-                    v-for="(tag, idx) in getContactTags(conv).slice(0, 3)"
+                    v-for="(tag, idx) in getTagsLayout(conv).visibleTags"
                     :key="idx"
-                    class="conv-tag-badge text-truncate"
+                    class="conv-tag-badge text-truncate flex-shrink-0"
                     :style="getTagStyle(tag)"
-                    :title="getTagName(tag)"
+                    :title="`Thẻ: ${getTagName(tag)}`"
                   >
                     {{ getTagName(tag) }}
                   </span>
-                  <span v-if="getContactTags(conv).length > 3" class="conv-tag-more">
-                    +{{ getContactTags(conv).length - 3 }}
+                  <span
+                    v-if="getTagsLayout(conv).remainingCount > 0"
+                    class="conv-tag-more flex-shrink-0"
+                    :title="getTagsLayout(conv).remainingTooltip"
+                  >
+                    +{{ getTagsLayout(conv).remainingCount }}
                   </span>
                 </div>
               </div>
@@ -723,11 +738,11 @@
               </span>
             </div>
 
-            <!-- Extra row: Zone badge + Tags (if any) -->
-            <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone || (conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId)" class="conv-tags-row d-flex align-center flex-wrap mt-1">
+            <!-- Extra row: Zone badge + Tags (Dynamic fitting single-row) -->
+            <div v-if="getContactTags(conv).length > 0 || conv.contact?.zone || (conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId)" class="conv-tags-row d-flex align-center flex-nowrap overflow-hidden mt-1">
               <span
                 v-if="conv.currentState === 'HUMAN_REQUESTED' && conv.id !== selectedId"
-                class="conv-handoff-badge text-truncate mr-1"
+                class="conv-handoff-badge text-truncate flex-shrink-0 mr-1"
                 :title="`Cần hỗ trợ: ${conv.handoffReason || 'Khách yêu cầu gặp nhân viên'}`"
               >
                 <v-icon size="10" class="mr-0.5">lucide-user-check</v-icon>
@@ -735,23 +750,27 @@
               </span>
               <span
                 v-if="conv.contact?.zone"
-                class="conv-zone-badge text-truncate"
+                class="conv-zone-badge text-truncate flex-shrink-0"
                 :title="`Khu vực: ${conv.contact.zone}`"
               >
                 <v-icon size="10" class="mr-0.5">lucide-map-pin</v-icon>
                 {{ conv.contact.zone }}
               </span>
               <span
-                v-for="(tag, idx) in getContactTags(conv).slice(0, 3)"
+                v-for="(tag, idx) in getTagsLayout(conv).visibleTags"
                 :key="idx"
-                class="conv-tag-badge text-truncate"
+                class="conv-tag-badge text-truncate flex-shrink-0"
                 :style="getTagStyle(tag)"
-                :title="getTagName(tag)"
+                :title="`Thẻ: ${getTagName(tag)}`"
               >
                 {{ getTagName(tag) }}
               </span>
-              <span v-if="getContactTags(conv).length > 3" class="conv-tag-more">
-                +{{ getContactTags(conv).length - 3 }}
+              <span
+                v-if="getTagsLayout(conv).remainingCount > 0"
+                class="conv-tag-more flex-shrink-0"
+                :title="getTagsLayout(conv).remainingTooltip"
+              >
+                +{{ getTagsLayout(conv).remainingCount }}
               </span>
             </div>
           </div>
@@ -839,7 +858,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { Conversation } from '@/composables/use-chat';
 import { useTags, type TagGroup } from '@/composables/use-tags';
 import TagGroupDialog from '@/components/common/TagGroupDialog.vue';
@@ -1261,6 +1280,133 @@ function getContactTags(conv: Conversation): any[] {
   return Array.isArray(tagsList) ? tagsList.filter((t: any) => t) : [];
 }
 
+// ── Dynamic Tags Layout Calculation (Sidebar width fit) ───────────────────
+const listRootRef = ref<HTMLElement | null>(null);
+const sidebarWidth = ref(350);
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  if (listRootRef.value) {
+    sidebarWidth.value = listRootRef.value.clientWidth || 350;
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+          sidebarWidth.value = entry.contentRect.width;
+        }
+      }
+    });
+    resizeObserver.observe(listRootRef.value);
+  }
+});
+
+onUnmounted(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+});
+
+let canvasCtx: CanvasRenderingContext2D | null = null;
+function measureTextWidth(text: string, font: string): number {
+  if (typeof document === 'undefined') return text.length * 7;
+  if (!canvasCtx) {
+    const canvas = document.createElement('canvas');
+    canvasCtx = canvas.getContext('2d');
+  }
+  if (canvasCtx) {
+    canvasCtx.font = font;
+    return canvasCtx.measureText(text).width;
+  }
+  return text.length * 7;
+}
+
+const tagWidthCache = new Map<string, number>();
+function getTagBadgeWidth(name: string): number {
+  const cached = tagWidthCache.get(name);
+  if (cached !== undefined) return cached;
+  const textW = measureTextWidth(name, '600 11px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
+  const w = Math.min(110, Math.ceil(textW + 18));
+  tagWidthCache.set(name, w);
+  return w;
+}
+
+function getZoneBadgeWidth(zone: string): number {
+  const textW = measureTextWidth(zone, '600 10px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
+  return Math.min(120, Math.ceil(textW + 26));
+}
+
+function getTagsLayout(conv: Conversation) {
+  const currentSidebarWidth = sidebarWidth.value;
+  const allTags = getContactTags(conv);
+
+  if (!allTags || allTags.length === 0) {
+    return { visibleTags: [], remainingCount: 0, remainingTooltip: '' };
+  }
+
+  // Available row width: subtract padding (24px), avatar (58px), scrollbar buffer (12px)
+  const totalRowWidth = Math.max(120, currentSidebarWidth - 94);
+  let availableWidth = totalRowWidth;
+
+  // Deduct handoff badge if active
+  if (conv.currentState === 'HUMAN_REQUESTED' && conv.id !== props.selectedId) {
+    availableWidth -= (75 + 4);
+  }
+
+  // Deduct zone badge if present
+  if (conv.contact?.zone) {
+    availableWidth -= (getZoneBadgeWidth(conv.contact.zone) + 4);
+  }
+
+  if (availableWidth <= 24) {
+    const tooltip = allTags.map((t: any) => '#' + getTagName(t)).join(', ');
+    return { visibleTags: [], remainingCount: allTags.length, remainingTooltip: `Thẻ: ${tooltip}` };
+  }
+
+  const widths = allTags.map((t: any) => getTagBadgeWidth(getTagName(t)));
+
+  // Check if ALL tags fit together without "+N" badge
+  let totalAllTagsWidth = 0;
+  for (let i = 0; i < widths.length; i++) {
+    totalAllTagsWidth += widths[i] + (i > 0 ? 4 : 0);
+  }
+
+  if (totalAllTagsWidth <= availableWidth) {
+    return {
+      visibleTags: allTags,
+      remainingCount: 0,
+      remainingTooltip: '',
+    };
+  }
+
+  // Otherwise reserve space for "+N" badge (~34px with gap)
+  const moreBadgeSpace = 34;
+  let currentUsed = 0;
+  const visibleTags: any[] = [];
+
+  for (let i = 0; i < allTags.length; i++) {
+    const tagW = widths[i];
+    const gap = visibleTags.length > 0 ? 4 : 0;
+    const needed = currentUsed + gap + tagW;
+
+    if (needed + moreBadgeSpace <= availableWidth) {
+      currentUsed = needed;
+      visibleTags.push(allTags[i]);
+    } else {
+      break;
+    }
+  }
+
+  const remainingCount = allTags.length - visibleTags.length;
+  const remainingTags = allTags.slice(visibleTags.length);
+  const remainingTooltip = remainingTags.map((t: any) => '#' + getTagName(t)).join(', ');
+
+  return {
+    visibleTags,
+    remainingCount,
+    remainingTooltip: `Thẻ khác: ${remainingTooltip}`,
+  };
+}
+
 function isUndoSyncMessage(msg: any): boolean {
   if (!msg || !msg.content || !msg.content.startsWith('{')) return false;
   try {
@@ -1345,6 +1491,8 @@ function formatTime(dateStr: string | null): string {
 
 <style scoped>
 .zalo-search-box { background-color: rgba(0,0,0,0.05); border-radius: 8px; height: 36px; }
+.zalo-conv-header-btn { width: 36px; height: 36px; transition: all 0.15s ease; }
+.zalo-conv-header-btn:hover { border-color: #0068ff !important; color: #0068ff !important; }
 .zalo-search-input { border: none; background: transparent; outline: none; font-size: 13px; }
 .zalo-tab-btn { background: transparent; border: none; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .zalo-tab-btn.is-active { background: rgba(0, 104, 255, 0.1); color: #0068ff; }
@@ -1356,7 +1504,11 @@ function formatTime(dateStr: string | null): string {
 .tag-filter-item:hover { background: rgba(0,0,0,0.05); }
 .tag-filter-item.is-selected { background: rgba(0, 104, 255, 0.1); }
 .zalo-conv-avatar-wrap { margin-right: 14px !important; }
-.conv-tags-row { gap: 4px; }
+.conv-tags-row {
+  gap: 4px;
+  min-width: 0;
+  height: 22px;
+}
 .conv-tag-badge {
   font-size: 11px;
   font-weight: 600;
@@ -1366,6 +1518,8 @@ function formatTime(dateStr: string | null): string {
   align-items: center;
   line-height: 1.2;
   max-width: 110px;
+  flex-shrink: 0;
+  white-space: nowrap;
   transition: all 0.2s ease;
 }
 .conv-tag-more {
@@ -1377,6 +1531,9 @@ function formatTime(dateStr: string | null): string {
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+  cursor: default;
 }
 
 /* Zone Group Styling */

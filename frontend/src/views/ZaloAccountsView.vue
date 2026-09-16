@@ -76,6 +76,9 @@
           <v-btn icon size="small" color="success" @click="syncContacts(item.id)" title="Đồng bộ danh bạ Zalo" :loading="syncing === item.id">
             <v-icon>lucide-user-round-cog</v-icon>
           </v-btn>
+          <v-btn icon size="small" color="indigo" @click="syncLabels(item.id)" title="Đồng bộ Thẻ phân loại Zalo" :loading="syncingLabels === item.id">
+            <v-icon>lucide-tags</v-icon>
+          </v-btn>
           <v-btn v-if="item.liveStatus !== 'connected'" icon size="small" color="primary" @click="loginAccount(item.id)" title="Đăng nhập QR">
             <v-icon>lucide-qr-code</v-icon>
           </v-btn>
@@ -172,6 +175,7 @@ const authStore = useAuthStore();
 
 const showAddDialog = ref(false);
 const syncing = ref<string | null>(null);
+const syncingLabels = ref<string | null>(null);
 const showDeleteDialog = ref(false);
 const newAccountName = ref('');
 const deleteTarget = ref<ZaloAccount | null>(null);
@@ -280,6 +284,27 @@ async function syncContacts(accountId: string) {
     };
   } finally {
     syncing.value = null;
+  }
+}
+
+async function syncLabels(accountId: string) {
+  syncingLabels.value = accountId;
+  try {
+    const res = await api.post(`/zalo-accounts/${accountId}/sync-labels`);
+    const data = res.data;
+    snackbar.value = {
+      show: true,
+      text: `Đồng bộ thẻ thành công: ${data.totalLabels || 0} thẻ Zalo (${data.createdTags || 0} thẻ mới), đã gán cho ${data.taggedContacts || 0} khách hàng`,
+      color: 'success',
+    };
+  } catch (err: any) {
+    snackbar.value = {
+      show: true,
+      text: 'Đồng bộ thẻ thất bại: ' + (err.response?.data?.error || err.message),
+      color: 'error',
+    };
+  } finally {
+    syncingLabels.value = null;
   }
 }
 

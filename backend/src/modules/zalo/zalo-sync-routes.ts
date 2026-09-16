@@ -10,6 +10,7 @@ import { zaloPool } from './zalo-pool.js';
 import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
 import { findMatchingContact, linkZaloUidToContact } from '../contacts/contact-merge-service.js';
+import { generateNextUniqueTagColor } from '../tags/tag-routes.js';
 
 export async function zaloSyncRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -189,6 +190,130 @@ export async function zaloSyncRoutes(app: FastifyInstance) {
       } catch (err) {
         logger.error('[sync] Zalo groups error:', err);
         return reply.status(500).send({ error: 'Sync groups failed: ' + String(err) });
+      }
+    }
+  );
+
+  // Sync all labels/tags and assigned contacts from a Zalo account to CRM
+  app.post('/api/v1/zalo-accounts/:id/sync-labels', { preHandler: requireRole('owner', 'admin') },
+    async (request, reply) => {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+
+      const instance = zaloPool.getInstance(id);
+      if (!instance?.api) return reply.status(400).send({ error: 'Tài khoản Zalo chưa kết nối' });
+
+      if (typeof instance.api.getLabels !== 'function') {
+        return reply.status(400).send({ error: 'SDK Zalo hiện tại chưa hỗ trợ API lấy nhãn thẻ (getLabels)' });
+      }
+
+      try {
+        const result = await instance.api.getLabels();
+        const labelData = result?.labelData || [];
+
+        if (!Array.isArray(labelData) || labelData.length === 0) {
+          return {
+            success: true,
+            totalLabels: 0,
+            createdTags: 0,
+            taggedContacts: 0,
+            labels: [],
+            message: 'Tài khoản Zalo này chưa có thẻ phân loại nào',
+          };
+        }
+
+        // 1. Fetch current tags in this organization
+        const orgTags = await prisma.tag.findMany({
+          where: { orgId: user.orgId },
+          select: { name: true, color: true },
+        });
+        const existingColors = orgTags.map((t) => t.color);
+        const existingTagMap = new Map<string, string>(); // lowercase name -> name
+        for (const t of orgTags) {
+          existingTagMap.set(t.name.toLowerCase(), t.name);
+        }
+
+        let createdTagsCount = 0;
+        const updatedContactIds = new Set<string>();
+        const labelSummary: { name: string; contactCount: number }[] = [];
+
+        for (const label of labelData) {
+          const tagName = String(label.text || '').trim();
+          if (!tagName) continue;
+
+          // Ensure tag exists in Tag table
+          if (!existingTagMap.has(tagName.toLowerCase())) {
+            const validHex = label.color && /^#[0-9A-Fa-f]{6}$/i.test(label.color);
+            const tagColor = validHex
+              ? label.color
+              : generateNextUniqueTagColor(existingColors);
+            existingColors.push(tagColor);
+
+            try {
+              await prisma.tag.create({
+                data: {
+                  orgId: user.orgId,
+                  name: tagName,
+                  color: tagColor,
+                },
+              });
+              existingTagMap.set(tagName.toLowerCase(), tagName);
+              createdTagsCount++;
+            } catch (err: any) {
+              logger.debug(`[sync-labels] Tag insert conflict for '${tagName}':`, err);
+            }
+          }
+
+          // Target conversation/user UIDs tagged on Zalo
+          const targetUids = (label.conversations || []).map((c: any) => String(c).trim()).filter(Boolean);
+          if (targetUids.length === 0) {
+            labelSummary.push({ name: tagName, contactCount: 0 });
+            continue;
+          }
+
+          // Find contacts in OCMS matching these UIDs
+          const matchedContacts = await prisma.contact.findMany({
+            where: {
+              orgId: user.orgId,
+              OR: [
+                { zaloUid: { in: targetUids } },
+                { conversations: { some: { externalThreadId: { in: targetUids }, zaloAccountId: id } } },
+              ],
+            },
+            select: { id: true, tags: true },
+          });
+
+          for (const contact of matchedContacts) {
+            const currentTags: string[] = Array.isArray(contact.tags)
+              ? contact.tags.map((t: any) => (typeof t === 'string' ? t.trim() : (t?.name ? String(t.name).trim() : ''))).filter(Boolean)
+              : [];
+
+            const hasTag = currentTags.some((t) => t.toLowerCase() === tagName.toLowerCase());
+            if (!hasTag) {
+              currentTags.push(tagName);
+              await prisma.contact.update({
+                where: { id: contact.id },
+                data: { tags: currentTags },
+              });
+              updatedContactIds.add(contact.id);
+            }
+          }
+
+          labelSummary.push({ name: tagName, contactCount: matchedContacts.length });
+        }
+
+        logger.info(`[sync-labels] Account ${id}: Synced ${labelData.length} labels, created ${createdTagsCount} new tags, updated ${updatedContactIds.size} contacts`);
+
+        return {
+          success: true,
+          totalLabels: labelData.length,
+          createdTags: createdTagsCount,
+          taggedContacts: updatedContactIds.size,
+          labels: labelSummary,
+        };
+      } catch (err) {
+        logger.error('[sync-labels] Zalo sync labels error:', err);
+        return reply.status(500).send({ error: 'Đồng bộ thẻ thất bại: ' + String(err) });
       }
     }
   );

@@ -23,6 +23,7 @@ import { zaloRoutes } from './modules/zalo/zalo-routes.js';
 import { chatRoutes } from './modules/chat/chat-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
+import { bulkChatRoutes } from './modules/chat/bulk-chat-routes.js';
 import { appointmentRoutes } from './modules/contacts/appointment-routes.js';
 import { startAppointmentReminder } from './modules/contacts/appointment-reminder.js';
 import { dashboardRoutes } from './modules/dashboard/dashboard-routes.js';
@@ -174,6 +175,7 @@ async function bootstrap() {
   await app.register(authRoutes);
   await app.register(zaloRoutes);
   await app.register(chatRoutes);
+  await app.register(bulkChatRoutes);
   await app.register(contactRoutes);
   await app.register(contactSubResourceRoutes);
   await app.register(appointmentRoutes);

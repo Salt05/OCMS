@@ -31,37 +31,42 @@
       :style="isMobile ? { width: '100%' } : { flex: 1, minWidth: '300px' }"
     >
       <MessageThread
-        :conversation="selectedConv"
-        :messages="messages"
-        :loading="loadingMsgs"
-        :loading-more="loadingMoreMsgs"
-        :has-more="hasMoreMessages"
-        :sending="sendingMsg"
+        :conversation="selectedConvId === 'bulk_session' ? (bulkConversation as any) : selectedConv"
+        :messages="selectedConvId === 'bulk_session' ? (bulkChatMessages as any) : messages"
+        :loading="selectedConvId === 'bulk_session' ? false : loadingMsgs"
+        :loading-more="selectedConvId === 'bulk_session' ? false : loadingMoreMsgs"
+        :has-more="selectedConvId === 'bulk_session' ? false : hasMoreMessages"
+        :sending="selectedConvId === 'bulk_session' ? isSendingAnyBulk : sendingMsg"
         :is-mobile="isMobile"
+        :is-bulk-mode="selectedConvId === 'bulk_session'"
+        :bulk-recipients-count="bulkActiveCount"
         @back="onMobileBack"
         @toggle-pin="onTogglePin"
-        :send-fn="sendMessage"
-        :send-attachment-fn="sendAttachment"
+        :send-fn="selectedConvId === 'bulk_session' ? handleBulkSendMessage : sendMessage"
+        :send-attachment-fn="selectedConvId === 'bulk_session' ? handleBulkSendAttachment : sendAttachment"
         :undo-fn="undoMessage"
         :get-friend-status-fn="getFriendStatus"
         :send-friend-request-fn="sendFriendRequest"
         :accept-friend-request-fn="acceptFriendRequest"
         :undo-friend-request-fn="undoFriendRequest"
-        @send="sendMessage"
-        @send-attachment="sendAttachment"
+        @send="selectedConvId === 'bulk_session' ? handleBulkSendMessage($event) : sendMessage($event)"
+        @send-attachment="selectedConvId === 'bulk_session' ? handleBulkSendAttachment($event) : sendAttachment($event)"
+        @send-bulk="handleTriggerSendBulk"
+        @send-bulk-batch="handleTriggerSendBulkBatch"
+        @delete-bulk-message="deleteBulkMessage"
         @retry-message="retrySendMessage"
         @retry-attachment="retrySendAttachment"
         @remove-optimistic-message="removeOptimisticMessage"
         @react="sendReaction"
         @load-more="loadMoreMessages"
-        @toggle-contact-panel="toggleContactPanel"
+        @toggle-contact-panel="selectedConvId === 'bulk_session' ? toggleBulkContactPanel() : toggleContactPanel()"
         @open-order-panel="openOrderPanel"
         @pause-ai="pauseAi"
         @resume-ai="resumeAi"
         @toggle-ai="toggleAi"
         @set-context-boundary="handleSetContextBoundary"
-        :show-contact-panel="showContactPanel && !showOrderPanel"
-        :show-order-panel="showOrderPanel"
+        :show-contact-panel="selectedConvId === 'bulk_session' ? showBulkContactPanel : (showContactPanel && !showOrderPanel)"
+        :show-order-panel="selectedConvId === 'bulk_session' ? false : showOrderPanel"
         style="height: 100%;"
       />
     </div>
@@ -70,12 +75,19 @@
          3. DESKTOP: Right Panels (Contact Info / Order Form / Chatbot)
          ───────────────────────────────────────────────────────────── -->
     <div
-      v-if="!isMobile && (showContactPanel || showOrderPanel) && selectedConv"
+      v-if="!isMobile && ((selectedConvId === 'bulk_session' && showBulkContactPanel) || ((showContactPanel || showOrderPanel) && selectedConv))"
       class="chat-panel-right d-flex flex-column"
       :style="{ width: showOrderPanel ? '500px' : rightWidth + 'px', maxWidth: '85vw', height: '100%', overflow: 'hidden' }"
     >
       <div v-if="!showOrderPanel" class="resize-handle resize-handle-left" @mousedown="startResize('right', $event)" />
       
+      <!-- BULK MESSAGING CONTACT PANEL (replaces info/order/chatbot) -->
+      <BulkContactListPanel
+        v-if="selectedConvId === 'bulk_session'"
+        @close="showBulkContactPanel = false"
+      />
+
+      <template v-else-if="selectedConv">
       <!-- Top Header Tabs if in Contact Panel mode -->
       <div v-if="!showOrderPanel" class="px-4 py-2 d-flex align-center justify-space-between border-b bg-surface flex-shrink-0" style="border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);">
         <div class="d-flex align-center gap-2 pa-1 rounded-lg" style="background: rgba(var(--v-theme-on-surface), 0.04);">
@@ -220,11 +232,23 @@
         @close="showOrderPanel = false"
         @created="fetchConversations()"
       />
+      </template>
     </div>
 
     <!-- ─────────────────────────────────────────────────────────────
          4. MOBILE: Full-screen Slide Over Panel for Details (< 768px)
          ───────────────────────────────────────────────────────────── -->
+    <!-- Mobile Bulk Contacts Overlay -->
+    <transition name="slide-x-reverse-transition">
+      <div
+        v-if="isMobile && selectedConvId === 'bulk_session' && showBulkContactPanel"
+        class="mobile-chat-panel-overlay position-fixed top-0 left-0 w-100 h-100 d-flex flex-column bg-surface"
+        style="z-index: 500;"
+      >
+        <BulkContactListPanel @close="showBulkContactPanel = false" />
+      </div>
+    </transition>
+
     <transition name="slide-x-reverse-transition">
       <div
         v-if="isMobile && (showContactPanel || showOrderPanel) && selectedConv"
@@ -332,7 +356,10 @@ import MessageThread from '@/components/chat/MessageThread.vue';
 import ChatContactPanel from '@/components/chat/ChatContactPanel.vue';
 import OrderFormDrawer from '@/components/chat/OrderFormDrawer.vue';
 import ChatbotSidebar from '@/components/chat/ChatbotSidebar.vue';
+import BulkContactListPanel from '@/components/chat/BulkContactListPanel.vue';
+import { useBulkMessages } from '@/composables/use-bulk-messages';
 import { useChat } from '@/composables/use-chat';
+import { api } from '@/api/index';
 
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
@@ -353,6 +380,119 @@ const {
   initSocket, destroySocket,
 } = useChat();
 
+const {
+  messages: bulkRawMessages,
+  activeCount: bulkActiveCount,
+  createDraftMessage,
+  deleteMessage: deleteBulkMessage,
+  sendBulkMessage,
+  sendBulkMessagesBatch,
+  loadSession: loadBulkSession,
+  isSendingAny: isSendingAnyBulk,
+} = useBulkMessages();
+
+const bulkConversation = computed<any>(() => ({
+  id: 'bulk_session',
+  threadType: 'group' as const,
+  contact: {
+    id: 'bulk_session',
+    fullName: `Gửi tin nhắn nhanh ${bulkActiveCount.value} người`,
+    zaloName: `Gửi tin nhắn nhanh ${bulkActiveCount.value} người`,
+    phone: null,
+    source: null,
+    status: null,
+    notes: null,
+    avatarUrl: null,
+    tags: []
+  },
+  zaloAccount: null,
+  lastMessageAt: null,
+  unreadCount: 0,
+  isReplied: true,
+  isPinned: false
+}));
+
+const bulkChatMessages = computed(() => {
+  return bulkRawMessages.value.map((bm) => {
+    let attachments: any[] | undefined = undefined;
+    if (bm.fileInfo?.url) {
+      attachments = [{
+        url: bm.fileInfo.url,
+        fileName: bm.fileInfo.name,
+        fileSize: bm.fileInfo.size,
+        mimeType: bm.fileInfo.mimeType
+      }];
+    }
+    return {
+      id: bm.id,
+      content: bm.content,
+      contentType: bm.contentType,
+      senderType: 'self',
+      senderName: bm.senderName || 'Bạn',
+      sentAt: bm.createdAt,
+      status: bm.sendStats?.status === 'sending' ? 'sending' : (bm.sendStats?.status === 'error' ? 'failed' : 'sent'),
+      attachments,
+      mediaUrl: bm.fileInfo?.url,
+      fileInfo: bm.fileInfo,
+      reactions: [],
+      sendStats: bm.sendStats
+    };
+  });
+});
+
+async function handleBulkSendMessage(content: string, contentType = 'text') {
+  createDraftMessage(content, (contentType as any) || 'text');
+}
+
+async function handleBulkSendAttachment(fileOrPayload: File | { name: string; url: string; type?: string; size?: number; mimeType?: string }) {
+  try {
+    if (!(fileOrPayload instanceof File) && (fileOrPayload as any)?.url) {
+      const p = fileOrPayload as any;
+      const isImage = p.type === 'image' || /\.(jpe?g|png|webp|gif|svg|bmp)$/i.test(p.url || p.name);
+      createDraftMessage(p.name || 'Tệp', isImage ? 'image' : 'file', {
+        name: p.name || 'Tệp',
+        size: p.size,
+        mimeType: p.mimeType,
+        url: p.url
+      });
+      return;
+    }
+
+    const file = fileOrPayload as File;
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await api.post('/quick-messages/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    const url = res.data?.url || res.data?.fileUrl;
+    const isImage = res.data?.type === 'image' || file.type.startsWith('image/');
+    createDraftMessage(file.name, isImage ? 'image' : 'file', {
+      name: res.data?.name || file.name,
+      size: res.data?.size || file.size,
+      mimeType: res.data?.mimeType || file.type,
+      url
+    });
+  } catch (err) {
+    console.error('Failed to upload bulk attachment:', err);
+  }
+}
+
+async function handleTriggerSendBulk(msg: any) {
+  try {
+    await sendBulkMessage(msg.id);
+  } catch (err: any) {
+    console.error('Failed to trigger send bulk message:', err);
+  }
+}
+
+async function handleTriggerSendBulkBatch(messageIds: string[]) {
+  try {
+    await sendBulkMessagesBatch(messageIds);
+  } catch (err: any) {
+    console.error('Failed to trigger send bulk batch:', err);
+  }
+}
+
 function onTogglePin(payload: { conversationId: string; pinned: boolean }) {
   togglePin(payload.conversationId, payload.pinned);
 }
@@ -371,9 +511,24 @@ function onFilterAccount(id: string | null) {
   fetchConversations();
 }
 
+const showBulkContactPanel = ref(true);
+
+function toggleBulkContactPanel() {
+  showBulkContactPanel.value = !showBulkContactPanel.value;
+}
+
 function onSelectConversation(id: string) {
   showContactPanel.value = false;
   showOrderPanel.value = false;
+  if (id === 'bulk_session') {
+    selectedConvId.value = 'bulk_session';
+    showBulkContactPanel.value = true;
+    loadBulkSession();
+    if (isMobile.value) {
+      router.replace({ path: '/chat', query: { mode: 'bulk' } });
+    }
+    return;
+  }
   selectConversation(id);
   if (isMobile.value) {
     router.replace({ path: '/chat', query: { id } });
@@ -383,7 +538,9 @@ function onSelectConversation(id: string) {
 function onMobileBack() {
   showContactPanel.value = false;
   showOrderPanel.value = false;
+  showBulkContactPanel.value = false;
   selectConversation(null);
+  selectedConvId.value = null;
   router.replace({ path: '/chat', query: {} });
 }
 
@@ -480,11 +637,13 @@ function openOrderPanel() {
   showOrderPanel.value = !showOrderPanel.value;
 }
 
-watch(() => route.query.id, (newId) => {
-  if (newId && typeof newId === 'string' && newId !== selectedConvId.value) {
+watch(() => route.query, (query) => {
+  if (query.mode === 'bulk') {
+    onSelectConversation('bulk_session');
+  } else if (query.id && typeof query.id === 'string' && query.id !== selectedConvId.value) {
     showContactPanel.value = false;
     showOrderPanel.value = false;
-    selectConversation(newId);
+    selectConversation(query.id);
   }
 }, { immediate: true });
 
@@ -495,7 +654,11 @@ watch(selectedConv, (newConv) => {
   }
 });
 
-onMounted(() => { fetchConversations(); initSocket(); });
+onMounted(() => {
+  fetchConversations();
+  initSocket();
+  loadBulkSession();
+});
 onUnmounted(() => { destroySocket(); });
 
 let searchTimeout: ReturnType<typeof setTimeout>;

@@ -17,6 +17,16 @@
 
           <div class="d-flex align-center gap-2">
             <v-btn
+              color="indigo"
+              variant="tonal"
+              prepend-icon="lucide-refresh-cw"
+              size="small"
+              @click="openSyncZaloDialog"
+            >
+              Đồng bộ từ Zalo
+            </v-btn>
+
+            <v-btn
               color="primary"
               variant="flat"
               prepend-icon="lucide-plus"
@@ -529,11 +539,75 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Sync from Zalo Dialog -->
+    <v-dialog v-model="showSyncZaloDialog" max-width="480">
+      <v-card class="rounded-lg">
+        <v-card-title class="pa-4 font-weight-bold text-subtitle-1 d-flex align-center gap-2">
+          <v-icon color="indigo" size="20">lucide-tags</v-icon>
+          Đồng bộ Thẻ phân loại từ Zalo
+        </v-card-title>
+        <v-card-text class="px-4 py-2">
+          <p class="text-caption text-medium-emphasis mb-3">
+            Hệ thống sẽ lấy toàn bộ danh sách Thẻ phân loại trên tài khoản Zalo đã chọn, tự động tạo mới vào OCMS và gán tương ứng cho các khách hàng đã phân loại.
+          </p>
+
+          <div v-if="loadingAccounts" class="d-flex justify-center py-4">
+            <v-progress-circular indeterminate color="indigo" size="28" />
+          </div>
+          <div v-else-if="zaloAccounts.length === 0" class="py-2 text-center text-caption text-grey">
+            Chưa có tài khoản Zalo nào đang kết nối. Vui lòng vào trang <strong>Tài khoản Zalo</strong> để kiểm tra kết nối.
+          </div>
+          <div v-else>
+            <v-select
+              v-model="selectedZaloAccountId"
+              :items="zaloAccounts"
+              item-title="displayName"
+              item-value="id"
+              label="Chọn tài khoản Zalo cần đồng bộ"
+              variant="outlined"
+              density="compact"
+              hide-details
+              class="mb-3"
+            >
+              <template #item="{ props: itemProps, item }">
+                <v-list-item v-bind="itemProps" :subtitle="item.raw.phone ? ('SĐT: ' + item.raw.phone) : ''">
+                  <template #prepend>
+                    <v-icon size="18" color="success">lucide-message-circle</v-icon>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-select>
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 d-flex justify-end gap-2">
+          <v-btn variant="outlined" density="comfortable" @click="showSyncZaloDialog = false" :disabled="syncingZalo">
+            Đóng
+          </v-btn>
+          <v-btn
+            color="indigo"
+            variant="flat"
+            density="comfortable"
+            prepend-icon="lucide-refresh-cw"
+            :loading="syncingZalo"
+            :disabled="!selectedZaloAccountId || zaloAccounts.length === 0"
+            @click="handleSyncFromZalo"
+          >
+            Bắt đầu đồng bộ
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="4000" location="top">
+      {{ snackbar.text }}
+    </v-snackbar>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { api } from '@/api/index';
 import { useTags, TAG_PALETTE, type Tag, type TagGroup } from '@/composables/use-tags';
 import TagGroupDialog from '@/components/common/TagGroupDialog.vue';
 
@@ -554,6 +628,58 @@ const {
 
 const searchQuery = ref('');
 const selectedTagIds = ref<string[]>([]);
+
+// Sync from Zalo state
+const showSyncZaloDialog = ref(false);
+const loadingAccounts = ref(false);
+const syncingZalo = ref(false);
+const zaloAccounts = ref<any[]>([]);
+const selectedZaloAccountId = ref<string | null>(null);
+const snackbar = ref({ show: false, text: '', color: 'success' });
+
+async function openSyncZaloDialog() {
+  showSyncZaloDialog.value = true;
+  loadingAccounts.value = true;
+  try {
+    const res = await api.get('/zalo-accounts');
+    const accList = res.data.accounts || res.data || [];
+    zaloAccounts.value = accList.filter((a: any) => a.liveStatus === 'connected' || a.status === 'connected');
+    if (zaloAccounts.value.length > 0) {
+      selectedZaloAccountId.value = zaloAccounts.value[0].id;
+    } else {
+      selectedZaloAccountId.value = null;
+    }
+  } catch (err) {
+    console.error('Failed to load Zalo accounts:', err);
+  } finally {
+    loadingAccounts.value = false;
+  }
+}
+
+async function handleSyncFromZalo() {
+  if (!selectedZaloAccountId.value) return;
+  syncingZalo.value = true;
+  try {
+    const res = await api.post(`/zalo-accounts/${selectedZaloAccountId.value}/sync-labels`);
+    const data = res.data;
+    snackbar.value = {
+      show: true,
+      text: `Đồng bộ thành công: ${data.totalLabels || 0} thẻ Zalo (${data.createdTags || 0} thẻ mới tạo), đã gán cho ${data.taggedContacts || 0} khách hàng!`,
+      color: 'success',
+    };
+    showSyncZaloDialog.value = false;
+    await fetchTags(true);
+    await fetchTagGroups(true);
+  } catch (err: any) {
+    snackbar.value = {
+      show: true,
+      text: 'Đồng bộ thất bại: ' + (err.response?.data?.error || err.message),
+      color: 'error',
+    };
+  } finally {
+    syncingZalo.value = false;
+  }
+}
 
 // Palette options for tag creation/edit
 const paletteOptions = TAG_PALETTE.slice(0, 18);

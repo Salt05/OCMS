@@ -16,6 +16,7 @@ import { zaloRateLimiter } from '../zalo/zalo-rate-limiter.js';
 import { syncConversationMessages } from '../zalo/zalo-message-recovery.js';
 import { handleMessageReaction, getMessageCliMsgId, getRTypeFromIcon } from './message-handler.js';
 import { logger } from '../../shared/utils/logger.js';
+import { config } from '../../config/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -806,19 +807,34 @@ export async function chatRoutes(app: FastifyInstance) {
             };
           }
           await instance.api.sendSticker(stickerPayload, threadId, threadType);
-        } else if (contentType === 'image') {
-          const imageUrl = content.trim();
-          const originalName = imageUrl.split('/').pop()?.split('?')[0] || 'image.jpg';
+        } else if (contentType === 'image' || contentType === 'file') {
+          const fileOrImgUrl = content.trim();
+          const rawName = fileOrImgUrl.split('/').pop()?.split('?')[0] || (contentType === 'image' ? 'image.jpg' : 'file.bin');
           const uploadId = randomUUID();
           const tempDir = path.join(os.tmpdir(), 'ocms-uploads', uploadId);
           await fs.promises.mkdir(tempDir, { recursive: true });
-          const tempFilePath = path.join(tempDir, originalName);
+          const tempFilePath = path.join(tempDir, rawName);
 
           try {
-            const imgRes = await fetch(imageUrl);
-            if (!imgRes.ok) throw new Error(`Failed to fetch image URL: ${imgRes.statusText}`);
-            const arrayBuffer = await imgRes.arrayBuffer();
-            await fs.promises.writeFile(tempFilePath, Buffer.from(arrayBuffer));
+            let localSourcePath: string | null = null;
+            if (fileOrImgUrl.includes('/uploads/')) {
+              const uploadRel = fileOrImgUrl.split('/uploads/')[1]?.split('?')[0];
+              if (uploadRel) {
+                const candidate = path.join(config.uploadDir, uploadRel);
+                if (fs.existsSync(candidate)) {
+                  localSourcePath = candidate;
+                }
+              }
+            }
+
+            if (localSourcePath) {
+              await fs.promises.copyFile(localSourcePath, tempFilePath);
+            } else {
+              const fetchRes = await fetch(fileOrImgUrl);
+              if (!fetchRes.ok) throw new Error(`Failed to fetch file URL: ${fetchRes.statusText}`);
+              const arrayBuffer = await fetchRes.arrayBuffer();
+              await fs.promises.writeFile(tempFilePath, Buffer.from(arrayBuffer));
+            }
 
             await instance.api.sendMessage(
               {

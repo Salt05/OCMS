@@ -12,7 +12,7 @@
       <!-- Zalo Chat Header (Responsive for Desktop & Mobile) -->
       <div class="zalo-chat-header d-flex align-center justify-space-between border-b px-2 px-md-3">
         <!-- Left: Back button (Mobile) + Avatar + Title + Subtitle -->
-        <div class="d-flex align-center overflow-hidden mr-2 flex-grow-1">
+        <div class="d-flex align-center overflow-hidden mr-2 flex-shrink-0" style="max-width: 50%;">
           <v-btn
             v-if="isMobile"
             icon
@@ -25,37 +25,81 @@
             <v-icon size="22">lucide-chevron-left</v-icon>
           </v-btn>
 
-          <v-avatar size="40" class="mr-2 mr-md-3 flex-shrink-0 zalo-header-avatar">
-            <v-img v-if="conversation.contact?.avatarUrl" :src="conversation.contact.avatarUrl">
-              <template #error>
-                <v-icon :icon="conversation.threadType === 'group' ? 'lucide-users' : 'lucide-user'" color="white" size="20" />
-              </template>
-            </v-img>
-            <v-icon v-else-if="conversation.threadType === 'group'" icon="lucide-users" color="white" size="20" />
-            <v-icon v-else icon="lucide-user" color="white" size="20" />
+          <v-avatar size="40" class="mr-2 mr-md-3 flex-shrink-0 zalo-header-avatar" :color="isBulkMode ? 'primary' : undefined">
+            <template v-if="isBulkMode">
+              <v-icon icon="lucide-layers" color="white" size="20" />
+            </template>
+            <template v-else>
+              <v-img v-if="conversation?.contact?.avatarUrl" :src="conversation.contact.avatarUrl">
+                <template #error>
+                  <v-icon :icon="conversation?.threadType === 'group' ? 'lucide-users' : 'lucide-user'" color="white" size="20" />
+                </template>
+              </v-img>
+              <v-icon v-else-if="conversation?.threadType === 'group'" icon="lucide-users" color="white" size="20" />
+              <v-icon v-else icon="lucide-user" color="white" size="20" />
+            </template>
           </v-avatar>
-          <div class="overflow-hidden d-flex flex-column justify-center">
+          <div class="overflow-hidden d-flex flex-column justify-center mr-2">
             <div class="d-flex align-center gap-1 mb-0.5">
               <span class="text-subtitle-1 font-weight-bold text-truncate" style="font-size: 15px !important; line-height: 1.2;">
-                {{ getContactDisplayName(conversation) }}
+                {{ isBulkMode ? `Gửi tin nhắn nhanh ${bulkRecipientsCount || 0} người` : getContactDisplayName(conversation) }}
               </span>
+              <v-chip v-if="isBulkMode" size="x-small" color="primary" variant="flat" class="font-weight-bold ml-1" style="height: 18px; font-size: 10px;">
+                Hàng loạt
+              </v-chip>
             </div>
             <div class="text-caption text-grey d-flex align-center gap-1 text-truncate" style="font-size: 11.5px !important; line-height: 1.2;">
-              <span v-if="conversation.threadType === 'group'" class="d-flex align-center">
-                <v-icon size="12" class="mr-1">lucide-users</v-icon>
-                {{ conversation.contact?.tags?.length ? `${conversation.contact.tags.length} thành viên` : 'Nhóm Zalo' }}
+              <span v-if="isBulkMode" class="text-primary font-weight-medium">
+                {{ bulkRecipientsCount || 0 }} người nhận đang chọn
               </span>
-              <span v-else>
-                {{ conversation.zaloAccount?.displayName || 'Đang hoạt động' }}
+              <span v-else-if="conversation?.threadType === 'group'" class="d-flex align-center text-truncate">
+                <v-icon size="12" class="mr-1 flex-shrink-0">lucide-users</v-icon>
+                <span>Nhóm Zalo</span>
+                <template v-if="conversation?.zaloAccount?.displayName">
+                  <span class="mx-1 text-medium-emphasis opacity-60">•</span>
+                  <v-icon size="11" color="primary" class="mr-1 flex-shrink-0">lucide-message-circle</v-icon>
+                  <span class="text-primary font-weight-medium text-truncate" :title="`Tài khoản Zalo: ${conversation?.zaloAccount?.displayName}`">
+                    {{ conversation?.zaloAccount?.displayName }}
+                  </span>
+                </template>
+              </span>
+              <span v-else class="d-flex align-center text-truncate">
+                <v-icon v-if="conversation?.zaloAccount?.displayName" size="11" color="primary" class="mr-1 flex-shrink-0">lucide-message-circle</v-icon>
+                <span :class="{ 'text-primary font-weight-medium': conversation?.zaloAccount?.displayName }">
+                  {{ conversation?.zaloAccount?.displayName || 'Đang hoạt động' }}
+                </span>
               </span>
             </div>
           </div>
         </div>
 
+        <!-- Middle: Header Tags (Visible on Desktop when tags exist and space permits) -->
+        <div
+          ref="tagsBarRef"
+          v-if="!isBulkMode && contactTags.length > 0 && !isMobile"
+          class="header-tags-bar d-flex align-center gap-1.5 mx-2 flex-grow-1 flex-nowrap"
+          style="min-width: 0;"
+          @wheel.passive="handleTagsWheel"
+        >
+          <v-chip
+            v-for="tag in contactTags"
+            :key="getTagName(tag)"
+            size="small"
+            variant="flat"
+            class="header-tag-chip font-weight-medium flex-shrink-0 text-caption cursor-pointer"
+            :style="getTagStyle(tag)"
+            :title="`Thẻ: ${getTagName(tag)}`"
+            @click="$emit('toggle-contact-panel')"
+          >
+            #{{ getTagName(tag) }}
+          </v-chip>
+        </div>
+        <div v-else-if="isBulkMode" class="flex-grow-1"></div>
+
         <!-- Right: Action Icons (Add User, Video, Search, Info Sidebar Toggle) -->
         <div class="d-flex align-center gap-1 gap-md-2 flex-shrink-0">
           <!-- Zalo Friend Status & Action Buttons (Only for 1-1 chats) -->
-          <template v-if="conversation.threadType === 'user' && !isMobile">
+          <template v-if="!isBulkMode && conversation?.threadType === 'user' && !isMobile">
             <!-- 1. Đã là bạn bè -->
             <v-chip
               v-if="friendState?.isFriend"
@@ -132,7 +176,7 @@
 
           <!-- AI Auto Chat Control Badge (Only visible for 'customer' contacts) -->
           <v-menu
-            v-if="conversation.threadType === 'user' && conversation.contact?.contactType === 'customer'"
+            v-if="!isBulkMode && conversation?.threadType === 'user' && conversation?.contact?.contactType === 'customer'"
             location="bottom end"
             :close-on-content-click="true"
           >
@@ -143,32 +187,32 @@
                 variant="tonal"
                 rounded="md"
                 class="text-none font-weight-medium px-1.5 px-md-2"
-                :color="conversation.aiPaused ? 'warning' : (conversation.aiActive ? 'success' : 'grey')"
+                :color="conversation?.aiPaused ? 'warning' : (conversation?.aiActive ? 'success' : 'grey')"
                 style="height: 28px; text-transform: none !important;"
               >
                 <v-icon start size="14" class="mr-0.5 mr-md-1">
-                  {{ conversation.aiPaused ? 'lucide-pause-circle' : (conversation.aiActive ? 'lucide-bot' : 'lucide-bot-off') }}
+                  {{ conversation?.aiPaused ? 'lucide-pause-circle' : (conversation?.aiActive ? 'lucide-bot' : 'lucide-bot-off') }}
                 </v-icon>
-                <span class="d-none d-sm-inline">{{ conversation.aiPaused ? 'AI Tạm dừng' : (conversation.aiActive ? 'AI Đang trực' : 'AI Tắt') }}</span>
-                <span class="d-inline d-sm-none">{{ conversation.aiPaused ? 'Tạm dừng' : (conversation.aiActive ? 'AI Bật' : 'AI Tắt') }}</span>
+                <span class="d-none d-sm-inline">{{ conversation?.aiPaused ? 'AI Tạm dừng' : (conversation?.aiActive ? 'AI Đang trực' : 'AI Tắt') }}</span>
+                <span class="d-inline d-sm-none">{{ conversation?.aiPaused ? 'Tạm dừng' : (conversation?.aiActive ? 'AI Bật' : 'AI Tắt') }}</span>
                 <v-icon end size="12" class="ml-0.5 opacity-70">lucide-chevron-down</v-icon>
               </v-btn>
             </template>
             <v-list density="compact" class="py-1 elevation-4 rounded-lg" min-width="210">
               <v-list-item
-                v-if="conversation.aiPaused"
+                v-if="conversation?.aiPaused"
                 prepend-icon="lucide-play"
                 title="Bật lại AI Auto Chat"
                 @click="$emit('resume-ai', conversation.id)"
               />
               <v-list-item
-                v-else-if="conversation.aiActive"
+                v-else-if="conversation?.aiActive"
                 prepend-icon="lucide-pause"
                 title="Tạm dừng AI (60 phút)"
                 @click="$emit('pause-ai', conversation.id)"
               />
               <v-list-item
-                v-if="conversation.aiActive"
+                v-if="conversation?.aiActive"
                 prepend-icon="lucide-power-off"
                 title="Tắt AI cuộc trò chuyện"
                 @click="$emit('toggle-ai', conversation.id, false)"
@@ -181,7 +225,7 @@
               />
               <v-divider class="my-1" />
               <v-list-item
-                v-if="conversation.contextStartMsgId || conversation.contextEndMsgId"
+                v-if="conversation?.contextStartMsgId || conversation?.contextEndMsgId"
                 prepend-icon="lucide-rotate-cw"
                 title="Xóa mốc ngữ cảnh (Tự động)"
                 subtitle="Đưa về cơ chế đọc tự động"
@@ -198,6 +242,7 @@
           </v-menu>
 
           <button
+            v-if="!isBulkMode && conversation"
             type="button"
             class="zalo-header-btn"
             :class="{ 'is-active': conversation.isPinned }"
@@ -214,7 +259,7 @@
             class="zalo-header-btn"
             :class="{ 'is-active': showContactPanel }"
             @click="$emit('toggle-contact-panel')"
-            title="Thông tin hội thoại"
+            :title="isBulkMode ? 'Danh sách người nhận hàng loạt' : 'Thông tin hội thoại'"
           >
             <v-icon size="19">lucide-panel-right</v-icon>
           </button>
@@ -227,6 +272,17 @@
         <div v-if="loading && messages.length === 0" class="d-flex flex-column align-center justify-center h-100 py-12" style="min-height: 260px;">
           <v-progress-circular indeterminate size="42" width="3" color="primary" />
           <span class="text-caption text-medium-emphasis mt-3 font-weight-medium">Đang tải cuộc trò chuyện...</span>
+        </div>
+
+        <!-- Bulk empty state when no messages in session yet -->
+        <div v-else-if="isBulkMode && messages.length === 0" class="d-flex flex-column align-center justify-center h-100 py-12 text-center" style="min-height: 320px;">
+          <v-avatar size="64" color="primary" variant="tonal" class="mb-3">
+            <v-icon icon="lucide-send" size="32" color="primary" />
+          </v-avatar>
+          <div class="text-subtitle-1 font-weight-bold text-high-emphasis">Chưa có tin nhắn nào trong phiên</div>
+          <div class="text-caption text-grey mt-1" style="max-width: 380px; line-height: 1.5;">
+            Soạn tin nhắn ở thanh nhập liệu bên dưới (lưu trong OCMS). Sau đó bạn có thể rê chuột vào từng tin nhắn và bấm "Gửi" để phát tán tuần tự cho khách hàng.
+          </div>
         </div>
 
         <div v-if="loadingMore" class="text-center py-2">
@@ -255,10 +311,61 @@
             </div>
           </div>
 
-          <div class="mb-3 d-flex message-row-wrapper" :class="msg.senderType === 'self' ? 'justify-end' : 'justify-start'">
-            <div class="message-container position-relative" style="max-width: 70%;">
-              <!-- Floating Reaction Bar on hover -->
-              <div class="message-action-bar" :class="msg.senderType === 'self' ? 'message-action-bar-self' : 'message-action-bar-contact'">
+          <div
+            class="mb-3 d-flex message-row-wrapper align-center"
+            :class="isBulkMode ? 'justify-space-between w-100' : (msg.senderType === 'self' ? 'justify-end' : 'justify-start')"
+          >
+            <!-- Bulk message action group (anchored to the far left) -->
+            <div
+              v-if="isBulkMode"
+              class="bulk-msg-action-group mr-3 flex-shrink-0 d-flex align-center gap-2"
+              :class="{
+                'is-ticked': selectedBulkMsgIds.includes(msg.id),
+                'is-last-ticked': isLastSelectedBulkMsg(msg.id),
+                'has-any-selection': selectedBulkMsgIds.length > 0
+              }"
+            >
+              <!-- 1. Select checkbox button -->
+              <button
+                type="button"
+                class="bulk-select-box-btn d-flex align-center justify-center"
+                :class="{ 'is-checked': selectedBulkMsgIds.includes(msg.id) }"
+                @click.stop="toggleSelectBulkMsg(msg.id)"
+                :title="selectedBulkMsgIds.includes(msg.id) ? 'Bỏ chọn' : 'Chọn tin nhắn'"
+              >
+                <v-icon v-if="selectedBulkMsgIds.includes(msg.id)" size="13" color="white">lucide-check</v-icon>
+              </button>
+
+              <!-- 2. Delete button -->
+              <button
+                type="button"
+                class="bulk-draft-delete-btn d-flex align-center justify-center"
+                @click.stop="handleDeleteBulkMessage(msg.id)"
+                title="Xóa tin nhắn này"
+              >
+                <v-icon size="15" color="#ef4444">lucide-trash-2</v-icon>
+              </button>
+
+              <!-- 3. Black Send Button: if no messages selected -> show on this message; if 1+ selected -> ONLY on last selected message -->
+              <button
+                v-if="selectedBulkMsgIds.length === 0 || isLastSelectedBulkMsg(msg.id)"
+                type="button"
+                class="bulk-black-send-btn d-flex align-center gap-1.5 elevation-2"
+                :disabled="!bulkRecipientsCount || bulkRecipientsCount === 0 || isMsgSending(msg.id)"
+                @click.stop="handleTriggerSend(msg.id)"
+                :title="selectedBulkMsgIds.length > 0 ? `Gửi ${selectedBulkMsgIds.length} tin nhắn đã chọn` : 'Gửi tin nhắn này cho tất cả người nhận'"
+              >
+                <v-progress-circular v-if="isMsgSending(msg.id)" indeterminate size="12" width="2" color="white" />
+                <v-icon v-else size="13" color="white">lucide-send</v-icon>
+                <span class="bulk-black-send-label">
+                  {{ selectedBulkMsgIds.length > 1 && isLastSelectedBulkMsg(msg.id) ? `Gửi (${selectedBulkMsgIds.length})` : 'Gửi' }}
+                </span>
+              </button>
+            </div>
+
+            <div class="message-container position-relative" :class="isBulkMode ? 'ml-auto' : ''" style="max-width: 70%;">
+              <!-- Floating Reaction Bar on hover (Hidden completely in bulk mode) -->
+              <div v-if="!isBulkMode" class="message-action-bar" :class="msg.senderType === 'self' ? 'message-action-bar-self' : 'message-action-bar-contact'">
                 <div class="floating-reaction-bar elevation-2">
                   <button
                     v-for="r in quickReactions"
@@ -374,6 +481,22 @@
                       />
                     </v-list>
                   </v-menu>
+
+                  <!-- Bulk Send button inside floating action bar -->
+                  <template v-if="isBulkMode">
+                    <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
+                    <button
+                      type="button"
+                      class="bulk-send-pill-btn d-flex align-center gap-1 px-2.5 py-1 rounded-pill"
+                      :disabled="!bulkRecipientsCount || bulkRecipientsCount === 0 || (msg as any).sendStats?.status === 'sending'"
+                      @click.stop="$emit('send-bulk', msg)"
+                      title="Gửi tin nhắn này"
+                    >
+                      <v-progress-circular v-if="(msg as any).sendStats?.status === 'sending'" indeterminate size="12" width="2" color="primary" />
+                      <v-icon v-else size="14" color="primary">lucide-send</v-icon>
+                      <span class="text-caption font-weight-bold text-primary">Gửi</span>
+                    </button>
+                  </template>
                 </div>
               </div>
 
@@ -647,6 +770,44 @@
                 </span>
               </div>
 
+              <!-- Bulk Message Send Progress Badge -->
+              <div v-if="(msg as any).sendStats" class="w-100 mt-1.5 d-flex align-center gap-1 flex-wrap">
+                <v-chip
+                  v-if="(msg as any).sendStats.status === 'sending'"
+                  size="x-small"
+                  color="primary"
+                  variant="tonal"
+                  class="font-weight-medium"
+                  style="height: 22px; font-size: 11px;"
+                >
+                  <v-progress-circular indeterminate size="11" width="1.5" class="mr-1" />
+                  Đang gửi {{ (msg as any).sendStats.sentCount }}/{{ (msg as any).sendStats.totalCount }}
+                </v-chip>
+                <v-chip
+                  v-else-if="(msg as any).sendStats.status === 'success'"
+                  size="x-small"
+                  color="success"
+                  variant="flat"
+                  class="font-weight-medium"
+                  style="height: 22px; font-size: 11px;"
+                >
+                  <v-icon start size="13">lucide-check-circle-2</v-icon>
+                  Đã gửi xong ({{ (msg as any).sendStats.sentCount }}/{{ (msg as any).sendStats.totalCount }})
+                </v-chip>
+                <v-chip
+                  v-else-if="(msg as any).sendStats.status === 'partial' || (msg as any).sendStats.status === 'error'"
+                  size="x-small"
+                  color="warning"
+                  variant="tonal"
+                  class="font-weight-medium"
+                  style="height: 22px; font-size: 11px;"
+                >
+                  <v-icon start size="13">lucide-alert-circle</v-icon>
+                  Đã gửi {{ (msg as any).sendStats.sentCount }}/{{ (msg as any).sendStats.totalCount }}
+                  <span v-if="(msg as any).sendStats.failedCount > 0" class="ml-0.5">({{ (msg as any).sendStats.failedCount }} lỗi)</span>
+                </v-chip>
+              </div>
+
               <!-- Error & Retry toolbar for failed message -->
               <div v-if="msg.senderType === 'self' && msg.status === 'failed'" class="msg-failed-actions mt-1 pt-1 border-t d-flex align-center justify-space-between gap-1">
                 <span class="text-caption text-error font-weight-medium d-flex align-center" style="font-size: 11px;">
@@ -752,7 +913,24 @@
           >
             Trả lời
           </v-btn>
+          <!-- Nút Chọn tất cả trên cùng hàng với nút Trả lời -->
           <v-btn
+            v-if="isBulkMode"
+            size="small"
+            :color="isAllBulkSelected ? 'primary' : 'grey-darken-1'"
+            class="font-weight-bold"
+            :prepend-icon="isAllBulkSelected ? 'lucide-check-square' : 'lucide-square'"
+            @click="toggleSelectAllBulkMessages"
+            style="text-transform: none; border-radius: 4px;"
+            :variant="isAllBulkSelected ? 'tonal' : 'text'"
+          >
+            {{ isAllBulkSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả' }}
+            <span v-if="messages.length > 0" class="ml-1 text-caption font-weight-regular">
+              ({{ selectedBulkMsgIds.length }}/{{ messages.length }})
+            </span>
+          </v-btn>
+          <v-btn
+            v-if="!isBulkMode"
             size="small"
             :color="isNoteMode ? 'warning' : 'grey-darken-1'"
             class="font-weight-bold"
@@ -764,6 +942,7 @@
             Ghi chú (Private)
           </v-btn>
           <v-btn
+            v-if="!isBulkMode"
             size="small"
             :color="showOrderPanel ? 'success' : 'grey-darken-1'"
             class="font-weight-bold"
@@ -1034,7 +1213,7 @@
             <input type="file" ref="fileInput" class="d-none" multiple @change="handleFileChange" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar" />
 
             <!-- Sticker Picker -->
-            <v-menu location="top start" :close-on-content-click="false" @update:model-value="onStickerMenuToggle">
+            <v-menu v-if="!isBulkMode" location="top start" :close-on-content-click="false" @update:model-value="onStickerMenuToggle">
               <template #activator="{ props: stickerProps }">
                 <button type="button" class="zalo-tool-icon-btn d-flex align-center justify-center" v-bind="stickerProps" title="Gửi Sticker Zalo">
                   <v-icon size="19">lucide-smile-plus</v-icon>
@@ -1083,7 +1262,7 @@
             </button>
 
             <!-- Send Contact Card -->
-            <button type="button" class="zalo-tool-icon-btn d-flex align-center justify-center" title="Gửi danh thiếp">
+            <button v-if="!isBulkMode" type="button" class="zalo-tool-icon-btn d-flex align-center justify-center" title="Gửi danh thiếp">
               <v-icon size="19">lucide-contact</v-icon>
             </button>
 
@@ -1099,6 +1278,7 @@
 
             <!-- Note Mode Switch (CRM Staff only) -->
             <button
+              v-if="!isBulkMode"
               type="button"
               class="zalo-tool-icon-btn d-flex align-center justify-center"
               :class="{ 'is-note-active': isNoteMode }"
@@ -1342,6 +1522,7 @@ import { api } from '@/api/index';
 import logoLight from '@/assets/logo-light.png';
 import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
 import { isCallMessage, getCallInfo, isVideoPayload } from '@/utils/call-helpers';
+import { useTags } from '@/composables/use-tags';
 
 function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -1364,6 +1545,8 @@ const props = defineProps<{
   showContactPanel?: boolean;
   showOrderPanel?: boolean;
   isMobile?: boolean;
+  isBulkMode?: boolean;
+  bulkRecipientsCount?: number;
   sendFn?: (content: string, contentType?: string, isNote?: boolean, replyToId?: string) => Promise<any>;
   sendAttachmentFn?: (file: File) => Promise<any>;
   undoFn?: (conversationId: string, messageId: string) => Promise<any>;
@@ -1376,6 +1559,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [content: string, contentType?: string, isNote?: boolean, replyToId?: string];
   'send-attachment': [file: File];
+  'send-bulk': [msg: Message];
+  'send-bulk-batch': [messageIds: string[]];
+  'delete-bulk-message': [messageId: string];
   'retry-message': [tempId: string];
   'retry-attachment': [tempId: string];
   'remove-optimistic-message': [tempId: string];
@@ -1390,6 +1576,87 @@ const emit = defineEmits<{
   react: [messageId: string, icon: string];
   back: [];
 }>();
+
+// ── Bulk message selection & actions ─────────────────────────────────────────
+const selectedBulkMsgIds = ref<string[]>([]);
+
+const isAllBulkSelected = computed(() => {
+  return props.messages.length > 0 && selectedBulkMsgIds.value.length === props.messages.length;
+});
+
+function toggleSelectAllBulkMessages() {
+  if (isAllBulkSelected.value) {
+    selectedBulkMsgIds.value = [];
+  } else {
+    selectedBulkMsgIds.value = props.messages.map((m) => m.id);
+  }
+}
+
+function toggleSelectBulkMsg(id: string) {
+  const idx = selectedBulkMsgIds.value.indexOf(id);
+  if (idx >= 0) {
+    selectedBulkMsgIds.value.splice(idx, 1);
+  } else {
+    selectedBulkMsgIds.value.push(id);
+  }
+}
+
+function isLastSelectedBulkMsg(id: string): boolean {
+  if (selectedBulkMsgIds.value.length === 0) return false;
+  return selectedBulkMsgIds.value[selectedBulkMsgIds.value.length - 1] === id;
+}
+
+function isMsgSending(id: string): boolean {
+  const m = props.messages.find((msg) => msg.id === id);
+  return (m as any)?.sendStats?.status === 'sending' || props.sending;
+}
+
+function handleDeleteBulkMessage(id: string) {
+  const idx = selectedBulkMsgIds.value.indexOf(id);
+  if (idx >= 0) {
+    selectedBulkMsgIds.value.splice(idx, 1);
+  }
+  emit('delete-bulk-message', id);
+}
+
+function handleTriggerSend(id: string) {
+  if (selectedBulkMsgIds.value.length > 0) {
+    const batch = [...selectedBulkMsgIds.value];
+    selectedBulkMsgIds.value = [];
+    emit('send-bulk-batch', batch);
+  } else {
+    const msg = props.messages.find((m) => m.id === id);
+    if (msg) {
+      emit('send-bulk', msg);
+    }
+  }
+}
+
+const { getTagStyle, getTagName } = useTags();
+
+const contactTags = computed(() => {
+  const raw = props.conversation?.contact?.tags;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of (raw as any[])) {
+    const name = typeof item === 'string' ? item.trim() : (item?.name ? String(item.name).trim() : '');
+    if (name && !seen.has(name.toLowerCase())) {
+      seen.add(name.toLowerCase());
+      result.push(name);
+    }
+  }
+  return result;
+});
+
+const tagsBarRef = ref<HTMLElement | null>(null);
+
+function handleTagsWheel(e: WheelEvent) {
+  if (!tagsBarRef.value) return;
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+    tagsBarRef.value.scrollLeft += e.deltaY;
+  }
+}
 
 function getContactDisplayName(conv?: Conversation | null): string {
   if (!conv) return 'Khách hàng';
@@ -1930,19 +2197,29 @@ function isImageUrlPath(url: string): boolean {
 }
 
 function getQuickMessageAttachments(msg: any): QuickAttachmentItem[] {
-  if (!msg || !msg.attachments) return [];
-  let raw: any[] = [];
-  if (Array.isArray(msg.attachments)) {
-    raw = msg.attachments;
-  } else if (typeof msg.attachments === 'string') {
-    try {
-      const parsed = JSON.parse(msg.attachments);
-      if (Array.isArray(parsed)) raw = parsed;
-      else if (msg.attachments.startsWith('http')) raw = [{ url: msg.attachments }];
-    } catch {
-      if (msg.attachments.startsWith('http')) raw = [{ url: msg.attachments }];
+  if (!msg) return [];
+  const raw: any[] = [];
+  const extract = (val: any) => {
+    if (!val) return;
+    if (Array.isArray(val)) {
+      raw.push(...val);
+    } else if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) raw.push(...parsed);
+        else if (parsed && typeof parsed === 'object') raw.push(parsed);
+        else if (val.startsWith('http') || val.startsWith('/')) raw.push({ url: val });
+      } catch {
+        if (val.startsWith('http') || val.startsWith('/')) raw.push({ url: val });
+      }
+    } else if (typeof val === 'object') {
+      raw.push(val);
     }
-  }
+  };
+
+  extract(msg.attachments);
+  extract(msg.images);
+  extract(msg.files);
 
   return raw.map<QuickAttachmentItem>((a: any) => {
     if (typeof a === 'string') {
@@ -1950,9 +2227,9 @@ function getQuickMessageAttachments(msg: any): QuickAttachmentItem[] {
       const name = a.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
       return { type: isImg ? 'image' : 'file', url: a, name };
     }
-    const url = a?.url || '';
+    const url = a?.url || a?.href || '';
     const isImg = a?.type === 'image' || (!a?.type && isImageUrlPath(url));
-    const name = a?.name || url.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
+    const name = a?.name || a?.fileName || url.split('/').pop()?.split('?')[0] || (isImg ? 'image.jpg' : 'file');
     return {
       type: (a?.type === 'file' || (!isImg && a?.type !== 'image')) ? 'file' : 'image',
       url,
@@ -2406,6 +2683,21 @@ async function handleSend() {
   // 2. Gửi các tệp/hình ảnh đính kèm sau khi tin nhắn chữ đã gửi
   for (const att of attachmentsToSend) {
     try {
+      // In bulk mode, if we already have a direct attachment URL (e.g. from quick messages), pass it directly without re-uploading
+      if (props.isBulkMode && props.sendAttachmentFn) {
+        if (att.file) {
+          await props.sendAttachmentFn(att.file);
+        } else if (att.url) {
+          await props.sendAttachmentFn({
+            name: att.name || (att.type === 'image' ? 'image.jpg' : 'file'),
+            url: att.url,
+            type: att.type
+          } as any);
+        }
+        await new Promise(resolve => setTimeout(resolve, 300));
+        continue;
+      }
+
       let fileToSend: File | null = null;
 
       if (att.file) {
@@ -2414,7 +2706,11 @@ async function handleSend() {
         // Convert URL to File object so we use multipart upload
         // This avoids the backend trying to fetch URLs from inside Docker
         try {
-          const response = await fetch(att.url);
+          let fetchUrl = att.url;
+          if (fetchUrl.includes('/uploads/')) {
+            fetchUrl = '/uploads/' + fetchUrl.split('/uploads/')[1];
+          }
+          const response = await fetch(fetchUrl);
           const blob = await response.blob();
           const cleanName = att.name || 'file';
           const ext = cleanName.split('.').pop() || (att.type === 'image' ? 'jpg' : 'bin');
@@ -2442,7 +2738,7 @@ async function handleSend() {
       syncSnack.value = { show: true, text: `Gửi ${att.name} thất bại`, color: 'error' };
     }
     // Revoke blob URL
-    if (att.preview.startsWith('blob:')) {
+    if (att.preview && att.preview.startsWith('blob:')) {
       URL.revokeObjectURL(att.preview);
     }
   }
@@ -2476,8 +2772,34 @@ async function downloadFile(url: string, filename: string) {
 /** Extract image URL from JSON content */
 function getImageUrl(msg: Message): string | null {
   if (isVideoMessage(msg)) return null;
+
+  // 1. Check attachments array (used by bulk mode & custom attachments)
+  if (Array.isArray((msg as any).attachments) && (msg as any).attachments.length > 0) {
+    const att = (msg as any).attachments[0];
+    const url = typeof att === 'string' ? att : att?.url;
+    if (url && (msg.contentType === 'image' || att?.type === 'image' || isImageUrlPath(url))) {
+      return url;
+    }
+  }
+
+  // 2. Check fileInfo
+  if ((msg as any).fileInfo?.url) {
+    const u = (msg as any).fileInfo.url;
+    if (msg.contentType === 'image' || (msg as any).fileInfo?.type === 'image' || isImageUrlPath(u)) {
+      return u;
+    }
+  }
+
+  // 3. Check mediaUrl
+  if ((msg as any).mediaUrl) {
+    const u = (msg as any).mediaUrl as string;
+    if (msg.contentType === 'image' || isImageUrlPath(u)) {
+      return u;
+    }
+  }
+
   if (msg.contentType === 'image' && msg.content) {
-    if (msg.content.startsWith('http')) return msg.content;
+    if (msg.content.startsWith('http') || msg.content.startsWith('/uploads/')) return msg.content;
     try { const p = JSON.parse(msg.content); return p.href || p.thumb || p.hdUrl || null; } catch {}
   }
   if (msg.content?.startsWith('{')) {
@@ -2517,6 +2839,11 @@ function isUndoSyncMessage(msg: Message): boolean {
 /** Check if message is a video (either contentType === 'video' or file with video extension) */
 function isVideoMessage(msg: Message): boolean {
   if (msg.contentType === 'video') return true;
+  if ((msg as any).fileInfo?.type === 'video') return true;
+  const att = Array.isArray((msg as any).attachments) ? (msg as any).attachments[0] : null;
+  if (att?.type === 'video') return true;
+  const directUrl = (msg as any).mediaUrl || (msg as any).fileInfo?.url || (typeof att === 'string' ? att : att?.url) || '';
+  if (directUrl && /\.(mp4|mov|webm|avi|mkv|3gp|m4v|ogv)$/i.test(directUrl.split('?')[0])) return true;
   if (isVideoPayload(msg.content)) return true;
   const parsed = getParsedContent(msg);
   if (parsed) {
@@ -2546,6 +2873,16 @@ function isVideoMessage(msg: Message): boolean {
 function getFileInfo(msg: Message): { name: string; size: string; href: string } | null {
   if (isVideoMessage(msg)) return null;
   if (getImageUrl(msg)) return null;
+
+  // Check attachments or fileInfo first
+  const att = (Array.isArray((msg as any).attachments) && (msg as any).attachments[0]) || (msg as any).fileInfo;
+  if (att && (msg.contentType === 'file' || msg.contentType === 'document' || att.url || (msg as any).mediaUrl)) {
+    const href = att.url || (msg as any).mediaUrl || '';
+    const bytes = parseInt(att.size || att.fileSize || '0');
+    const size = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : (bytes > 0 ? `${Math.round(bytes / 1024)} KB` : 'Tài liệu');
+    const name = att.fileName || att.name || (href ? href.split('/').pop()?.split('?')[0] : '') || msg.content || 'Tài liệu';
+    return { name, size, href };
+  }
 
   if (msg.content?.startsWith('{')) {
     try {
@@ -2872,7 +3209,11 @@ function getStickerUrl(msg: Message): string | null {
 /** Extract video URL from message content */
 function getVideoUrl(msg: Message): string | null {
   let rawUrl: string | null = null;
-  if (msg.content?.startsWith('http')) {
+  const att = Array.isArray((msg as any).attachments) ? (msg as any).attachments[0] : null;
+  const candidate = (msg as any).mediaUrl || (msg as any).fileInfo?.url || (typeof att === 'string' ? att : att?.url);
+  if (candidate && (candidate.startsWith('http') || candidate.startsWith('/'))) {
+    rawUrl = candidate;
+  } else if (msg.content?.startsWith('http') || msg.content?.startsWith('/')) {
     rawUrl = msg.content;
   } else {
     const parsed = getParsedContent(msg);
@@ -3945,6 +4286,98 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 .revoked-banner-contact {
   background: rgba(239, 68, 68, 0.14);
   color: #dc2626;
+}
+
+/* ── Header Tags Bar (Smooth dynamic overflow & hidden scrollbar) ── */
+.header-tags-bar {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.header-tags-bar::-webkit-scrollbar {
+  display: none;
+}
+.header-tag-chip {
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.header-tag-chip:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+/* ── Bulk Message Actions ── */
+.bulk-msg-action-group {
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none;
+}
+.message-row-wrapper:hover .bulk-msg-action-group,
+.bulk-msg-action-group.is-ticked,
+.bulk-msg-action-group.has-any-selection {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.bulk-select-box-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1.5px solid rgba(var(--v-theme-on-surface), 0.35);
+  background: rgb(var(--v-theme-surface));
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+.bulk-select-box-btn:hover {
+  border-color: rgb(var(--v-theme-primary));
+}
+.bulk-select-box-btn.is-checked {
+  background-color: rgb(var(--v-theme-primary));
+  border-color: rgb(var(--v-theme-primary));
+}
+
+.bulk-draft-delete-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  padding: 0;
+}
+.bulk-draft-delete-btn:hover {
+  background-color: rgba(239, 68, 68, 0.12);
+}
+
+.bulk-black-send-btn {
+  background-color: #0f172a;
+  color: #ffffff;
+  border: none;
+  border-radius: 9999px;
+  padding: 5px 13px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+.bulk-black-send-btn:hover:not(:disabled) {
+  background-color: #1e293b;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+.bulk-black-send-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+.bulk-black-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bulk-black-send-label {
+  font-size: 12px;
+  line-height: 1;
 }
 </style>
 

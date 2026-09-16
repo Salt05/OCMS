@@ -10,6 +10,8 @@
         placeholder="Tìm kiếm tên, SĐT, email..."
         clearable
         hide-details
+        autocomplete="off"
+        name="contact_search_query"
         class="flex-grow-1"
         @update:model-value="emit('search')"
       />
@@ -95,6 +97,11 @@
               closable-chips
               clearable
               hide-details
+              autocomplete="off"
+              name="filter-tags-no-autofill"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
               @update:model-value="emit('search')"
             >
               <template #chip="{ props, item }">
@@ -107,7 +114,6 @@
                   <template #prepend>
                     <v-icon :color="((item as any).raw || item as any).color" size="small" class="mr-2">lucide-circle</v-icon>
                   </template>
-                  <v-list-item-title>{{ ((item as any).raw || item as any).name }}</v-list-item-title>
                 </v-list-item>
               </template>
             </v-autocomplete>
@@ -150,7 +156,18 @@ const statusOptions = STATUS_OPTIONS;
 const typeOptions = CONTACT_TYPE_OPTIONS;
 
 const { tags, fetchTags } = useTags();
-const tagItems = computed(() => tags.value);
+const tagItems = computed(() => {
+  const seen = new Set<string>();
+  const list: any[] = [];
+  for (const t of tags.value) {
+    const key = (t.name || '').trim().toLowerCase();
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      list.push(t);
+    }
+  }
+  return list;
+});
 
 const { accounts, fetchAccounts } = useZaloAccounts();
 const accountOptions = computed(() => {
