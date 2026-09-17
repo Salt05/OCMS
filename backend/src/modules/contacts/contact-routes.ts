@@ -9,7 +9,6 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { ensureTagsExist, cleanupUnusedTags } from '../tags/tag-routes.js';
-import { mergeContacts } from './contact-merge-service.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { routerClient } from '../../shared/services/router-client.js';
@@ -556,26 +555,6 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // ── POST /api/v1/contacts/merge — Merge multiple contacts into one ────────
-  app.post('/api/v1/contacts/merge', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const user = request.user!;
-      if (!['owner', 'admin'].includes(user.role)) {
-        return reply.status(403).send({ error: 'Chỉ quản trị viên mới có quyền gộp khách hàng' });
-      }
-
-      const body = request.body as { primaryContactId: string; sourceContactIds: string[] };
-      if (!body.primaryContactId || !Array.isArray(body.sourceContactIds) || body.sourceContactIds.length === 0) {
-        return reply.status(400).send({ error: 'Vui lòng cung cấp primaryContactId và danh sách sourceContactIds' });
-      }
-
-      const merged = await mergeContacts(user.orgId, body.primaryContactId, body.sourceContactIds);
-      return { success: true, contact: merged };
-    } catch (err) {
-      logger.error('[contacts] Merge error:', err);
-      return reply.status(500).send({ error: 'Lỗi gộp khách hàng: ' + String(err) });
-    }
-  });
 
   // ── POST /api/v1/contacts/bulk-update — Bulk update non-unique fields ────────
   app.post<{

@@ -539,7 +539,7 @@ async function findOrCreateConversation(
   }
 
   if (existing) {
-    if (!existing.contactId && contactId) {
+    if (contactId && existing.contactId !== contactId) {
       await prisma.conversation.update({
         where: { id: existing.id },
         data: { contactId },

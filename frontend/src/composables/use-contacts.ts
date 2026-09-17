@@ -220,17 +220,6 @@ export function useContacts() {
     }
   }
 
-  async function mergeContacts(primaryContactId: string, sourceContactIds: string[]): Promise<boolean> {
-    try {
-      const res = await api.post('/contacts/merge', { primaryContactId, sourceContactIds });
-      await fetchContacts();
-      return res.data.success ?? true;
-    } catch (err) {
-      console.error('Failed to merge contacts:', err);
-      return false;
-    }
-  }
-
   async function bulkUpdateContacts(contactIds: string[], data: any): Promise<boolean> {
     if (!contactIds.length) return false;
     saving.value = true;
@@ -262,7 +251,6 @@ export function useContacts() {
     filters, pagination,
     fetchContacts, fetchContact,
     createContact, updateContact, deleteContact, deleteContacts,
-    mergeContacts,
     bulkUpdateContacts,
     bulkOpenChat,
     toggleContactAi,
