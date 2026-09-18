@@ -113,6 +113,33 @@ export const ODOO_INVOICE_STATUSES = [
   { text: 'Không xuất HĐ', value: 'no', color: 'grey' },
 ];
 
+export interface OrderExportFilters {
+  search?: string;
+  hasPhone?: 'all' | 'yes' | 'no';
+  hasEmail?: 'all' | 'yes' | 'no';
+  zones?: string[];
+  includeEmptyZone?: boolean;
+  salespersons?: string[];
+  includeEmptySalesperson?: boolean;
+  fromDate?: string;
+  toDate?: string;
+  minAmount?: number | null;
+  maxAmount?: number | null;
+  productIds?: number[];
+  productSkus?: string[];
+  states?: string[];
+  deliveryStatuses?: string[];
+  includeEmptyDelivery?: boolean;
+}
+
+export interface ExportColumnItem {
+  key: string;
+  label: string;
+  width: number;
+  align?: 'left' | 'center' | 'right';
+  numFmt?: string;
+}
+
 export function useOrders() {
   const orders = ref<OrderItem[]>([]);
   const selectedOrder = ref<OrderItem | null>(null);
@@ -308,12 +335,81 @@ export function useOrders() {
     }
   }
 
+  async function confirmSaleOrder(id: string) {
+    try {
+      const res = await api.post(`/orders/${id}/confirm-sale`);
+      return res.data;
+    } catch (err) {
+      console.error('[useOrders] confirmSaleOrder error:', err);
+      throw err;
+    }
+  }
+
   async function rejectOrder(id: string, reason: string, customZaloMessage?: string) {
     try {
       const res = await api.post(`/orders/${id}/reject`, { reason, customZaloMessage });
       return res.data;
     } catch (err) {
       console.error('[useOrders] rejectOrder error:', err);
+      throw err;
+    }
+  }
+
+  async function fetchExportZones(): Promise<string[]> {
+    try {
+      const res = await api.get('/orders/export/zones');
+      return res.data.zones || [];
+    } catch (err) {
+      console.error('[useOrders] fetchExportZones error:', err);
+      return [];
+    }
+  }
+
+  async function fetchExportColumns(): Promise<{ allColumns: ExportColumnItem[]; defaultColumns: string[] }> {
+    try {
+      const res = await api.get('/orders/export/columns');
+      return res.data;
+    } catch (err) {
+      console.error('[useOrders] fetchExportColumns error:', err);
+      return { allColumns: [], defaultColumns: [] };
+    }
+  }
+
+  async function fetchExportCount(filters: OrderExportFilters = {}): Promise<{ count: number; totalAmount: number }> {
+    try {
+      const res = await api.post('/orders/export/count', { filters });
+      return res.data;
+    } catch (err) {
+      console.error('[useOrders] fetchExportCount error:', err);
+      return { count: 0, totalAmount: 0 };
+    }
+  }
+
+  async function exportOrdersExcel(payload: {
+    filters?: OrderExportFilters;
+    columns?: string[];
+    includeLinesSheet?: boolean;
+  }): Promise<boolean> {
+    try {
+      const res = await api.post('/orders/export/excel', payload, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(
+        new Blob([res.data], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        })
+      );
+      const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Danh_sach_don_hang_${timestamp}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      return true;
+    } catch (err) {
+      console.error('[useOrders] exportOrdersExcel error:', err);
       throw err;
     }
   }
@@ -339,6 +435,7 @@ export function useOrders() {
     fetchPendingOrders,
     fetchProcessedAiOrders,
     confirmOrder,
+    confirmSaleOrder,
     rejectOrder,
     fetchOrderDetail,
     fetchStats,
@@ -352,5 +449,9 @@ export function useOrders() {
     deliveryStatusLabel,
     invoiceStatusColor,
     invoiceStatusLabel,
+    fetchExportZones,
+    fetchExportColumns,
+    fetchExportCount,
+    exportOrdersExcel,
   };
 }

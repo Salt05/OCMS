@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { routingRegistry } from '../registry/routing-registry.js';
 import { dispatchEvent } from '../queue/queue-manager.js';
 import { config } from '../config.js';
+import { routerLogger } from '../logger/router-logger.js';
 
 export async function mutationRoutes(app: FastifyInstance) {
   const backendUrl = config.ocmsBackendUrl.replace(/\/+$/, '');
@@ -95,6 +96,15 @@ export async function mutationRoutes(app: FastifyInstance) {
       `[Router Mutation Gateway] 🚫 Điều phối HỦY ĐƠN HÀNG tới: [${activeOdoo.name}]`
     );
 
+    routerLogger.add({
+      level: 'INFO',
+      service: 'ROUTER',
+      order_id: body?.order_code || String(body?.odoo_order_id || ''),
+      event: 'order.cancelling',
+      message: `[Gateway] 🚫 Điều phối HỦY ĐƠN HÀNG [${body?.order_code || body?.odoo_order_id}] sang ${activeOdoo.name}`,
+      details: { target: activeOdoo.id, reason: body?.reason },
+    });
+
     try {
       const res = await fetch(`${backendUrl}/api/v1/internal/odoo/cancel-order`, {
         method: 'POST',
@@ -113,12 +123,30 @@ export async function mutationRoutes(app: FastifyInstance) {
 
       const json = (await res.json()) as any;
       if (!res.ok || !json.success) {
+        routerLogger.add({
+          level: 'ERROR',
+          service: 'ODOO',
+          order_id: body?.order_code || String(body?.odoo_order_id || ''),
+          event: 'order.cancel_failed',
+          message: `[Odoo] ❌ Thất bại khi hủy đơn [${body?.order_code || body?.odoo_order_id}]: ${json.error || 'Lỗi Odoo'}`,
+          details: { error: json.error, target: activeOdoo.id },
+        });
+
         return reply.status(res.status || 500).send({
           success: false,
           error: json.error || 'Lỗi khi hủy đơn hàng trên Odoo',
           target: activeOdoo.id,
         });
       }
+
+      routerLogger.add({
+        level: 'SUCCESS',
+        service: 'ODOO',
+        order_id: body?.order_code || String(body?.odoo_order_id || ''),
+        event: 'order.cancelled',
+        message: `[Odoo] ✅ Đã hủy đơn hàng [${body?.order_code || body?.odoo_order_id}] thành công trên ${activeOdoo.name}`,
+        details: { target: activeOdoo.id },
+      });
 
       return reply.send({
         success: true,
@@ -127,6 +155,16 @@ export async function mutationRoutes(app: FastifyInstance) {
       });
     } catch (err: any) {
       app.log.error(err, `Lỗi Gateway điều phối hủy đơn: ${err.message}`);
+
+      routerLogger.add({
+        level: 'ERROR',
+        service: 'ROUTER',
+        order_id: body?.order_code || String(body?.odoo_order_id || ''),
+        event: 'order.cancel_error',
+        message: `[Gateway] 💥 Lỗi mạng khi hủy đơn [${body?.order_code || body?.odoo_order_id}]: ${err.message}`,
+        details: { error: err.message, target: activeOdoo.id },
+      });
+
       return reply.status(500).send({
         success: false,
         error: `Router không thể kết nối tới Odoo để hủy đơn (${err.message})`,
@@ -134,6 +172,99 @@ export async function mutationRoutes(app: FastifyInstance) {
       });
     }
   });
+
+  /**
+   * POST /api/v1/router/odoo/confirm-order
+   * Router Gateway: Điều phối xác nhận đơn hàng (Báo giá -> Đơn hàng) sang máy chủ Odoo đích (Test hoặc Prod)
+   */
+  app.post('/api/v1/router/odoo/confirm-order', async (request: FastifyRequest, reply: FastifyReply) => {
+    const activeOdoo = routingRegistry.getActiveOdooConfig();
+    const body = request.body as any;
+
+    app.log.info(
+      { order_code: body?.order_code, odoo_order_id: body?.odoo_order_id, target: activeOdoo.id },
+      `[Router Mutation Gateway] 🎯 Điều phối XÁC NHẬN ĐƠN HÀNG tới: [${activeOdoo.name}]`
+    );
+
+    routerLogger.add({
+      level: 'INFO',
+      service: 'ROUTER',
+      order_id: body?.order_code || String(body?.odoo_order_id || ''),
+      event: 'order.confirming',
+      message: `[Gateway] 🎯 Điều phối XÁC NHẬN ĐƠN [${body?.order_code || body?.odoo_order_id}] sang ${activeOdoo.name}`,
+      details: { target: activeOdoo.id, odoo_url: activeOdoo.url },
+    });
+
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/internal/odoo/confirm-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(30000),
+        body: JSON.stringify({
+          ...body,
+          odoo_target: {
+            url: activeOdoo.url,
+            db: activeOdoo.db,
+            user: activeOdoo.user,
+            apiKey: activeOdoo.apiKey,
+          },
+        }),
+      });
+
+      const json = (await res.json()) as any;
+      if (!res.ok || !json.success) {
+        routerLogger.add({
+          level: 'ERROR',
+          service: 'ODOO',
+          order_id: body?.order_code || String(body?.odoo_order_id || ''),
+          event: 'order.confirm_failed',
+          message: `[Odoo] ❌ Thất bại khi xác nhận đơn [${body?.order_code || body?.odoo_order_id}]: ${json.error || 'Lỗi Odoo'}`,
+          details: { error: json.error, target: activeOdoo.id },
+        });
+
+        return reply.status(res.status || 500).send({
+          success: false,
+          error: json.error || 'Lỗi khi xác nhận đơn hàng trên Odoo',
+          target: activeOdoo.id,
+        });
+      }
+
+      routerLogger.add({
+        level: 'SUCCESS',
+        service: 'ODOO',
+        order_id: body?.order_code || String(body?.odoo_order_id || ''),
+        event: 'order.confirmed',
+        message: `[Odoo] ✅ Đã xác nhận đơn hàng [${body?.order_code || body?.odoo_order_id}] thành công trên ${activeOdoo.name}`,
+        details: { target: activeOdoo.id, odoo_order_id: body?.odoo_order_id },
+      });
+
+      return reply.send({
+        success: true,
+        message: `Đã xác nhận đơn hàng thành công trên ${activeOdoo.name}`,
+        target: activeOdoo.id,
+        target_name: activeOdoo.name,
+      });
+    } catch (err: any) {
+      app.log.error(err, `Lỗi Gateway điều phối xác nhận đơn: ${err.message}`);
+
+      routerLogger.add({
+        level: 'ERROR',
+        service: 'ROUTER',
+        order_id: body?.order_code || String(body?.odoo_order_id || ''),
+        event: 'order.confirm_error',
+        message: `[Gateway] 💥 Lỗi mạng khi gọi Odoo xác nhận đơn [${body?.order_code || body?.odoo_order_id}]: ${err.message}`,
+        details: { error: err.message, target: activeOdoo.id },
+      });
+
+      return reply.status(500).send({
+        success: false,
+        error: `Router không thể kết nối tới Odoo để xác nhận đơn (${err.message})`,
+        target: activeOdoo.id,
+      });
+    }
+  });
+
+
 
   /**
    * POST /api/v1/router/odoo/create-customer

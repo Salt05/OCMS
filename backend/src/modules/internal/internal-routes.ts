@@ -493,6 +493,53 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // ── 2C. ODOO WORKER: XÁC NHẬN ĐƠN HÀNG TRÊN ODOO QUA ROUTER ───────────────────
+  app.post('/api/v1/internal/odoo/confirm-order', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const body = request.body as {
+        order_code?: string;
+        odoo_order_id?: number;
+        odoo_target?: { url: string; db: string; user: string; apiKey: string };
+      };
+
+      const orgId = await getDefaultOrgId();
+      let odooOrderId = body.odoo_order_id;
+
+      if (!odooOrderId && body.order_code) {
+        const order = await prisma.orderHistory.findFirst({
+          where: {
+            orgId,
+            OR: [
+              { orderCode: body.order_code },
+              { id: body.order_code },
+            ],
+          },
+          select: { odooOrderId: true },
+        });
+        odooOrderId = order?.odooOrderId || (Number(body.order_code) > 0 ? Number(body.order_code) : undefined);
+      }
+
+      if (!odooOrderId) {
+        return reply.status(400).send({ success: false, error: 'Thiếu mã đơn hàng hoặc odoo_order_id hợp lệ' });
+      }
+
+      const ok = await odooService.confirmOrder(odooOrderId, body.odoo_target);
+      if (!ok) {
+        return reply.status(500).send({
+          success: false,
+          error: 'Không thể xác nhận trên Odoo (có thể do thiếu hàng tồn kho hoặc lỗi quyền hạn)',
+        });
+      }
+
+      logger.info(`[internal-routes] ✅ Đã gọi action_confirm đơn hàng Odoo #${odooOrderId} thành công`);
+      return reply.send({ success: true, message: 'Đã xác nhận đơn hàng thành công trên Odoo' });
+    } catch (err: any) {
+      logger.error(`[internal-routes] Lỗi xác nhận đơn Odoo: ${err.message}`);
+      return reply.status(500).send({ success: false, error: err.message });
+    }
+  });
+
+
   // ── 2.2. ODOO WORKER: TẠO ĐỐI TÁC KHÁCH HÀNG TRÊN ODOO DÙNG CẤU HÌNH TỪ ROUTER ───
   app.post('/api/v1/internal/odoo/create-customer', async (request: FastifyRequest, reply: FastifyReply) => {
     try {

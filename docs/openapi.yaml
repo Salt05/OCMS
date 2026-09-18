@@ -405,6 +405,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/OrderConfirmedResponse'
 
+  /api/v1/orders/{id}/confirm-sale:
+    post:
+      tags:
+        - Orders
+      summary: Chuyển trạng thái Báo giá thành Đơn hàng (Sale Order) trên Odoo qua Router (Dành riêng cho Admin)
+      description: >
+        Kích hoạt action_confirm trên máy chủ Odoo đích được điều phối bởi Universal Router.
+        Đơn hàng từ trạng thái Báo giá (draft / sent) sẽ chuyển thành Đơn hàng chính thức (sale),
+        tạo phiếu xuất kho trên Odoo và cập nhật trạng thái realtime qua Socket.io.
+        Chỉ tài khoản có vai trò 'admin' hoặc 'owner' mới có quyền gọi API này.
+      operationId: confirmSaleOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID đơn hàng nội bộ OCMS hoặc Odoo Order ID / Order Code
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Xác nhận đơn hàng thành công trên Odoo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Đã xác nhận đơn hàng #S02429 thành công!"
+                  order:
+                    type: object
+                  odooWarning:
+                    type: string
+                    nullable: true
+        '400':
+          description: Đơn hàng không ở trạng thái hợp lệ để xác nhận (đã xác nhận hoặc đã hủy)
+        '403':
+          description: Từ chối truy cập - Chỉ tài khoản Admin / Owner mới có quyền xác nhận đơn
+        '404':
+          description: Không tìm thấy đơn hàng cần xác nhận
+
+
   /api/v1/orders/stats:
     get:
       tags:

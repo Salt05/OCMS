@@ -17,6 +17,13 @@ import { routerClient } from '../../shared/services/router-client.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  generateOrdersExcel,
+  getExportCount,
+  ALL_EXPORT_COLUMNS,
+  DEFAULT_SELECTED_COLUMNS,
+  type OrderExportFilters,
+} from './order-excel-service.js';
 
 export async function orderRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -589,6 +596,102 @@ export async function orderRoutes(app: FastifyInstance) {
     return {
       salespersons: allNames,
     };
+  });
+
+  // ── Distinct Zones / Cities for export filter dropdown ─────────────────────
+  app.get('/api/v1/orders/export/zones', async (request: FastifyRequest) => {
+    const user = request.user!;
+
+    const [profileZones, profileCities, contactZones] = await Promise.all([
+      prisma.customerProfile.findMany({
+        where: {
+          orgId: user.orgId,
+          zone: { not: null },
+        },
+        select: { zone: true },
+        distinct: ['zone'],
+      }),
+      prisma.customerProfile.findMany({
+        where: {
+          orgId: user.orgId,
+          city: { not: null },
+        },
+        select: { city: true },
+        distinct: ['city'],
+      }),
+      prisma.contact.findMany({
+        where: {
+          orgId: user.orgId,
+          zone: { not: null },
+        },
+        select: { zone: true },
+        distinct: ['zone'],
+      }),
+    ]);
+
+    const allZones = Array.from(
+      new Set([
+        ...profileZones.map(p => p.zone?.trim()),
+        ...profileCities.map(p => p.city?.trim()),
+        ...contactZones.map(c => c.zone?.trim()),
+      ].filter(Boolean) as string[])
+    ).sort((a, b) => a.localeCompare(b, 'vi'));
+
+    return { zones: allZones };
+  });
+
+  // ── Column metadata for export modal ────────────────────────────────────────
+  app.get('/api/v1/orders/export/columns', async () => {
+    return {
+      allColumns: ALL_EXPORT_COLUMNS,
+      defaultColumns: DEFAULT_SELECTED_COLUMNS,
+    };
+  });
+
+  // ── Real-time order count & revenue estimation for export filters ──────────
+  app.post('/api/v1/orders/export/count', async (request: FastifyRequest) => {
+    const user = request.user!;
+    const body = (request.body || {}) as { filters?: OrderExportFilters };
+    const filters = body.filters || {};
+
+    const result = await getExportCount(user.orgId, filters);
+    return result;
+  });
+
+  // ── Export orders to Excel (.xlsx) with custom columns and filters ─────────
+  app.post('/api/v1/orders/export/excel', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const body = (request.body || {}) as {
+      filters?: OrderExportFilters;
+      columns?: string[];
+      includeLinesSheet?: boolean;
+    };
+
+    const filters = body.filters || {};
+    const columns = body.columns && body.columns.length > 0 ? body.columns : DEFAULT_SELECTED_COLUMNS;
+    const includeLinesSheet = body.includeLinesSheet !== false;
+
+    try {
+      const buffer = await generateOrdersExcel(
+        user.orgId,
+        filters,
+        columns,
+        includeLinesSheet,
+        (user as any).fullName || user.email || 'Admin'
+      );
+
+      const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
+      const filename = `Danh_sach_don_hang_${timestamp}.xlsx`;
+
+      reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+      return reply.send(buffer);
+    } catch (err: any) {
+      logger.error('[order-export-excel] Error generating Excel:', err);
+      return reply.status(500).send({
+        error: err.message || 'Lỗi khi xuất file Excel',
+      });
+    }
   });
 
   // ── Order stats summary from OrderHistory ──────────────────────────────────
@@ -1366,6 +1469,105 @@ export async function orderRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ success: true, activitySummary: null });
+  });
+
+  // ── Convert Quotation (Báo giá) to Sales Order (Đơn hàng) ─────────────────
+  app.post('/api/v1/orders/:id/confirm-sale', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    if (!user || !['owner', 'admin'].includes(user.role)) {
+      return reply.status(403).send({ error: 'Chỉ quản trị viên (Admin) mới có quyền xác nhận đơn hàng' });
+    }
+
+    const { id } = request.params as { id: string };
+    const isNumeric = /^\d+$/.test(id);
+
+    const order = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [
+          { id },
+          ...(isNumeric ? [{ odooOrderId: parseInt(id, 10) }] : []),
+          { orderCode: id },
+        ],
+      },
+      include: {
+        customerProfile: true,
+        lines: {
+          orderBy: { odooLineId: 'asc' },
+        },
+      },
+    });
+
+    if (!order) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng cần xác nhận' });
+    }
+
+    if (order.state === 'sale' || order.state === 'done') {
+      return reply.status(400).send({ error: 'Đơn hàng này đã được xác nhận trước đó' });
+    }
+
+    if (order.state === 'cancel') {
+      return reply.status(400).send({ error: 'Đơn hàng đã bị hủy, không thể xác nhận' });
+    }
+
+    let odooError: string | null = null;
+
+    // Kích hoạt action_confirm trên Odoo qua Universal Router
+    if (order.odooOrderId || order.orderCode) {
+      try {
+        const confirmRes = await routerClient.confirmOrder({
+          order_code: order.orderCode,
+          odoo_order_id: order.odooOrderId || undefined,
+        });
+        if (!confirmRes.success) {
+          odooError = confirmRes.error || 'Không thể xác nhận trên Odoo (có thể do thiếu hàng tồn kho hoặc lỗi quyền hạn)';
+        }
+      } catch (err: any) {
+        logger.error(`[order-routes] Lỗi khi điều phối xác nhận đơn qua Router #${order.orderCode}:`, err.message);
+        odooError = err.message;
+      }
+    }
+
+
+    const now = new Date();
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { fullName: true, odooId: true },
+    });
+    const staffOdooUid = dbUser?.odooId ? parseInt(dbUser.odooId, 10) : undefined;
+    const editorName = dbUser?.fullName || user.email;
+
+    const updatedOrder = await prisma.orderHistory.update({
+      where: { id: order.id },
+      data: {
+        state: 'sale',
+        writeDate: now,
+        writeUid: staffOdooUid || undefined,
+        writeUserName: editorName,
+        updatedAt: now,
+      } as any,
+      include: {
+        customerProfile: true,
+        lines: {
+          orderBy: { odooLineId: 'asc' },
+        },
+      },
+    });
+
+    // Phát socket thông báo đơn hàng đã xác nhận thành công
+    zaloPool.getIO()?.emit('order:updated', {
+      orderId: order.id,
+      state: 'sale',
+    });
+
+    return reply.send({
+      success: true,
+      order: updatedOrder,
+      odooWarning: odooError || undefined,
+      message: odooError
+        ? `Đã chuyển sang Đơn hàng cục bộ nhưng Odoo có cảnh báo: ${odooError}`
+        : `Đã xác nhận đơn hàng #${order.orderCode} thành công!`,
+    });
   });
 
   // ── Confirm Order & Dispatch Zalo Notification ────────────────────────────

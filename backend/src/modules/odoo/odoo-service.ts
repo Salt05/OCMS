@@ -713,10 +713,10 @@ class OdooService {
     }
   }
 
-  async confirmOrder(odooOrderId: number | number[]): Promise<boolean> {
+  async confirmOrder(odooOrderId: number | number[], overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<boolean> {
     try {
       const id = Array.isArray(odooOrderId) ? odooOrderId[0] : Number(odooOrderId);
-      await this.executeKw('sale.order', 'action_confirm', [[id]]);
+      await this.executeKw('sale.order', 'action_confirm', [[id]], {}, overrideConfig);
       logger.info(`[odoo] Order ${id} confirmed successfully`);
       return true;
     } catch (err: any) {

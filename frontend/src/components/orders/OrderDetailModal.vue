@@ -34,6 +34,20 @@
           </div>
 
           <div class="d-flex align-center gap-2 flex-wrap">
+            <!-- Nút Xác nhận đơn (chuyển Báo giá thành Đơn hàng) -->
+            <v-btn
+              v-if="!isEditing && canConfirmQuotation"
+              size="small"
+              color="success"
+              variant="flat"
+              prepend-icon="lucide-check-circle-2"
+              class="text-none font-weight-bold mr-1"
+              :loading="confirmingQuotation"
+              @click="promptConfirmQuotation"
+            >
+              Xác nhận đơn
+            </v-btn>
+
             <!-- Edit Mode Toggle Button -->
             <v-btn
               v-if="!isEditing && order"
@@ -513,31 +527,85 @@
 
         <!-- Read Only Mode Actions -->
         <template v-else>
-          <div v-if="canApproveOrReject" class="d-flex align-center ga-2" style="gap: 8px;">
+          <div class="d-flex align-center gap-2">
+            <!-- Nút Xác nhận đơn (chuyển Báo giá thành Đơn hàng) -->
             <v-btn
+              v-if="canConfirmQuotation"
               color="success"
               variant="flat"
               prepend-icon="lucide-check-circle-2"
               class="text-none font-weight-bold"
-              @click="$emit('confirm', order!)"
+              :loading="confirmingQuotation"
+              @click="promptConfirmQuotation"
             >
-              Duyệt
+              Xác nhận đơn
             </v-btn>
-            <v-btn
-              color="error"
-              variant="outlined"
-              prepend-icon="lucide-x-circle"
-              class="text-none font-weight-bold"
-              @click="$emit('reject', order!)"
-            >
-              Từ chối
-            </v-btn>
+
+            <template v-if="canApproveOrReject">
+              <v-btn
+                color="success"
+                variant="flat"
+                prepend-icon="lucide-check-circle-2"
+                class="text-none font-weight-bold"
+                @click="$emit('confirm', order!)"
+              >
+                Duyệt
+              </v-btn>
+              <v-btn
+                color="error"
+                variant="outlined"
+                prepend-icon="lucide-x-circle"
+                class="text-none font-weight-bold"
+                @click="$emit('reject', order!)"
+              >
+                Từ chối
+              </v-btn>
+            </template>
           </div>
-          <v-spacer v-else />
+          <v-spacer />
           <v-btn variant="outlined" color="grey" @click="$emit('update:modelValue', false)">Đóng</v-btn>
         </template>
       </v-card-actions>
     </v-card>
+
+    <!-- Dialog xác nhận chuyển Báo giá thành Đơn hàng -->
+    <v-dialog v-model="showConfirmQuotationDialog" max-width="380px">
+      <v-card class="rounded-xl pa-5">
+        <div class="d-flex align-center gap-3">
+          <v-avatar color="success" variant="tonal" size="44">
+            <v-icon icon="lucide-check-circle-2" size="24" color="success" />
+          </v-avatar>
+          <div class="flex-grow-1">
+            <div class="text-subtitle-1 font-weight-bold">Xác nhận đơn hàng?</div>
+            <div class="text-caption text-medium-emphasis">
+              Mã đơn: <strong class="text-primary font-monospace">{{ order?.orderCode }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex justify-end align-center gap-2 mt-5">
+          <v-btn
+            variant="outlined"
+            color="grey"
+            class="text-none px-4"
+            :disabled="confirmingQuotation"
+            @click="showConfirmQuotationDialog = false"
+          >
+            Hủy
+          </v-btn>
+          <v-btn
+            color="success"
+            variant="flat"
+            class="text-none font-weight-bold px-4"
+            :loading="confirmingQuotation"
+            prepend-icon="lucide-check"
+            @click="executeConfirmQuotation"
+          >
+            Xác nhận đơn
+          </v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
 
     <!-- Product Picker Modal for Adding Products to Order -->
     <ProductPickerDialog
@@ -608,12 +676,14 @@
 import { ref, computed, watch } from 'vue';
 import { useDisplay } from 'vuetify';
 import { api } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 import { useOrders } from '@/composables/use-orders';
 import type { OrderItem } from '@/composables/use-orders';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
 
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
+const authStore = useAuthStore();
 
 const props = defineProps<{
   modelValue: boolean;
@@ -635,7 +705,54 @@ const {
   deliveryStatusLabel,
   invoiceStatusColor,
   invoiceStatusLabel,
+  confirmSaleOrder,
 } = useOrders();
+
+// ── Confirm Quotation (Báo giá -> Đơn hàng) State ──────────────────────────
+const canConfirmQuotation = computed(() => {
+  // Chỉ tài khoản có vai trò Quản trị viên (Admin / Owner) mới có quyền xác nhận đơn
+  if (!authStore.isAdmin) return false;
+  if (!props.order) return false;
+  return props.order.state === 'draft' || props.order.state === 'sent';
+});
+
+const confirmingQuotation = ref(false);
+const showConfirmQuotationDialog = ref(false);
+
+function promptConfirmQuotation() {
+  showConfirmQuotationDialog.value = true;
+}
+
+async function executeConfirmQuotation() {
+  if (!props.order) return;
+  confirmingQuotation.value = true;
+  try {
+    const res = await confirmSaleOrder(props.order.id);
+    if (res?.success) {
+      if (res.order) {
+        Object.assign(props.order, res.order);
+      } else {
+        props.order.state = 'sale';
+      }
+      showConfirmQuotationDialog.value = false;
+      snackbar.value = {
+        show: true,
+        text: res.message || 'Đã chuyển trạng thái báo giá thành Đơn hàng thành công!',
+        color: res.odooWarning ? 'warning' : 'success',
+      };
+      emit('saved', props.order);
+    }
+  } catch (err: any) {
+    console.error('Confirm order error:', err);
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || err.message || 'Lỗi khi xác nhận đơn hàng',
+      color: 'error',
+    };
+  } finally {
+    confirmingQuotation.value = false;
+  }
+}
 
 // ── Edit Mode State ─────────────────────────────────────────────────────────
 const isEditing = ref(false);

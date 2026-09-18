@@ -20,6 +20,16 @@
         </div>
 
         <v-btn
+          color="success"
+          variant="flat"
+          prepend-icon="lucide-file-spreadsheet"
+          class="text-none font-weight-medium"
+          @click="showExportModal = true"
+        >
+          Xuất Excel
+        </v-btn>
+
+        <v-btn
           color="primary"
           prepend-icon="lucide-refresh-cw"
           :loading="syncing"
@@ -437,6 +447,15 @@
       :loading="detailLoading"
       @confirm="onDetailConfirm"
       @reject="onDetailReject"
+      @saved="onOrderSaved"
+    />
+
+    <!-- Order Export Modal -->
+    <OrderExportModal
+      v-model="showExportModal"
+      :initial-filters="filters"
+      :page-total="total"
+      @exported="onExportCompleted"
     />
 
     <!-- Confirm Order Dialog with Zalo Preview -->
@@ -661,6 +680,7 @@ import { useOrders, ODOO_ORDER_STATES, ODOO_DELIVERY_STATUSES, type OrderItem } 
 import { useAppBadges } from '@/composables/use-app-badges';
 import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
 import OrderStaffTable from '@/components/orders/OrderStaffTable.vue';
+import OrderExportModal from '@/components/orders/OrderExportModal.vue';
 
 const router = useRouter();
 const display = useDisplay();
@@ -690,6 +710,11 @@ function onDetailConfirm(order: OrderItem) {
 function onDetailReject(order: OrderItem) {
   showDetail.value = false;
   openRejectModal(order);
+}
+
+function onOrderSaved() {
+  loadData();
+  fetchAllBadges();
 }
 
 const {
@@ -725,7 +750,14 @@ const activeTab = ref('orders');
 const page = ref(1);
 const limit = ref(25);
 const showDetail = ref(false);
+const showExportModal = ref(false);
 const quickDate = ref('');
+
+function onExportCompleted() {
+  snackbar.text = 'Xuất file Excel đơn hàng thành công!';
+  snackbar.color = 'success';
+  snackbar.show = true;
+}
 
 // Confirm / Reject state
 const showConfirmDialog = ref(false);

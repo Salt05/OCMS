@@ -202,6 +202,44 @@ export class RouterClient {
   }
 
   /**
+   * Điều phối xác nhận đơn hàng (Báo giá -> Đơn hàng) qua Router
+   */
+  async confirmOrder(payload: {
+    order_code?: string;
+    odoo_order_id?: number;
+  }): Promise<{
+    success: boolean;
+    message?: string;
+    target?: string;
+    target_name?: string;
+    error?: string;
+  }> {
+    const url = `${this.getRouterBaseUrl()}/api/v1/router/odoo/confirm-order`;
+
+    try {
+      logger.info(`[RouterClient] 🎯 Gửi lệnh XÁC NHẬN ĐƠN [${payload.order_code || payload.odoo_order_id}] sang Universal Router...`);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(30000),
+        body: JSON.stringify(payload),
+      });
+
+      const json = (await res.json()) as any;
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Router trả về lỗi khi xác nhận đơn');
+      }
+
+      logger.info(`[RouterClient] ✅ Đã xác nhận đơn thành công qua Router trên [${json.target_name || json.target}]`);
+      return json;
+    } catch (err: any) {
+      logger.error(`[RouterClient] Lỗi xác nhận đơn qua Router: ${err.message}`);
+      throw err;
+    }
+  }
+
+
+  /**
    * Điều phối tạo khách hàng mới qua Router
    */
   async createCustomer(payload: {
