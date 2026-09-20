@@ -49,6 +49,18 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/payments',
+    name: 'Payments',
+    component: () => import('@/views/PaymentsView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/mobile-gateway',
+    name: 'MobileGateway',
+    component: () => import('@/views/MobileGatewayView.vue'),
+    meta: { layout: 'auth' },
+  },
+  {
     path: '/products',
     name: 'Products',
     component: () => import('@/views/ProductsView.vue'),
@@ -106,8 +118,8 @@ export const router = createRouter({
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
 
-  // Skip guard for setup and login pages
-  if (to.name === 'Setup' || to.name === 'Login') {
+  // Skip guard for setup, login and mobile test gateway pages
+  if (to.name === 'Setup' || to.name === 'Login' || to.name === 'MobileGateway') {
     return next();
   }
 

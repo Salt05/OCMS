@@ -517,6 +517,7 @@ const primaryMenuItems = computed(() => {
     { title: 'Khách hàng (Danh bạ)', icon: 'lucide-contact', path: '/contacts' },
     { title: 'Tài khoản Zalo (Cloud)', icon: 'lucide-cloud', path: '/zalo-accounts' },
     { title: 'Đơn hàng & CRM', icon: 'lucide-shopping-bag', path: '/orders' },
+    { title: 'Đối soát Thanh toán', icon: 'lucide-credit-card', path: '/payments' },
     { title: 'Sản phẩm & Phân loại', icon: 'lucide-package', path: '/products' },
     { title: 'Ưu đãi & Chiết khấu', icon: 'lucide-percent', path: '/promotions' },
     { title: 'Báo cáo & Thống kê', icon: 'lucide-pie-chart', path: '/reports' },

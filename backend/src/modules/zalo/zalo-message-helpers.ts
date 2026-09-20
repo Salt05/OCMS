@@ -144,6 +144,38 @@ export function isBankCardContent(msgType: string | undefined, content: any): bo
 }
 
 /**
+ * Check if the message represents a Zalo contact card / QR share contact.
+ */
+export function isContactCardContent(msgType: string | undefined, content: any): boolean {
+  const typeStr = String(msgType || '').toLowerCase();
+  if (typeStr && (typeStr.includes('recommended') || typeStr.includes('card') || typeStr.includes('contact') || typeStr === '6')) {
+    return true;
+  }
+  if (!content) return false;
+
+  let parsed = content;
+  if (typeof content === 'string') {
+    if (content.includes('qrCodeUrl') || (content.includes('phone') && (content.includes('qr-talk') || content.includes('contactUid') || content.includes('caption')))) {
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
+    if (parsed.qrCodeUrl || (parsed.phone && (parsed.contactUid || parsed.caption))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Map zca-js msgType string to a normalized content type label.
  * Falls back to 'text' for unrecognised types or plain-string content.
  */
@@ -151,6 +183,7 @@ export function detectContentType(msgType: string | undefined, content: any): st
   if (isVideoContent(msgType, content)) return 'video';
   if (isCallEvent(msgType, content)) return 'call';
   if (isBankCardContent(msgType, content)) return 'bank_card';
+  if (isContactCardContent(msgType, content)) return 'contact_card';
   if (!msgType) return 'text';
   if (msgType.includes('photo') || msgType.includes('image')) return 'image';
   if (msgType.includes('sticker')) return 'sticker';
@@ -184,7 +217,7 @@ export function detectContentType(msgType: string | undefined, content: any): st
  * Extract attachments metadata (image url, thumbnail, dimensions, file info) from rawContent
  */
 export function extractAttachments(msgType: string | undefined, content: any): any[] {
-  if (isCallEvent(msgType, content)) return [];
+  if (isCallEvent(msgType, content) || isContactCardContent(msgType, content)) return [];
   const attachments: any[] = [];
   if (!content) return attachments;
 

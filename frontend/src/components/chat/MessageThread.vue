@@ -785,6 +785,112 @@
                   </div>
                 </div>
               </div>
+              <!-- Contact Card (Danh thiếp Zalo / Chia sẻ liên hệ) -->
+              <div v-else-if="isContactCardMessage(msg)" class="zalo-contact-card-bubble">
+                <div class="contact-card-surface">
+                  <!-- Header: Contact Icon + Title + Badge -->
+                  <div class="contact-card-header d-flex align-center justify-space-between mb-2.5">
+                    <div class="d-flex align-center gap-2">
+                      <div class="contact-card-icon-wrap d-flex align-center justify-center">
+                        <v-icon color="primary" size="18">lucide-contact</v-icon>
+                      </div>
+                      <div>
+                        <div class="contact-card-label text-caption font-weight-bold text-grey-darken-2">
+                          Danh thiếp Zalo
+                        </div>
+                      </div>
+                    </div>
+                    <v-chip size="x-small" color="primary" variant="flat" class="text-caption font-weight-bold px-1.5" style="height: 18px; font-size: 10px;">
+                      Liên hệ
+                    </v-chip>
+                  </div>
+
+                  <!-- Body: Name, Phone & QR Thumbnail -->
+                  <div class="contact-card-body d-flex align-center justify-space-between gap-3">
+                    <div class="contact-card-info flex-grow-1 min-w-0">
+                      <div v-if="getContactCardData(msg)?.caption && getContactCardData(msg)?.caption !== getContactCardData(msg)?.phone" class="contact-card-name text-body-2 font-weight-bold text-truncate mb-0.5">
+                        {{ getContactCardData(msg)!.caption }}
+                      </div>
+                      <div class="text-caption text-grey-darken-1 mb-0.5" style="font-size: 11px;">
+                        Số điện thoại
+                      </div>
+                      <div class="contact-card-phone text-h6 font-weight-bold text-primary font-mono d-flex align-center gap-1.5">
+                        <v-icon size="16" color="primary">lucide-phone</v-icon>
+                        <span>{{ getContactCardData(msg)?.phone || 'Chưa rõ số' }}</span>
+                        <v-btn
+                          v-if="getContactCardData(msg)?.phone"
+                          icon
+                          size="x-small"
+                          variant="text"
+                          color="primary"
+                          class="contact-copy-btn"
+                          :title="copiedPhone === getContactCardData(msg)?.phone ? 'Đã chép!' : 'Sao chép số điện thoại'"
+                          @click.stop="copyPhoneNumber(getContactCardData(msg)!.phone)"
+                        >
+                          <v-icon size="14">{{ copiedPhone === getContactCardData(msg)?.phone ? 'lucide-check' : 'lucide-copy' }}</v-icon>
+                        </v-btn>
+                      </div>
+                    </div>
+
+                    <!-- QR Code Thumbnail (Click to zoom) -->
+                    <div
+                      v-if="getContactCardData(msg)?.qrCodeUrl && !failedContactQr[msg.id]"
+                      class="contact-card-qr-box flex-shrink-0 cursor-pointer"
+                      title="Bấm để phóng to mã QR"
+                      @click.stop="openSingleImagePreview(getContactCardData(msg)!.qrCodeUrl!, 'Mã QR Zalo - ' + (getContactCardData(msg)?.phone || 'Danh thiếp'))"
+                    >
+                      <img
+                        :src="getContactCardData(msg)!.qrCodeUrl"
+                        alt="QR Code"
+                        class="contact-card-qr-img"
+                        @error="failedContactQr[msg.id] = true"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- Footer Action Buttons -->
+                  <div class="contact-card-actions mt-3 pt-2 d-flex align-center gap-2">
+                    <v-btn
+                      v-if="getContactCardData(msg)?.phone"
+                      size="x-small"
+                      variant="elevated"
+                      color="primary"
+                      class="text-none font-weight-bold flex-grow-1 elevation-1"
+                      style="height: 28px; border-radius: 6px; font-size: 12px;"
+                      @click.stop="copyPhoneNumber(getContactCardData(msg)!.phone)"
+                    >
+                      <v-icon size="13" class="mr-1">{{ copiedPhone === getContactCardData(msg)?.phone ? 'lucide-check' : 'lucide-copy' }}</v-icon>
+                      {{ copiedPhone === getContactCardData(msg)?.phone ? 'Đã chép SĐT' : 'Sao chép SĐT' }}
+                    </v-btn>
+                    <v-btn
+                      v-if="getContactCardData(msg)?.phone"
+                      size="x-small"
+                      variant="tonal"
+                      color="primary"
+                      class="text-none font-weight-bold flex-grow-1"
+                      style="height: 28px; border-radius: 6px; font-size: 12px;"
+                      :href="`tel:${getContactCardData(msg)!.phone}`"
+                      tag="a"
+                      target="_blank"
+                    >
+                      <v-icon size="13" class="mr-1">lucide-phone-call</v-icon>
+                      Gọi điện
+                    </v-btn>
+                    <v-btn
+                      v-if="getContactCardData(msg)?.qrCodeUrl && !failedContactQr[msg.id]"
+                      size="x-small"
+                      variant="outlined"
+                      color="primary"
+                      class="text-none font-weight-bold flex-grow-1"
+                      style="height: 28px; border-radius: 6px; font-size: 12px;"
+                      @click.stop="openSingleImagePreview(getContactCardData(msg)!.qrCodeUrl!, 'Mã QR Zalo - ' + (getContactCardData(msg)?.phone || 'Danh thiếp'))"
+                    >
+                      <v-icon size="13" class="mr-1">lucide-qr-code</v-icon>
+                      Xem QR
+                    </v-btn>
+                  </div>
+                </div>
+              </div>
               <!-- Default text -->
               <div v-else class="message-text-content" v-html="parseDisplayContentHtml(msg.content)"></div>
               <!-- Timestamp & Sending Status -->
@@ -2963,7 +3069,7 @@ async function downloadFile(url: string, filename: string) {
 
 /** Extract image URL from JSON content */
 function getImageUrl(msg: Message): string | null {
-  if (isVideoMessage(msg)) return null;
+  if (isVideoMessage(msg) || isContactCardMessage(msg)) return null;
 
   // 1. Check attachments array (used by bulk mode & custom attachments)
   if (Array.isArray((msg as any).attachments) && (msg as any).attachments.length > 0) {
@@ -3149,6 +3255,67 @@ function copyBankNumber(num: string) {
   }, 2000);
 }
 
+export interface ContactCardData {
+  phone: string;
+  caption?: string;
+  qrCodeUrl?: string;
+  contactUid?: string;
+}
+
+const copiedPhone = ref<string | null>(null);
+const failedContactQr = ref<Record<string, boolean>>({});
+
+function isContactCardMessage(msg: Message | any): boolean {
+  if (!msg) return false;
+  if (msg.contentType === 'contact_card') return true;
+  if (!msg.content) return false;
+  if (typeof msg.content === 'string') {
+    if (msg.content.includes('qrCodeUrl') || (msg.content.includes('phone') && (msg.content.includes('qr-talk') || msg.content.includes('contactUid') || msg.content.includes('caption')))) {
+      try {
+        const p = JSON.parse(msg.content);
+        return Boolean(p.qrCodeUrl || (p.phone && (p.contactUid || p.caption)));
+      } catch {
+        return false;
+      }
+    }
+  } else if (typeof msg.content === 'object' && msg.content !== null) {
+    return Boolean(msg.content.qrCodeUrl || (msg.content.phone && (msg.content.contactUid || msg.content.caption)));
+  }
+  return false;
+}
+
+function getContactCardData(msg: Message | any): ContactCardData | null {
+  if (!msg?.content) return null;
+  let parsed = msg.content;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  return {
+    phone: parsed.phone || parsed.caption || '',
+    caption: parsed.caption || parsed.name || '',
+    qrCodeUrl: parsed.qrCodeUrl || '',
+    contactUid: parsed.contactUid || parsed.uid || '',
+  };
+}
+
+function copyPhoneNumber(phone: string) {
+  if (!phone) return;
+  const clean = phone.replace(/\s+/g, '');
+  navigator.clipboard?.writeText(clean);
+  copiedPhone.value = phone;
+  syncSnack.value = { show: true, text: `Đã sao chép số điện thoại: ${phone}`, color: 'success' };
+  setTimeout(() => {
+    if (copiedPhone.value === phone) {
+      copiedPhone.value = null;
+    }
+  }, 2500);
+}
+
 function formatBankNumber(num?: string): string {
   if (!num) return '';
   const clean = num.replace(/\s+/g, '');
@@ -3260,7 +3427,8 @@ function isTransparentBubble(msg: Message): boolean {
     msg.contentType === 'gif' ||
     getImageUrl(msg) ||
     isVideoMessage(msg) ||
-    isBankCardMessage(msg)
+    isBankCardMessage(msg) ||
+    isContactCardMessage(msg)
   );
 }
 
@@ -3276,6 +3444,10 @@ function parseDisplayContentHtml(content: string | null): string {
       }
       if (p.action === 'zinstant.bankcard' || (typeof p.action === 'string' && p.action.includes('bankcard')) || isBankCardMessage({ content })) {
         return '💳 [Tài khoản ngân hàng]';
+      }
+      if (p.qrCodeUrl || (p.phone && (p.contactUid || p.caption)) || isContactCardMessage({ content })) {
+        const d = getContactCardData({ content });
+        return `📇 [Danh thiếp] ${d?.caption || d?.phone || 'Liên hệ'}`;
       }
       if (p.title && p.title !== 'sendBubbleMessage' && p.href) text = `🔗 ${p.title}`;
       else if (p.title && p.title !== 'sendBubbleMessage') text = p.title;
@@ -4429,6 +4601,87 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 
 .chat-input-area.is-drag-over {
   border-color: rgba(var(--v-theme-primary), 0.8) !important;
+}
+
+/* ── Contact Card Bubble Styles (Zalo Contact Card / QR Share Contact) ── */
+.zalo-contact-card-bubble {
+  max-width: 320px;
+  width: 100%;
+}
+
+.contact-card-surface {
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 104, 255, 0.22);
+  box-shadow: 0 2px 12px rgba(0, 104, 255, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+
+.contact-card-icon-wrap {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 104, 255, 0.1);
+}
+
+.contact-card-phone {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 1.1rem;
+  letter-spacing: 0.5px;
+}
+
+.contact-copy-btn {
+  width: 24px;
+  height: 24px;
+  opacity: 0.85;
+}
+.contact-copy-btn:hover {
+  opacity: 1;
+}
+
+.contact-card-qr-box {
+  width: 68px;
+  height: 68px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  transition: transform 0.15s ease;
+}
+
+.contact-card-qr-box:hover {
+  transform: scale(1.05);
+}
+
+.contact-card-qr-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.contact-card-actions {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.v-theme--dark .contact-card-surface {
+  background: #242526;
+  border-color: rgba(0, 104, 255, 0.35);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.v-theme--dark .contact-card-label {
+  color: #e4e6eb !important;
+}
+
+.v-theme--dark .contact-card-actions {
+  border-top-color: rgba(255, 255, 255, 0.08);
 }
 
 /* ── Bank Card Bubble Styles (Zalo Zinstant Bankcard) ── */

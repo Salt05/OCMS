@@ -1436,6 +1436,15 @@ function lastMessagePreview(conv: Conversation): string {
   if (msg.contentType === 'voice') return 'Tin nhắn thoại';
   if (msg.contentType === 'gif') return 'GIF';
   if (msg.contentType === 'bank_card') return '[Tài khoản ngân hàng]';
+  if (msg.contentType === 'contact_card') {
+    if (msg.content?.startsWith('{')) {
+      try {
+        const p = JSON.parse(msg.content);
+        return `[Danh thiếp] ${p.caption || p.name || p.phone || 'Liên hệ'}`;
+      } catch {}
+    }
+    return '[Danh thiếp]';
+  }
 
   if (msg.content?.startsWith('{')) {
     try {
@@ -1453,6 +1462,12 @@ function lastMessagePreview(conv: Conversation): string {
       // Tài khoản ngân hàng (Zinstant Bankcard)
       if (p.action === 'zinstant.bankcard' || (typeof p.action === 'string' && p.action.includes('bankcard')) || msg.content.includes('zinstant.bankcard')) {
         return '[Tài khoản ngân hàng]';
+      }
+
+      // Danh thiếp Zalo / Contact Card
+      if (p.qrCodeUrl || (p.phone && (p.contactUid || p.caption))) {
+        const title = p.caption || p.name || p.phone || 'Liên hệ';
+        return `[Danh thiếp] ${title}`;
       }
 
       // Lịch hẹn / Reminder

@@ -37,6 +37,9 @@ model Organization {
   promotionPolicies    PromotionPolicy[]
   promotionAuditLogs   PromotionAuditLog[]
   orderAppliedPromotions OrderAppliedPromotion[]
+  bankAccounts         BankAccount[]
+  bankTransactions     BankTransaction[]
+  senderIdentities     SenderIdentity[]
 
   @@map("organizations")
 }
@@ -156,6 +159,7 @@ model Contact {
   conversations Conversation[]
   appointments  Appointment[]
   orders        Order[]
+  senderIdentities SenderIdentity[]
 
   @@unique([orgId, zaloUid])
   @@map("contacts")
@@ -321,6 +325,7 @@ model Order {
   createdBy         User                    @relation("CreatedOrders", fields: [createdByUserId], references: [id])
   conversation      Conversation?           @relation(fields: [conversationId], references: [id])
   appliedPromotions OrderAppliedPromotion[]
+  bankTransactions  BankTransaction[]       @relation("MatchedOrderTransactions")
 
   @@map("orders")
 }
@@ -513,6 +518,7 @@ model OrderHistory {
   customerProfile CustomerProfile?        @relation(fields: [customerProfileId], references: [id])
   lines           OrderLineHistory[]
   appliedPromotions OrderAppliedPromotion[]
+  bankTransactions  BankTransaction[]       @relation("MatchedHistoryTransactions")
 
   @@unique([orgId, odooOrderId])
   @@map("order_histories")
@@ -704,3 +710,102 @@ model OrderAppliedPromotion {
   @@index([promotionCode])
   @@map("order_applied_promotions")
 }
+
+// ── Bank Accounts & Payment Reconciliation ────────────────────────────────────
+
+// Configured bank accounts for receiving payments
+model BankAccount {
+  id              String   @id @default(uuid())
+  orgId           String   @map("org_id")
+  bankName        String   @default("MB Bank") @map("bank_name")
+  bankCode        String   @default("MB") @map("bank_code")
+  accountNumber   String   @map("account_number")
+  accountHolder   String   @map("account_holder")
+  branch          String?
+  qrTemplate      String   @default("compact2") @map("qr_template")
+  webhookSecret   String   @map("webhook_secret")
+  autoApprove     Boolean  @default(false) @map("auto_approve")
+  minTrustScore   Int      @default(85) @map("min_trust_score")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  transactions    BankTransaction[]
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, accountNumber])
+  @@map("bank_accounts")
+}
+
+// Log of incoming bank SMS transactions & reconciliation state
+model BankTransaction {
+  id                      String    @id @default(uuid())
+  orgId                   String    @map("org_id")
+  bankAccountId           String?   @map("bank_account_id")
+  bankCode                String    @default("MB") @map("bank_code")
+  accountNumber           String    @map("account_number")
+  deviceId                String?   @map("device_id")
+  amount                  Float
+  type                    String    @default("IN") // IN: tiền vào, OUT: tiền ra
+  balanceAfter            Float?    @map("balance_after")
+  transactionTime         DateTime  @map("transaction_time")
+  refCode                 String?   @map("ref_code")
+  senderNameRaw           String?   @map("sender_name_raw")
+  description             String    @db.Text
+  rawSms                  String    @db.Text @map("raw_sms")
+  idempotencyHash         String    @unique @map("idempotency_hash")
+  
+  confidenceScore         Int       @default(0) @map("confidence_score")
+  scoringDetails          Json      @default("{}") @map("scoring_details")
+  
+  status                  String    @default("PENDING") // PENDING, SUGGESTED, MATCHED, PARTIAL, OVERPAID, MANUAL_REVIEW, IGNORED
+  matchedOrderHistoryId   String?   @map("matched_order_history_id")
+  matchedOrderId          String?   @map("matched_order_id")
+  matchedOrderCode        String?   @map("matched_order_code")
+  suggestedOrderHistoryId String?   @map("suggested_order_history_id")
+  suggestedOrderId        String?   @map("suggested_order_id")
+  matchedBy               String?   @map("matched_by") // AUTO_HIGH_TRUST, AUTO_EXACT_CODE, MANUAL_STAFF
+  matchedUserId           String?   @map("matched_user_id")
+  matchedAt               DateTime? @map("matched_at")
+  notes                   String?   @db.Text
+  
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  bankAccount             BankAccount?   @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  matchedOrderHistory     OrderHistory?  @relation("MatchedHistoryTransactions", fields: [matchedOrderHistoryId], references: [id], onDelete: SetNull)
+  matchedOrder            Order?         @relation("MatchedOrderTransactions", fields: [matchedOrderId], references: [id], onDelete: SetNull)
+  org                     Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, status])
+  @@index([orgId, matchedOrderCode])
+  @@index([transactionTime])
+  @@map("bank_transactions")
+}
+
+// Learned repeat senders profile for trust-based auto-approval
+model SenderIdentity {
+  id                  String    @id @default(uuid())
+  orgId               String    @map("org_id")
+  contactId           String?   @map("contact_id")
+  senderNameClean     String    @map("sender_name_clean")
+  senderAccountNumber String?   @map("sender_account_number")
+  senderBank          String?   @map("sender_bank")
+  keywordsPattern     String?   @map("keywords_pattern")
+  
+  successMatchCount   Int       @default(1) @map("success_match_count")
+  trustLevel          String    @default("NORMAL") @map("trust_level") // NEW, NORMAL, TRUSTED, VIP, BLOCKED
+  isAutoApproved      Boolean   @default(false) @map("is_auto_approved")
+  
+  lastMatchedAt       DateTime  @default(now()) @map("last_matched_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  contact             Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  org                 Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, senderNameClean, contactId])
+  @@index([orgId, senderNameClean])
+  @@map("sender_identities")
+}
+

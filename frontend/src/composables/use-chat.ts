@@ -639,6 +639,8 @@ export function useChat() {
               text = getCallInfo(data.message).snippet;
             } else if (data.message.contentType === 'bank_card' || data.message.content?.includes('zinstant.bankcard')) {
               text = 'Đã gửi thông tin tài khoản ngân hàng';
+            } else if (data.message.contentType === 'contact_card' || data.message.content?.includes('qrCodeUrl')) {
+              text = 'Đã chia sẻ một danh thiếp liên hệ';
             } else if (data.message.contentType === 'text') {
               text = data.message.content || 'Đã gửi một tin nhắn';
             } else {

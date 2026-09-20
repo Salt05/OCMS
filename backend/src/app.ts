@@ -51,6 +51,7 @@ import { chatbotRoutes, knowledgeRoutes } from './modules/chatbot/chatbot-routes
 import { chatbotTestRoutes } from './modules/chatbot-test/chatbot-test-routes.js';
 import { promotionRoutes } from './modules/promotions/promotion-routes.js';
 import { productRoutes } from './modules/products/product-routes.js';
+import { paymentRoutes } from './modules/payments/payment-routes.js';
 import { odooSyncService } from './modules/sync/odoo-sync-service.js';
 import { internalRoutes } from './modules/internal/internal-routes.js';
 import cron from 'node-cron';
@@ -192,6 +193,7 @@ async function bootstrap() {
   await app.register(webhookSettingsRoutes);
   await app.register(integrationSettingsRoutes);
   await app.register(orderRoutes);
+  await app.register(paymentRoutes);
   await app.register(tagRoutes);
   await app.register(quickMessageRoutes);
   await app.register(odooRoutes);
