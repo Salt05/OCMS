@@ -436,6 +436,13 @@ export async function chatRoutes(app: FastifyInstance) {
                   isNote: true,
                 },
               },
+              repliedBy: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  email: true,
+                },
+              },
             },
 
             skip:

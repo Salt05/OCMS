@@ -15,77 +15,104 @@ import { routerClient } from '../../shared/services/router-client.js';
 
 type QueryParams = Record<string, string>;
 
+function buildContactWhere(user: any, query: QueryParams) {
+  const {
+    search = '',
+    source = '',
+    status = '',
+    assignedUserId = '',
+    tags = '',
+    contactType = '',
+    zaloAccountId = '',
+  } = query;
+
+  const where: any = { orgId: user.orgId };
+  if (source) where.source = source;
+  if (status) where.status = status;
+  if (contactType) where.contactType = contactType;
+  if (zaloAccountId) {
+    where.conversations = {
+      some: {
+        zaloAccountId,
+      },
+    };
+  }
+
+  // Staff (member) CAN ONLY see contacts assigned directly to them by Admin
+  if (user.role === 'member') {
+    where.assignedUserId = user.id;
+    // Members cannot see 'other' contacts
+    if (!where.contactType) {
+      where.contactType = { not: 'other' };
+    } else if (where.contactType === 'other') {
+      where.contactType = 'invalid_role_access';
+    }
+  } else {
+    // Admin / Owner can filter by any staff or unassigned
+    if (assignedUserId === 'unassigned') {
+      where.assignedUserId = null;
+    } else if (assignedUserId) {
+      where.assignedUserId = assignedUserId;
+    }
+  }
+
+  if (tags) {
+    const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean);
+    if (tagList.length === 1) {
+      where.tags = { array_contains: tagList[0] };
+    } else if (tagList.length > 1) {
+      where.AND = tagList.map((tag) => ({ tags: { array_contains: tag } }));
+    }
+  }
+
+  if (search) {
+    where.OR = [
+      { fullName: { contains: search, mode: 'insensitive' } },
+      { zaloName: { contains: search, mode: 'insensitive' } },
+      { salutation: { contains: search, mode: 'insensitive' } },
+      { phone: { contains: search } },
+      { email: { contains: search, mode: 'insensitive' } },
+      { customerId: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  return where;
+}
+
 export async function contactRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
+
+  // ── GET /api/v1/contacts/ids — fast lightweight retrieval of all contact IDs matching filters ──
+  app.get('/api/v1/contacts/ids', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const where = buildContactWhere(user, request.query as QueryParams);
+
+      const contacts = await prisma.contact.findMany({
+        where,
+        select: { id: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+
+      return { ids: contacts.map((c) => c.id), total: contacts.length };
+    } catch (err) {
+      logger.error('[contacts] Get IDs error:', err);
+      return reply.status(500).send({ error: 'Failed to fetch contact IDs' });
+    }
+  });
 
   // ── GET /api/v1/contacts — list with filters and pagination ───────────────
   app.get('/api/v1/contacts', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
-      const {
-        page = '1',
-        limit = '50',
-        search = '',
-        source = '',
-        status = '',
-        assignedUserId = '',
-        tags = '',
-        contactType = '',
-        zaloAccountId = '',
-      } = request.query as QueryParams;
+      const query = request.query as QueryParams;
+      const { page = '1', limit = '50' } = query;
 
-      const where: any = { orgId: user.orgId };
-      if (source) where.source = source;
-      if (status) where.status = status;
-      if (contactType) where.contactType = contactType;
-      if (zaloAccountId) {
-        where.conversations = {
-          some: {
-            zaloAccountId,
-          },
-        };
-      }
+      const where = buildContactWhere(user, query);
 
-      // Staff (member) CAN ONLY see contacts assigned directly to them by Admin
-      if (user.role === 'member') {
-        where.assignedUserId = user.id;
-        // Members cannot see 'other' contacts
-        if (!where.contactType) {
-          where.contactType = { not: 'other' };
-        } else if (where.contactType === 'other') {
-          where.contactType = 'invalid_role_access';
-        }
-      } else {
-        // Admin / Owner can filter by any staff or unassigned
-        if (assignedUserId === 'unassigned') {
-          where.assignedUserId = null;
-        } else if (assignedUserId) {
-          where.assignedUserId = assignedUserId;
-        }
-      }
-      
-      if (tags) {
-        const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean);
-        if (tagList.length === 1) {
-          where.tags = { array_contains: tagList[0] };
-        } else if (tagList.length > 1) {
-          where.AND = tagList.map((tag) => ({ tags: { array_contains: tag } }));
-        }
-      }
-
-      if (search) {
-        where.OR = [
-          { fullName: { contains: search, mode: 'insensitive' } },
-          { zaloName: { contains: search, mode: 'insensitive' } },
-          { salutation: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { customerId: { contains: search, mode: 'insensitive' } },
-        ];
-      }
-
-      const pageNum = parseInt(page);
-      const limitNum = parseInt(limit);
+      const isAll = parseInt(limit) === -1;
+      const pageNum = Math.max(parseInt(page) || 1, 1);
+      const limitNum = isAll ? -1 : Math.max(parseInt(limit) || 50, 1);
 
       const [contacts, total] = await Promise.all([
         prisma.contact.findMany({
@@ -108,7 +135,10 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
             _count: { select: { conversations: true, appointments: true } },
           },
           orderBy: { updatedAt: 'desc' },
-          ...(limitNum > 0 ? { skip: (pageNum - 1) * limitNum, take: limitNum } : {}),
+          ...(isAll ? {} : {
+            skip: (pageNum - 1) * limitNum,
+            take: limitNum,
+          }),
         }),
         prisma.contact.count({ where }),
       ]);
@@ -552,6 +582,39 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] Delete error:', err);
       return reply.status(500).send({ error: 'Failed to delete contact' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/bulk-delete — Bulk delete contacts ──────────────
+  app.post<{
+    Body: { contactIds: string[] };
+  }>('/api/v1/contacts/bulk-delete', async (request, reply) => {
+    try {
+      const user = request.user!;
+      const { contactIds } = request.body || {};
+
+      if (!['owner', 'admin'].includes(user.role)) {
+        return reply.status(403).send({ error: 'Chỉ quản trị viên mới có quyền xóa khách hàng' });
+      }
+
+      if (!Array.isArray(contactIds) || contactIds.length === 0) {
+        return reply.status(400).send({ error: 'Danh sách khách hàng cần xóa không hợp lệ' });
+      }
+
+      const result = await prisma.contact.deleteMany({
+        where: {
+          id: { in: contactIds },
+          orgId: user.orgId,
+        },
+      });
+
+      // Clean up any tags with usage count = 0
+      await cleanupUnusedTags(user.orgId);
+
+      return { success: true, count: result.count };
+    } catch (err) {
+      logger.error('[contacts] Bulk delete error:', err);
+      return reply.status(500).send({ error: 'Failed to bulk delete contacts' });
     }
   });
 

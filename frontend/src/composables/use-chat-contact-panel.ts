@@ -169,64 +169,81 @@ export function useChatContactPanel(
   const loadingOdoo = ref(false);
   const odooSyncMessage = ref('');
   const odooSyncError = ref('');
+  const matchedOdooCustomers = ref<any[]>([]);
+
+  function applyOdooCustomer(c: any): boolean {
+    if (!c) return false;
+    form.customerId = String(c.id);
+    if (c.name) form.fullName = c.name;
+    if (c.phone) {
+      form.phone = c.phone;
+    } else if (c.mobile) {
+      form.phone = c.mobile;
+    }
+    if (c.email) form.email = c.email;
+    if (c.fullAddress || c.street) {
+      form.address = c.fullAddress || c.street;
+    }
+    if (c.zone || c.state || c.city) {
+      form.zone = c.zone || c.state || c.city;
+    }
+    if (c.salesperson) {
+      form.salesperson = c.salesperson;
+    }
+    form.contactType = 'customer';
+
+    if (c.totalOrders !== undefined || c.orderStats) {
+      customerStats.value = {
+        totalRevenue: Number(c.totalRevenue ?? c.orderStats?.totalRevenue) || 0,
+        totalOrders: Number(c.totalOrders ?? c.orderStats?.totalOrders) || 0,
+        lastOrderDate: c.lastOrderDate ?? c.orderStats?.lastOrderDate ?? null,
+      };
+    }
+
+    const details = [
+      c.name,
+      form.phone ? `SĐT: ${form.phone}` : '',
+      form.address ? `Địa chỉ: ${form.address}` : '',
+      form.zone ? `Khu vực: ${form.zone}` : ''
+    ].filter(Boolean).join(' • ');
+
+    odooSyncMessage.value = `Đã đồng bộ thông tin từ Odoo: ${details}`;
+    matchedOdooCustomers.value = [];
+    return true;
+  }
 
   async function lookupAndApplyOdoo(customId?: string): Promise<boolean> {
-    const cleanId = (customId || form.customerId || '').trim();
-    if (!cleanId) {
-      odooSyncError.value = 'Vui lòng nhập ID khách hàng Odoo để tra cứu';
+    let cleanQuery = (customId || form.customerId || '').trim();
+    if (cleanQuery.startsWith('#')) cleanQuery = cleanQuery.slice(1).trim();
+    if (!cleanQuery) {
+      odooSyncError.value = 'Vui lòng nhập ID, Tên, SĐT hoặc Email để tra cứu';
       return false;
     }
 
     loadingOdoo.value = true;
     odooSyncMessage.value = '';
     odooSyncError.value = '';
+    matchedOdooCustomers.value = [];
 
     try {
-      const res = await api.get(`/odoo/customers/${encodeURIComponent(cleanId)}`);
-      if (res.data?.success && res.data?.customer) {
-        const c = res.data.customer;
-        form.customerId = String(c.id);
-        if (c.name) form.fullName = c.name;
-        if (c.phone) {
-          form.phone = c.phone;
-        } else if (c.mobile) {
-          form.phone = c.mobile;
-        }
-        if (c.email) form.email = c.email;
-        if (c.fullAddress || c.street) {
-          form.address = c.fullAddress || c.street;
-        }
-        if (c.zone || c.state || c.city) {
-          form.zone = c.zone || c.state || c.city;
-        }
-        if (c.salesperson) {
-          form.salesperson = c.salesperson;
-        }
-        form.contactType = 'customer';
+      const res = await api.get('/odoo/customers/search', {
+        params: { query: cleanQuery },
+      });
 
-        if (c.totalOrders !== undefined || res.data?.orderStats) {
-          customerStats.value = {
-            totalRevenue: Number(c.totalRevenue ?? res.data?.orderStats?.totalRevenue) || 0,
-            totalOrders: Number(c.totalOrders ?? res.data?.orderStats?.totalOrders) || 0,
-            lastOrderDate: c.lastOrderDate ?? res.data?.orderStats?.lastOrderDate ?? null,
-          };
-        }
+      const customers = res.data?.customers ?? [];
 
-        const details = [
-          c.name,
-          form.phone ? `SĐT: ${form.phone}` : '',
-          form.address ? `Địa chỉ: ${form.address}` : '',
-          form.zone ? `Khu vực: ${form.zone}` : ''
-        ].filter(Boolean).join(' • ');
-
-        odooSyncMessage.value = `Đã đồng bộ thông tin từ Odoo: ${details}`;
-        return true;
+      if (customers.length === 1) {
+        return applyOdooCustomer(customers[0]);
+      } else if (customers.length > 1) {
+        matchedOdooCustomers.value = customers;
+        odooSyncMessage.value = `Tìm thấy ${customers.length} khách hàng phù hợp. Vui lòng chọn bên dưới:`;
+        return false;
       } else {
-        odooSyncError.value = `Không tìm thấy khách hàng #${cleanId} trên Odoo`;
+        odooSyncError.value = `Không tìm thấy khách hàng nào trên Odoo với "${cleanQuery}"`;
         return false;
       }
     } catch (err: any) {
-      odooSyncError.value = err.response?.data?.error || `Không tìm thấy khách hàng #${cleanId} trên Odoo`;
+      odooSyncError.value = err.response?.data?.error || `Không tìm thấy khách hàng trên Odoo với "${cleanQuery}"`;
       return false;
     } finally {
       loadingOdoo.value = false;
@@ -238,8 +255,10 @@ export function useChatContactPanel(
     saving, saveSuccess, saveError,
     customerStats,
     loadingOdoo, odooSyncMessage, odooSyncError,
+    matchedOdooCustomers,
     contactAppointments,
     saveContact, reloadAppointments,
     lookupAndApplyOdoo,
+    applyOdooCustomer,
   };
 }

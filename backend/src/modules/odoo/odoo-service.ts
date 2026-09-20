@@ -197,6 +197,83 @@ class OdooService {
     }
   }
 
+  async searchCustomers(query: string = '', limit: number = 10, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<OdooCustomer[]> {
+    let cleanQuery = String(query || '').trim();
+    if (cleanQuery.startsWith('#')) {
+      cleanQuery = cleanQuery.slice(1).trim();
+    }
+    if (!cleanQuery) return [];
+
+    try {
+      const isDigitsOnly = /^\d+$/.test(cleanQuery);
+      const numericId = parseInt(cleanQuery, 10);
+
+      const domain: any[] = [];
+      if (isDigitsOnly && numericId > 0) {
+        // Query is numeric: search by ID, phone, mobile, or name
+        domain.push(
+          '|', '|', '|',
+          ['id', '=', numericId],
+          ['phone', 'ilike', cleanQuery],
+          ['mobile', 'ilike', cleanQuery],
+          ['name', 'ilike', cleanQuery]
+        );
+      } else {
+        // Query has text: search by name, phone, mobile, or email
+        domain.push(
+          '|', '|', '|',
+          ['name', 'ilike', cleanQuery],
+          ['phone', 'ilike', cleanQuery],
+          ['mobile', 'ilike', cleanQuery],
+          ['email', 'ilike', cleanQuery]
+        );
+      }
+
+      const partners = await this.executeKw<any[]>('res.partner', 'search_read', [domain], {
+        fields: ['id', 'name', 'phone', 'mobile', 'street', 'street2', 'city', 'state_id', 'country_id', 'email', 'vat', 'user_id', 'property_payment_term_id'],
+        context: { lang: 'vi_VN' },
+        limit,
+      }, overrideConfig);
+
+      if (!partners || !Array.isArray(partners)) {
+        return [];
+      }
+
+      return partners.map((p) => {
+        const salesperson = Array.isArray(p.user_id) && p.user_id.length > 1 ? String(p.user_id[1]) : '';
+        const stateName = Array.isArray(p.state_id) && p.state_id.length > 1 ? String(p.state_id[1]) : '';
+        const countryName = Array.isArray(p.country_id) && p.country_id.length > 1 ? String(p.country_id[1]) : '';
+        const paymentTermId = Array.isArray(p.property_payment_term_id) && p.property_payment_term_id.length > 0 ? p.property_payment_term_id[0] : null;
+        const paymentTermName = Array.isArray(p.property_payment_term_id) && p.property_payment_term_id.length > 1 ? String(p.property_payment_term_id[1]) : '';
+
+        const addrParts = [p.street, p.street2, p.city, stateName, countryName].filter(Boolean).map((s: any) => String(s).trim()).filter(Boolean);
+        const fullAddress = addrParts.join(', ');
+
+        return {
+          id: p.id,
+          name: typeof p.name === 'string' ? p.name : '',
+          phone: typeof p.phone === 'string' ? p.phone : (typeof p.mobile === 'string' ? p.mobile : ''),
+          mobile: typeof p.mobile === 'string' ? p.mobile : '',
+          street: typeof p.street === 'string' ? p.street : '',
+          street2: typeof p.street2 === 'string' ? p.street2 : '',
+          city: typeof p.city === 'string' ? p.city : '',
+          state: stateName,
+          zone: stateName || (typeof p.city === 'string' ? p.city : ''),
+          fullAddress,
+          email: typeof p.email === 'string' ? p.email : '',
+          vat: typeof p.vat === 'string' ? p.vat : '',
+          salesperson,
+          salespersonId: Array.isArray(p.user_id) && p.user_id.length > 0 ? Number(p.user_id[0]) : null,
+          paymentTermId,
+          paymentTermName,
+        };
+      });
+    } catch (err: any) {
+      logger.error(`[odoo] searchCustomers(${cleanQuery}) error:`, err.message);
+      return [];
+    }
+  }
+
   async getEmployeeById(employeeId: number | string): Promise<any | null> {
     const numericId = parseInt(String(employeeId).trim(), 10);
     if (isNaN(numericId) || numericId <= 0) {

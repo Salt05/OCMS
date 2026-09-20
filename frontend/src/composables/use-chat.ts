@@ -72,6 +72,11 @@ export interface Message {
     contentType: string;
     isNote?: boolean;
   } | null;
+  repliedBy?: {
+    id: string;
+    fullName: string | null;
+    email: string | null;
+  } | null;
   reactions?: MessageReactionItem[];
   status?: 'sending' | 'sent' | 'failed';
   tempId?: string;

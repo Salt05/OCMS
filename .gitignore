@@ -36,4 +36,8 @@ ChatBot/**/*.db
 # Python & ChatBot temp
 __pycache__/
 *.py[cod]
-ChatBot/**/query_results_*.csv
+ChatBot/**/query_results_*.csv
+
+# Deployment scripts with server credentials
+update_server.*
+

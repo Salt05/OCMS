@@ -24,6 +24,22 @@ export async function odooRoutes(app: FastifyInstance) {
     }
   });
 
+  // GET /api/v1/odoo/customers/search — search customers by name, phone, email, or ID
+  app.get('/api/v1/odoo/customers/search', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { query = '' } = request.query as { query?: string };
+      if (!query || !query.trim()) {
+        return reply.send({ success: true, customers: [] });
+      }
+
+      const customers = await odooService.searchCustomers(query.trim(), 15);
+      return reply.send({ success: true, customers });
+    } catch (err: any) {
+      logger.error('[odoo-routes] search customers error:', err);
+      return reply.status(500).send({ error: err.message || 'Lỗi tìm kiếm khách hàng Odoo' });
+    }
+  });
+
   // GET /api/v1/odoo/customers/:id — get customer by Odoo ID
   app.get('/api/v1/odoo/customers/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     try {

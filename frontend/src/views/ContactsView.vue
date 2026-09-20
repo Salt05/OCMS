@@ -69,6 +69,40 @@
     <!-- Filters -->
     <ContactFilters :filters="filters" @search="onFilterChange" />
 
+    <!-- Select all matching contacts banner (Enterprise CRM / Gmail style) -->
+    <v-fade-transition>
+      <div
+        v-if="selected.length > 0 && total > contacts.length"
+        class="d-flex align-center justify-center py-2 px-3 mb-3 rounded-lg bg-surface-variant border text-body-2 text-center flex-wrap gap-1"
+      >
+        <template v-if="!isAllMatchingSelected">
+          <span>Đã chọn <strong>{{ selected.length }}</strong> khách hàng trên trang này.</span>
+          <v-btn
+            variant="text"
+            color="primary"
+            size="small"
+            class="text-none font-weight-bold px-2"
+            :loading="loadingAllIds"
+            @click="handleSelectAllMatching"
+          >
+            Chọn toàn bộ {{ total.toLocaleString('vi-VN') }} khách hàng phù hợp bộ lọc
+          </v-btn>
+        </template>
+        <template v-else>
+          <span>Đã chọn toàn bộ <strong>{{ selected.length.toLocaleString('vi-VN') }}</strong> khách hàng phù hợp bộ lọc.</span>
+          <v-btn
+            variant="text"
+            color="error"
+            size="small"
+            class="text-none font-weight-medium px-2"
+            @click="handleClearSelection"
+          >
+            Bỏ chọn tất cả
+          </v-btn>
+        </template>
+      </div>
+    </v-fade-transition>
+
     <!-- Data table -->
     <v-card variant="outlined" class="rounded-lg mb-4 overflow-hidden">
       <v-data-table-server
@@ -81,6 +115,7 @@
         :items-length="total"
         item-value="id"
         :show-select="!isMobile || isSelectMode"
+        :items-per-page-options="itemsPerPageOptions"
         density="compact"
         hover
         class="contacts-table"
@@ -90,19 +125,19 @@
           <tr
             v-bind="rowProps"
             class="cursor-pointer contact-row"
-            @touchstart.passive="onTouchStart(item)"
-            @touchend="onTouchEnd"
-            @touchmove="onTouchMove"
-            @touchcancel="onTouchEnd"
-            @mousedown="onMouseDown(item)"
-            @mouseup="onMouseUp"
-            @mouseleave="onMouseLeave"
+            @touchstart.passive="isMobile ? onTouchStart(item) : undefined"
+            @touchend="isMobile ? onTouchEnd() : undefined"
+            @touchmove="isMobile ? onTouchMove() : undefined"
+            @touchcancel="isMobile ? onTouchEnd() : undefined"
+            @mousedown="isMobile ? onMouseDown(item) : undefined"
+            @mouseup="isMobile ? onMouseUp() : undefined"
+            @mouseleave="isMobile ? onMouseLeave() : undefined"
             @click="onRowClick($event, item)"
           >
             <!-- Checkbox column when enabled -->
             <td v-if="!isMobile || isSelectMode" class="text-center" style="width: 40px;" @click.stop>
               <v-checkbox-btn
-                :model-value="selected.includes(item.id)"
+                :model-value="selectedSet.has(item.id)"
                 density="compact"
                 hide-details
                 @update:model-value="toggleSelectItem(item.id)"
@@ -170,10 +205,18 @@
             <!-- Zalo Account / Tài khoản Zalo (Desktop only) -->
             <td v-if="!isMobile" class="text-left">
               <div v-if="item.zaloAccount || item.conversations?.[0]?.zaloAccount" class="d-flex align-center gap-1.5 flex-nowrap">
-                <v-avatar size="20" class="flex-shrink-0">
-                  <v-img v-if="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.avatarUrl" :src="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)!.avatarUrl!" />
-                  <v-icon v-else size="14" color="primary">lucide-message-circle</v-icon>
-                </v-avatar>
+                <div class="flex-shrink-0 d-flex align-center justify-center rounded-circle bg-surface-variant overflow-hidden" style="width: 20px; height: 20px;">
+                  <img
+                    v-if="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.avatarUrl"
+                    :src="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)!.avatarUrl!"
+                    loading="lazy"
+                    width="20"
+                    height="20"
+                    style="width: 20px; height: 20px; object-fit: cover; display: block;"
+                    alt="avatar"
+                  />
+                  <v-icon v-else size="13" color="primary">lucide-message-circle</v-icon>
+                </div>
                 <span class="text-caption font-weight-medium text-high-emphasis text-truncate" style="max-width: 140px;" :title="(item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.displayName || ''">
                   {{ (item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.displayName || (item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.phone || 'Zalo' }}
                 </span>
@@ -250,15 +293,44 @@ const isMobile = computed(() => display.smAndDown.value);
 
 const {
   contacts, total, loading, filters, pagination,
-  fetchContacts, deleteContacts,
+  fetchContacts, fetchAllContactIds, deleteContacts,
   toggleContactAi, bulkOpenChat,
 } = useContacts();
 
+const itemsPerPageOptions = [
+  { value: 20, title: '20' },
+  { value: 50, title: '50' },
+  { value: 100, title: '100' },
+  { value: -1, title: 'Tất cả' },
+];
+
 const showDialog = ref(false);
 const selected = ref<string[]>([]);
+const selectedSet = computed(() => new Set(selected.value));
 const selectedContact = ref<Contact | null>(null);
 const isSelectMode = ref(false);
 const bulkOpeningChat = ref(false);
+const isAllMatchingSelected = ref(false);
+const loadingAllIds = ref(false);
+
+async function handleSelectAllMatching() {
+  loadingAllIds.value = true;
+  try {
+    const ids = await fetchAllContactIds();
+    selected.value = ids;
+    isAllMatchingSelected.value = true;
+  } finally {
+    loadingAllIds.value = false;
+  }
+}
+
+function handleClearSelection() {
+  selected.value = [];
+  isAllMatchingSelected.value = false;
+  if (isMobile.value) {
+    isSelectMode.value = false;
+  }
+}
 
 const showSnackbar = ref(false);
 const snackbarText = ref('');
@@ -331,6 +403,7 @@ function onMouseLeave() {
 }
 
 function toggleSelectItem(id: string) {
+  isAllMatchingSelected.value = false;
   const index = selected.value.indexOf(id);
   if (index >= 0) {
     selected.value.splice(index, 1);
@@ -342,6 +415,7 @@ function toggleSelectItem(id: string) {
 function exitSelectMode() {
   isSelectMode.value = false;
   selected.value = [];
+  isAllMatchingSelected.value = false;
 }
 
 const headers = computed(() => {
@@ -386,6 +460,8 @@ function statusColor(status: string) {
 }
 
 function onFilterChange() {
+  selected.value = [];
+  isAllMatchingSelected.value = false;
   pagination.page = 1;
   fetchContacts();
 }
@@ -432,6 +508,7 @@ async function handleToolbarBulkChat() {
 function onSaved() {
   if (selected.value.length > 1) {
     selected.value = [];
+    isAllMatchingSelected.value = false;
     isSelectMode.value = false;
     snackbarText.value = 'Đã cập nhật hàng loạt thành công!';
     showSnackbar.value = true;
@@ -444,10 +521,11 @@ function onDeleted() {
 }
 
 async function confirmBulkDelete() {
-  if (confirm(`Bạn có chắc muốn xóa ${selected.value.length} khách hàng đã chọn?`)) {
+  if (confirm(`Bạn có chắc muốn xóa ${selected.value.length.toLocaleString('vi-VN')} khách hàng đã chọn?`)) {
     const success = await deleteContacts(selected.value);
     if (success) {
       selected.value = [];
+      isAllMatchingSelected.value = false;
       isSelectMode.value = false;
     }
   }

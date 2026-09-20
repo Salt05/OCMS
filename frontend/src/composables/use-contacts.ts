@@ -91,7 +91,13 @@ export function useContacts() {
   async function fetchContacts(options?: { page?: number; itemsPerPage?: number }) {
     if (options && typeof options === 'object') {
       if (typeof options.page === 'number' && options.page > 0) pagination.page = options.page;
-      if (typeof options.itemsPerPage === 'number' && options.itemsPerPage > 0) pagination.limit = options.itemsPerPage;
+      if (typeof options.itemsPerPage === 'number') {
+        if (options.itemsPerPage === -1) {
+          pagination.limit = -1;
+        } else if (options.itemsPerPage > 0) {
+          pagination.limit = options.itemsPerPage;
+        }
+      }
     }
     loading.value = true;
     try {
@@ -174,7 +180,7 @@ export function useContacts() {
     if (!ids.length) return false;
     deleting.value = true;
     try {
-      await Promise.all(ids.map(id => api.delete(`/contacts/${id}`)));
+      await api.post('/contacts/bulk-delete', { contactIds: ids });
       await fetchContacts();
       return true;
     } catch (err) {
@@ -182,6 +188,26 @@ export function useContacts() {
       return false;
     } finally {
       deleting.value = false;
+    }
+  }
+
+  async function fetchAllContactIds(): Promise<string[]> {
+    try {
+      const res = await api.get('/contacts/ids', {
+        params: {
+          search: filters.search || undefined,
+          source: filters.source || undefined,
+          status: filters.status || undefined,
+          tags: filters.tags?.length ? filters.tags.join(',') : undefined,
+          contactType: filters.contactType || undefined,
+          assignedUserId: filters.assignedUserId || undefined,
+          zaloAccountId: filters.zaloAccountId || undefined,
+        },
+      });
+      return res.data?.ids ?? [];
+    } catch (err) {
+      console.error('Failed to fetch all contact IDs:', err);
+      return [];
     }
   }
 
@@ -249,7 +275,7 @@ export function useContacts() {
   return {
     contacts, total, loading, saving, deleting,
     filters, pagination,
-    fetchContacts, fetchContact,
+    fetchContacts, fetchContact, fetchAllContactIds,
     createContact, updateContact, deleteContact, deleteContacts,
     bulkUpdateContacts,
     bulkOpenChat,

@@ -410,27 +410,6 @@
                     <v-icon size="16" color="grey-darken-1">lucide-heart-off</v-icon>
                   </button>
 
-                  <!-- Reply Button -->
-                  <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
-                  <button
-                    class="reaction-btn"
-                    title="Trả lời"
-                    @click.stop="replyingToMessage = msg"
-                  >
-                    <v-icon size="16" color="grey-darken-2">lucide-reply</v-icon>
-                  </button>
-
-                  <!-- Undo Button (Chỉ dành cho tin nhắn của mình gửi và chưa bị thu hồi) -->
-                  <template v-if="msg.senderType === 'self' && !msg.isDeleted">
-                    <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
-                    <button
-                      class="reaction-btn"
-                      title="Thu hồi tin nhắn trên Zalo"
-                      @click.stop="openUndoConfirm(msg)"
-                    >
-                      <v-icon size="15" color="warning">lucide-undo-2</v-icon>
-                    </button>
-                  </template>
 
                   <!-- AI Context Marker Button -->
                   <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
@@ -496,6 +475,66 @@
                       <v-icon v-else size="14" color="primary">lucide-send</v-icon>
                       <span class="text-caption font-weight-bold text-primary">Gửi</span>
                     </button>
+                  </template>
+
+                  <!-- ⋯ More options button -->
+                  <template v-if="!isBulkMode">
+                    <div class="reaction-separator mx-1 align-self-center" style="width: 1px; height: 16px; background-color: rgba(0,0,0,0.12);"></div>
+                    <v-menu
+                      :location="msg.senderType === 'self' ? 'top end' : 'top start'"
+                      :close-on-content-click="true"
+                      transition="scale-transition"
+                    >
+                      <template v-slot:activator="{ props: moreMenuProps }">
+                        <button
+                          class="reaction-btn reaction-btn-more-options"
+                          v-bind="moreMenuProps"
+                          title="Tùy chọn thêm"
+                        >
+                          <v-icon size="16" color="grey-darken-2">lucide-ellipsis</v-icon>
+                        </button>
+                      </template>
+
+                      <v-card
+                        class="msg-more-menu elevation-6 rounded-xl overflow-hidden"
+                        min-width="210"
+                      >
+                        <!-- Sender badge -->
+                        <div
+                          v-if="msg.senderType === 'self'"
+                          class="msg-sender-badge d-flex align-center gap-2 px-3 py-2"
+                        >
+                          <v-avatar size="22" :color="msg.repliedBy ? 'primary' : 'grey-lighten-1'" class="flex-shrink-0">
+                            <v-icon size="12" color="white">{{ msg.repliedBy ? 'lucide-user-round' : 'lucide-smartphone' }}</v-icon>
+                          </v-avatar>
+                          <span class="text-caption font-weight-bold text-truncate" :class="msg.repliedBy ? 'text-primary' : 'text-grey-darken-1'" style="font-size: 12px;">
+                            {{ msg.repliedBy ? (msg.repliedBy.fullName || msg.repliedBy.email) : 'Từ Zalo' }}
+                          </span>
+                        </div>
+                        <v-divider v-if="msg.senderType === 'self'" />
+
+                        <v-list density="compact" class="py-1" bg-color="transparent">
+                          <!-- Trả lời -->
+                          <v-list-item
+                            :id="`msg-reply-${msg.id}`"
+                            prepend-icon="lucide-reply"
+                            title="Trả lời"
+                            class="msg-action-item"
+                            @click.stop="replyingToMessage = msg"
+                          />
+
+                          <!-- Thu hồi (chỉ tin nhắn self chưa bị thu hồi) -->
+                          <v-list-item
+                            v-if="msg.senderType === 'self' && !msg.isDeleted"
+                            :id="`msg-recall-${msg.id}`"
+                            prepend-icon="lucide-undo-2"
+                            title="Thu hồi tin nhắn"
+                            class="msg-action-item text-warning"
+                            @click.stop="openUndoConfirm(msg)"
+                          />
+                        </v-list>
+                      </v-card>
+                    </v-menu>
                   </template>
                 </div>
               </div>
@@ -3622,6 +3661,47 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 
 .reaction-btn-remove:hover {
   background: #fde2e2;
+}
+
+/* ── Message More Options Button (3 dots) ── */
+.reaction-btn-more-options {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background 0.15s ease;
+  padding: 0;
+  margin-left: 2px;
+}
+
+.reaction-btn-more-options:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+/* ── Message More Options Menu Card ── */
+.msg-more-menu {
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  backdrop-filter: blur(12px);
+}
+
+.msg-sender-badge {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
+  min-height: 38px;
+}
+
+.msg-action-item {
+  border-radius: 8px;
+  margin: 2px 6px;
+  transition: background 0.15s ease;
+}
+
+.msg-action-item:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
 }
 
 /* ── Reaction Summary Pill on Message ── */

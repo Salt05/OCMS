@@ -246,7 +246,7 @@
               <v-text-field
                 v-model="form.customerId"
                 label="ID Customer (Odoo)"
-                placeholder="Nhập ID Odoo rồi nhấn Enter..."
+                placeholder="Nhập ID, Tên, SĐT hoặc Email rồi nhấn Enter..."
                 density="compact"
                 variant="outlined"
                 prepend-inner-icon="lucide-hash"
@@ -266,7 +266,7 @@
                       density="compact"
                       class="action-icon-btn"
                       :loading="loadingOdoo"
-                      title="Đồng bộ / Cập nhật lại từ Odoo"
+                      title="Đồng bộ / Tra cứu lại từ Odoo"
                       @click.stop="lookupAndApplyOdoo()"
                     >
                       <v-icon size="15">lucide-refresh-cw</v-icon>
@@ -286,7 +286,7 @@
                       <v-icon size="15">lucide-search</v-icon>
                     </v-btn>
                     <v-btn
-                      v-if="form.customerId"
+                      v-if="form.customerId || matchedOdooCustomers.length > 0"
                       icon
                       variant="text"
                       color="error"
@@ -294,13 +294,53 @@
                       density="compact"
                       class="action-icon-btn"
                       title="Hủy liên kết Odoo"
-                      @click.stop="form.customerId = ''"
+                      @click.stop="form.customerId = ''; matchedOdooCustomers = []"
                     >
                       <v-icon size="15">lucide-unlink</v-icon>
                     </v-btn>
                   </div>
                 </template>
               </v-text-field>
+
+              <!-- Danh sách thẻ khách hàng khi trùng khớp nhiều người -->
+              <v-expand-transition>
+                <div v-if="matchedOdooCustomers.length > 1" class="odoo-matched-cards-container pa-2 mb-2 rounded-lg border bg-surface">
+                  <div class="d-flex align-center justify-space-between mb-1 px-1 overflow-hidden">
+                    <span class="text-caption font-weight-bold text-primary d-flex align-center gap-1 text-truncate">
+                      <v-icon size="14" class="flex-shrink-0">lucide-users</v-icon>
+                      <span class="text-truncate">Khớp {{ matchedOdooCustomers.length }} khách hàng:</span>
+                    </span>
+                    <v-btn
+                      icon
+                      variant="text"
+                      size="x-small"
+                      density="compact"
+                      color="grey"
+                      class="flex-shrink-0"
+                      title="Đóng danh sách"
+                      @click="matchedOdooCustomers = []"
+                    >
+                      <v-icon size="14">lucide-x</v-icon>
+                    </v-btn>
+                  </div>
+
+                  <div class="odoo-cards-list d-flex flex-column gap-1.5" style="max-height: 200px; overflow-y: auto; overflow-x: hidden;">
+                    <div
+                      v-for="cust in matchedOdooCustomers"
+                      :key="cust.id"
+                      class="odoo-customer-card pa-2 rounded-md border cursor-pointer"
+                      @click="applyOdooCustomer(cust)"
+                    >
+                      <v-chip size="x-small" color="primary" variant="flat" class="font-weight-bold font-monospace flex-shrink-0">
+                        #{{ cust.id }}
+                      </v-chip>
+                      <span class="text-caption font-weight-bold odoo-customer-name" :title="cust.name">
+                        {{ cust.name }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </v-expand-transition>
 
               <!-- Thông báo đồng bộ Odoo -->
               <v-alert
@@ -531,8 +571,10 @@ const {
   form, saving, saveSuccess, saveError,
   customerStats,
   loadingOdoo, odooSyncMessage, odooSyncError,
+  matchedOdooCustomers,
   saveContact,
   lookupAndApplyOdoo,
+  applyOdooCustomer,
 } = useChatContactPanel(
   () => props.contactId,
   () => props.contact,
@@ -648,5 +690,49 @@ onMounted(() => {
   height: 24px !important;
   min-width: 24px !important;
   padding: 0 !important;
+}
+
+.odoo-matched-cards-container {
+  background: rgba(var(--v-theme-surface-variant), 0.25);
+  border-color: rgba(var(--v-theme-primary), 0.25) !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+  container-type: inline-size;
+}
+.odoo-cards-list {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+}
+.odoo-customer-card {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  background: rgba(var(--v-theme-surface-variant), 0.4);
+  border-color: rgba(var(--v-border-color), var(--v-border-opacity)) !important;
+  transition: all 0.15s ease-in-out;
+}
+.odoo-customer-card:hover {
+  background: rgba(var(--v-theme-primary), 0.1);
+  border-color: rgba(var(--v-theme-primary), 0.6) !important;
+}
+.odoo-customer-name {
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+@container (max-width: 140px) {
+  .odoo-customer-name {
+    display: none !important;
+  }
 }
 </style>
