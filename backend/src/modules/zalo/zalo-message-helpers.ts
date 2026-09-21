@@ -240,12 +240,22 @@ export function extractAttachments(msgType: string | undefined, content: any): a
         const type =
           item.type ||
           (isVideo ? 'video' : msgType?.includes('file') ? 'file' : 'image');
+        let size = item.size || item.fileSize || 0;
+        if (!size && item.params) {
+          try {
+            const p = typeof item.params === 'string' ? JSON.parse(item.params) : item.params;
+            size = parseInt(p.fileSize || '0') || 0;
+          } catch {}
+        }
+        const title = item.title || item.name || '';
+
         attachments.push({
           type,
           url: url || thumbUrl,
           thumbUrl: thumbUrl || url,
-          title: item.title || item.name || '',
-          size: item.size || item.fileSize || 0,
+          title,
+          fileName: title,
+          size,
           width: item.width || item.video_width || 0,
           height: item.height || item.video_height || 0,
         });

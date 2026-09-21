@@ -3046,24 +3046,44 @@ function formatMessageTime(d: string) { return new Date(d).toLocaleTimeString('v
 
 async function downloadFile(url: string, filename: string) {
   if (!url) return;
-  syncSnack.value = { show: true, text: `Đang tải xuống ${filename}...`, color: 'info' };
+  let targetName = (filename || '').trim();
+  if (!targetName || !targetName.includes('.')) {
+    targetName = targetName ? `${targetName}.pdf` : 'Tài liệu.pdf';
+  }
+  syncSnack.value = { show: true, text: `Đang tải xuống ${targetName}...`, color: 'info' };
   try {
     const res = await api.get('/files/download', {
-      params: { url, filename },
+      params: { url, filename: targetName },
       responseType: 'blob',
     });
-    const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
+
+    let finalDownloadName = targetName;
+    const disposition = res.headers?.['content-disposition'];
+    if (disposition && disposition.includes('filename')) {
+      const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      if (utf8Match && utf8Match[1]) {
+        try { finalDownloadName = decodeURIComponent(utf8Match[1]); } catch {}
+      } else {
+        const standardMatch = disposition.match(/filename="?([^";]+)"?/i);
+        if (standardMatch && standardMatch[1]) {
+          finalDownloadName = standardMatch[1];
+        }
+      }
+    }
+
+    const mimeType = res.headers?.['content-type'] || 'application/octet-stream';
+    const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: mimeType }));
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = filename;
+    a.download = finalDownloadName;
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(blobUrl);
     document.body.removeChild(a);
-    syncSnack.value = { show: true, text: `Tải xuống ${filename} thành công`, color: 'success' };
+    syncSnack.value = { show: true, text: `Tải xuống ${finalDownloadName} thành công`, color: 'success' };
   } catch (err: any) {
     console.error('Download error:', err);
-    syncSnack.value = { show: true, text: `Tải xuống ${filename} thất bại`, color: 'error' };
+    syncSnack.value = { show: true, text: `Tải xuống ${targetName} thất bại`, color: 'error' };
   }
 }
 
@@ -3172,48 +3192,58 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
   if (isVideoMessage(msg)) return null;
   if (getImageUrl(msg)) return null;
 
-  // Check attachments or fileInfo first
-  const att = (Array.isArray((msg as any).attachments) && (msg as any).attachments[0]) || (msg as any).fileInfo;
-  if (att && (msg.contentType === 'file' || msg.contentType === 'document' || att.url || (msg as any).mediaUrl)) {
-    const href = att.url || (msg as any).mediaUrl || '';
-    const bytes = parseInt(att.size || att.fileSize || '0');
-    const size = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : (bytes > 0 ? `${Math.round(bytes / 1024)} KB` : 'Tài liệu');
-    const name = att.fileName || att.name || (href ? href.split('/').pop()?.split('?')[0] : '') || msg.content || 'Tài liệu';
-    return { name, size, href };
-  }
+  let title = '';
+  let href = '';
+  let bytes = 0;
+  let ext = '';
 
+  // 1. Try parsing JSON content first (contains rich info: title, params.fileSize, params.fileExt)
   if (msg.content?.startsWith('{')) {
     try {
       const p = JSON.parse(msg.content);
       const params = typeof p.params === 'string' ? JSON.parse(p.params) : p.params;
-      const paramExt = (params?.fileExt || '').toLowerCase();
-      const title = p.title || p.name || '';
-      const titleExt = title.split('.').pop()?.toLowerCase() || '';
-      const href = p.href || p.url || p.downloadUrl || '';
-      const hrefExt = href.split('?')[0].split('.').pop()?.toLowerCase() || '';
-
-      const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'zip', 'rar', '7z', 'tar', 'gz', 'txt', 'pptx', 'ppt'];
-      const isDoc =
-        params?.fType === 1 ||
-        docExts.includes(paramExt) ||
-        docExts.includes(titleExt) ||
-        docExts.includes(hrefExt) ||
-        msg.contentType === 'file' ||
-        msg.contentType === 'document' ||
-        (href && (href.includes('dlf1.vn') || href.includes('zfcloud.zdn.vn')));
-
-      if (isDoc && (href || title)) {
-        const bytes = parseInt(params?.fileSize || p.size || p.fileSize || '0');
-        const size = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : (bytes > 0 ? `${Math.round(bytes / 1024)} KB` : 'Tài liệu');
-        const ext = paramExt || titleExt || (hrefExt.length <= 4 ? hrefExt : '') || 'pdf';
-        const finalName = title ? (title.includes('.') ? title : `${title}.${ext}`) : `Tài liệu.${ext}`;
-        return { name: finalName, size, href };
-      }
+      title = p.title || p.name || '';
+      href = p.href || p.url || p.downloadUrl || '';
+      ext = (params?.fileExt || (title.includes('.') ? title.split('.').pop() : '') || '').toLowerCase();
+      bytes = parseInt(params?.fileSize || p.size || p.fileSize || '0') || 0;
     } catch {}
-  } else if ((msg as any).mediaUrl && (msg.contentType === 'file' || msg.contentType === 'document')) {
-    const mediaUrl = (msg as any).mediaUrl as string;
-    const ext = mediaUrl.split('?')[0].split('.').pop() || 'pdf';
-    return { name: mediaUrl.split('/').pop()?.split('?')[0] || `Tài liệu.${ext}`, size: 'Tài liệu', href: mediaUrl };
+  }
+
+  // 2. Check attachments or fileInfo
+  const att = (Array.isArray((msg as any).attachments) && (msg as any).attachments[0]) || (msg as any).fileInfo;
+  if (att) {
+    if (!href) href = att.url || (msg as any).mediaUrl || '';
+    if (!title) title = att.title || att.fileName || att.name || '';
+    if (!bytes) bytes = parseInt(att.size || att.fileSize || '0') || 0;
+  }
+
+  if (!href && (msg as any).mediaUrl) {
+    href = (msg as any).mediaUrl;
+  }
+
+  const isDoc =
+    msg.contentType === 'file' ||
+    msg.contentType === 'document' ||
+    (href && (href.includes('dlf1.vn') || href.includes('zfcloud.zdn.vn') || href.includes('dlfl.vn')));
+
+  if (!isDoc && !href && !title) return null;
+
+  if (href || title) {
+    if (!ext) {
+      const hrefExt = href.split('?')[0].split('.').pop()?.toLowerCase() || '';
+      ext = (title.includes('.') ? title.split('.').pop()?.toLowerCase() : '') || (hrefExt.length <= 4 && hrefExt.length >= 2 ? hrefExt : '') || 'pdf';
+    }
+
+    let finalName = title || (href ? href.split('/').pop()?.split('?')[0] : '') || `Tài liệu.${ext}`;
+    if (!finalName.includes('.') && ext) {
+      finalName = `${finalName}.${ext}`;
+    }
+
+    const sizeStr = bytes > 1048576
+      ? `${(bytes / 1048576).toFixed(1)} MB`
+      : (bytes > 0 ? `${Math.round(bytes / 1024)} KB` : 'Tài liệu');
+
+    return { name: finalName, size: sizeStr, href };
   }
   return null;
 }

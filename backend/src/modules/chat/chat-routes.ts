@@ -1019,15 +1019,26 @@ export async function chatRoutes(app: FastifyInstance) {
           }
         }
 
-        // Correct octet-stream/text-plain content-type if filename indicates image
-        const ext = rawName.split('.').pop()?.toLowerCase();
-        if (contentType === 'application/octet-stream' || contentType === 'text/plain' || !contentType) {
-          if (ext === 'jpg' || ext === 'jpeg') contentType = 'image/jpeg';
-          else if (ext === 'png') contentType = 'image/png';
-          else if (ext === 'webp') contentType = 'image/webp';
-          else if (ext === 'gif') contentType = 'image/gif';
-          else if (ext === 'mp4') contentType = 'video/mp4';
-          else if (ext === 'pdf') contentType = 'application/pdf';
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // Magic bytes detection: Check if content is actually a PDF (%PDF-)
+        if (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+          contentType = 'application/pdf';
+          if (!rawName.toLowerCase().endsWith('.pdf')) {
+            rawName = rawName.includes('.') ? `${rawName.substring(0, rawName.lastIndexOf('.'))}.pdf` : `${rawName}.pdf`;
+          }
+        } else {
+          // Correct octet-stream/text-plain content-type if filename indicates document/image
+          const ext = rawName.split('.').pop()?.toLowerCase();
+          if (contentType === 'application/octet-stream' || contentType === 'text/plain' || !contentType) {
+            if (ext === 'jpg' || ext === 'jpeg') contentType = 'image/jpeg';
+            else if (ext === 'png') contentType = 'image/png';
+            else if (ext === 'webp') contentType = 'image/webp';
+            else if (ext === 'gif') contentType = 'image/gif';
+            else if (ext === 'mp4') contentType = 'video/mp4';
+            else if (ext === 'pdf') contentType = 'application/pdf';
+          }
         }
 
         const safeFilename = encodeURIComponent(rawName).replace(/['()]/g, escape);
@@ -1039,14 +1050,9 @@ export async function chatRoutes(app: FastifyInstance) {
         );
 
         reply.header('Content-Type', contentType);
+        reply.header('Content-Length', buffer.length);
 
-        const contentLength = response.headers.get('content-length');
-        if (contentLength) {
-          reply.header('Content-Length', contentLength);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        return reply.send(Buffer.from(arrayBuffer));
+        return reply.send(buffer);
       } catch (err) {
         logger.error('[chat] File proxy download error:', err);
         return reply.status(500).send({ error: 'Download error' });
