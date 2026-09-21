@@ -40,6 +40,7 @@ model Organization {
   bankAccounts         BankAccount[]
   bankTransactions     BankTransaction[]
   senderIdentities     SenderIdentity[]
+  orderPayments        OrderPayment[]
 
   @@map("organizations")
 }
@@ -82,6 +83,7 @@ model User {
   createdOrders    Order[]             @relation("CreatedOrders")
   quickMessages    QuickMessage[]
   notifications    Notification[]
+  createdPayments  OrderPayment[]
 
   @@map("users")
 }
@@ -315,6 +317,7 @@ model Order {
   orderCode       String   @map("order_code")
   totalAmount     Float    @map("total_amount")
   discountAmount  Float    @default(0) @map("discount_amount")
+  paidAmount      Float    @default(0) @map("paid_amount")
   status          String   @default("new") // new, confirmed, paid, shipped, completed, cancelled
   notes           String?
   createdAt       DateTime @default(now()) @map("created_at")
@@ -326,6 +329,7 @@ model Order {
   conversation      Conversation?           @relation(fields: [conversationId], references: [id])
   appliedPromotions OrderAppliedPromotion[]
   bankTransactions  BankTransaction[]       @relation("MatchedOrderTransactions")
+  payments          OrderPayment[]
 
   @@map("orders")
 }
@@ -494,6 +498,7 @@ model OrderHistory {
   amountTotal        Float    @default(0) @map("amount_total")
   amountUndiscounted Float    @default(0) @map("amount_undiscounted")
   discountAmount     Float    @default(0) @map("discount_amount")
+  paidAmount         Float    @default(0) @map("paid_amount")
   margin             Float    @default(0)
   marginPercent      Float    @default(0) @map("margin_percent")
   invoiceStatus      String?  @map("invoice_status")
@@ -519,6 +524,7 @@ model OrderHistory {
   lines           OrderLineHistory[]
   appliedPromotions OrderAppliedPromotion[]
   bankTransactions  BankTransaction[]       @relation("MatchedHistoryTransactions")
+  payments        OrderPayment[]
 
   @@unique([orgId, odooOrderId])
   @@map("order_histories")
@@ -723,7 +729,7 @@ model BankAccount {
   accountHolder   String   @map("account_holder")
   branch          String?
   qrTemplate      String   @default("compact2") @map("qr_template")
-  webhookSecret   String   @map("webhook_secret")
+  webhookSecret   String   @unique @map("webhook_secret")
   autoApprove     Boolean  @default(false) @map("auto_approve")
   minTrustScore   Int      @default(85) @map("min_trust_score")
   isActive        Boolean  @default(true) @map("is_active")
@@ -753,6 +759,7 @@ model BankTransaction {
   senderNameRaw           String?   @map("sender_name_raw")
   description             String    @db.Text
   rawSms                  String    @db.Text @map("raw_sms")
+  gatewayMessageId        String?   @unique @map("gateway_message_id")
   idempotencyHash         String    @unique @map("idempotency_hash")
   
   confidenceScore         Int       @default(0) @map("confidence_score")
@@ -776,6 +783,7 @@ model BankTransaction {
   matchedOrderHistory     OrderHistory?  @relation("MatchedHistoryTransactions", fields: [matchedOrderHistoryId], references: [id], onDelete: SetNull)
   matchedOrder            Order?         @relation("MatchedOrderTransactions", fields: [matchedOrderId], references: [id], onDelete: SetNull)
   org                     Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orderPayments           OrderPayment[]
 
   @@index([orgId, status])
   @@index([orgId, matchedOrderCode])
@@ -807,5 +815,32 @@ model SenderIdentity {
   @@unique([orgId, senderNameClean, contactId])
   @@index([orgId, senderNameClean])
   @@map("sender_identities")
+}
+
+// Order payment records (Cash, Bank Transfer, COD, etc.)
+model OrderPayment {
+  id                String   @id @default(uuid())
+  orgId             String   @map("org_id")
+  orderHistoryId    String?  @map("order_history_id")
+  orderId           String?  @map("order_id")
+  amount            Float
+  paymentMethod     String   @default("CASH") @map("payment_method") // CASH, BANK_TRANSFER, COD
+  bankTransactionId String?  @map("bank_transaction_id")
+  notes             String?  @db.Text
+  createdById       String?  @map("created_by_id")
+  paidAt            DateTime @default(now()) @map("paid_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  orderHistory    OrderHistory?    @relation(fields: [orderHistoryId], references: [id], onDelete: Cascade)
+  order           Order?           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: SetNull)
+  createdBy       User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, orderHistoryId])
+  @@index([orgId, orderId])
+  @@index([paidAt])
+  @@map("order_payments")
 }
 

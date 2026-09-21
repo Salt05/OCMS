@@ -67,10 +67,34 @@ export interface OrderItem {
   writeDate?: string | null;
   writeUid?: number | null;
   writeUserName?: string | null;
+  paidAmount?: number;
+  payments?: OrderPaymentItem[];
   lines?: OrderLineItem[];
   _count?: { lines: number };
   conversationId?: string;
   isAiDraft?: boolean;
+}
+
+export interface OrderPaymentItem {
+  id: string;
+  orderHistoryId?: string | null;
+  amount: number;
+  paymentMethod: string;
+  bankTransactionId?: string | null;
+  notes?: string | null;
+  paidAt: string;
+  createdAt: string;
+  createdBy?: {
+    id: string;
+    fullName: string;
+  } | null;
+  bankTransaction?: {
+    id: string;
+    accountNumber: string;
+    bankCode: string;
+    refCode?: string | null;
+    transactionTime: string;
+  } | null;
 }
 
 export interface OrderStats {

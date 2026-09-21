@@ -158,19 +158,20 @@
           <v-table density="compact" hover class="orders-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th class="text-center" :style="isMobile ? 'width: 15%;' : 'width: 90px;'">Mã đơn</th>
-                <th class="text-left" :style="isMobile ? 'width: 23%;' : 'width: auto;'">Khách hàng</th>
-                <th v-if="!isMobile" class="text-left" style="width: 140px;">Nhân viên</th>
-                <th class="text-center" :style="isMobile ? 'width: 16%;' : 'width: 135px;'">Ngày tạo</th>
-                <th v-if="!isMobile" class="text-left" style="width: 155px;">Hoạt động (odoo)</th>
-                <th class="text-right" :style="isMobile ? 'width: 22%;' : 'width: 115px;'">Tổng tiền</th>
-                <th class="text-center" :style="isMobile ? 'width: 24%;' : 'width: 100px;'">Trạng thái</th>
-                <th v-if="!isMobile" class="text-center" style="width: 95px;">Giao hàng</th>
+                <th class="text-center" :style="isMobile ? 'width: 14%;' : 'width: 85px;'">Mã đơn</th>
+                <th class="text-left" :style="isMobile ? 'width: 22%;' : 'width: auto;'">Khách hàng</th>
+                <th v-if="!isMobile" class="text-left" style="width: 135px;">Nhân viên</th>
+                <th class="text-center" :style="isMobile ? 'width: 14%;' : 'width: 130px;'">Ngày tạo</th>
+                <th v-if="!isMobile" class="text-left" style="width: 145px;">Hoạt động (odoo)</th>
+                <th class="text-right" :style="isMobile ? 'width: 17%;' : 'width: 110px;'">Tổng tiền</th>
+                <th class="text-right" :style="isMobile ? 'width: 17%;' : 'width: 120px;'">Đã thanh toán</th>
+                <th class="text-center" :style="isMobile ? 'width: 16%;' : 'width: 95px;'">Trạng thái</th>
+                <th v-if="!isMobile" class="text-center" style="width: 90px;">Giao hàng</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!loading && orders.length === 0">
-                <td :colspan="isMobile ? 5 : 8" class="text-center text-medium-emphasis py-12">
+                <td :colspan="isMobile ? 6 : 9" class="text-center text-medium-emphasis py-12">
                   <v-icon icon="lucide-inbox" size="48" color="grey" class="mb-2" />
                   <div class="text-body-1 font-weight-medium">Không tìm thấy đơn hàng nào</div>
                   <div class="text-caption text-grey">Thử thay đổi bộ lọc hoặc bấm "Đồng bộ Odoo"</div>
@@ -204,7 +205,7 @@
                 </td>
 
                 <!-- Salesperson -->
-                <td v-if="!isMobile" class="text-left text-truncate" style="max-width: 140px;">
+                <td v-if="!isMobile" class="text-left text-truncate" style="max-width: 135px;">
                   <span class="text-caption text-medium-emphasis text-truncate d-block" :title="o.customerProfile?.salesperson || o.salesperson || ''">
                     {{ o.customerProfile?.salesperson || o.salesperson || '—' }}
                   </span>
@@ -219,7 +220,7 @@
                 </td>
 
                 <!-- Hoạt động (Odoo) / Ghi chú giao việc -->
-                <td v-if="!isMobile" class="text-left text-truncate" style="max-width: 155px;">
+                <td v-if="!isMobile" class="text-left text-truncate" style="max-width: 145px;">
                   <div
                     v-if="o.activitySummary"
                     class="text-caption text-amber-darken-3 font-weight-medium text-truncate d-inline-flex align-center gap-1 w-100"
@@ -235,6 +236,16 @@
                 <td class="text-right">
                   <span class="font-weight-bold text-caption text-primary font-monospace">
                     {{ formatVND(o.amountTotal) }}
+                  </span>
+                </td>
+
+                <!-- Paid Amount (Đã thanh toán: Đen - chưa, Xanh lá - đủ, Xanh nước - dư) -->
+                <td class="text-right">
+                  <span
+                    :class="['font-weight-bold text-caption font-monospace', getPaidStatusClass(o)]"
+                    :title="getPaidStatusTitle(o)"
+                  >
+                    {{ formatVND(o.paidAmount || 0) }}
                   </span>
                 </td>
 
@@ -840,6 +851,31 @@ function formatVND(n?: number) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(n);
 }
 
+function getPaidStatus(order: any): 'unpaid' | 'full' | 'excess' {
+  const total = Math.round(Number(order?.amountTotal || 0));
+  const paid = Math.round(Number(order?.paidAmount || 0));
+  if (paid <= 0 || paid < total) return 'unpaid';
+  if (paid === total) return 'full';
+  return 'excess';
+}
+
+function getPaidStatusClass(order: any): string {
+  const status = getPaidStatus(order);
+  if (status === 'full') return 'paid-status-full';
+  if (status === 'excess') return 'paid-status-excess';
+  return 'paid-status-unpaid';
+}
+
+function getPaidStatusTitle(order: any): string {
+  const status = getPaidStatus(order);
+  const total = Math.round(Number(order?.amountTotal || 0));
+  const paid = Math.round(Number(order?.paidAmount || 0));
+  if (status === 'full') return 'Đã thanh toán đủ (100%)';
+  if (status === 'excess') return `Thanh toán dư ${formatVND(paid - total)}`;
+  if (paid > 0) return `Đã nhận ${formatVND(paid)}, còn thiếu ${formatVND(total - paid)}`;
+  return 'Chưa thanh toán';
+}
+
 function formatDate(d?: string | null) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('vi-VN');
@@ -1298,5 +1334,27 @@ onUnmounted(() => {
 .slide-fade-leave-to {
   transform: translateY(-20px);
   opacity: 0;
+}
+
+/* 3 trạng thái màu cột Đã thanh toán: Đen - chưa, Xanh lá - đủ, Xanh nước - dư */
+.paid-status-unpaid {
+  color: #0f172a !important;
+}
+:deep(.v-theme--dark) .paid-status-unpaid {
+  color: #f1f5f9 !important;
+}
+
+.paid-status-full {
+  color: #16a34a !important;
+}
+:deep(.v-theme--dark) .paid-status-full {
+  color: #22c55e !important;
+}
+
+.paid-status-excess {
+  color: #0284c7 !important;
+}
+:deep(.v-theme--dark) .paid-status-excess {
+  color: #38bdf8 !important;
 }
 </style>

@@ -52,6 +52,8 @@ export const ALL_EXPORT_COLUMNS: ExportColumnDefinition[] = [
   { key: 'amountTax', label: 'Tiền thuế', width: 16, align: 'right', numFmt: '#,##0 "₫"' },
   { key: 'discountAmount', label: 'Tiền chiết khấu', width: 16, align: 'right', numFmt: '#,##0 "₫"' },
   { key: 'amountTotal', label: 'Tổng tiền', width: 20, align: 'right', numFmt: '#,##0 "₫"' },
+  { key: 'paidAmount', label: 'Đã thanh toán', width: 20, align: 'right', numFmt: '#,##0 "₫"' },
+  { key: 'remainingAmount', label: 'Còn thiếu (COD)', width: 20, align: 'right', numFmt: '#,##0 "₫"' },
   { key: 'margin', label: 'Lợi nhuận', width: 18, align: 'right', numFmt: '#,##0 "₫"' },
   { key: 'productsSummary', label: 'Sản phẩm trong đơn', width: 42, align: 'left' },
   { key: 'activitySummary', label: 'Hoạt động (Odoo)', width: 24, align: 'left' },
@@ -563,6 +565,12 @@ export async function generateOrdersExcel(
           break;
         case 'amountTotal':
           rowValues.push(o.amountTotal || 0);
+          break;
+        case 'paidAmount':
+          rowValues.push(o.paidAmount || 0);
+          break;
+        case 'remainingAmount':
+          rowValues.push(Math.max(0, (o.amountTotal || 0) - (o.paidAmount || 0)));
           break;
         case 'margin':
           rowValues.push(o.margin || 0);

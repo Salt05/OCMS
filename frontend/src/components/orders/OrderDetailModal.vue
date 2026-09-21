@@ -489,10 +489,158 @@
                       {{ formatVND(isEditing ? calculatedSubtotal : order.amountTotal) }}
                     </span>
                   </div>
+
+                  <!-- Đã thanh toán (Cho phép sửa trực tiếp) & Còn thiếu / Dư -->
+                  <template v-if="!isEditing && order">
+                    <v-divider class="my-2" />
+
+                    <!-- Dòng: Số tiền nhận (Cho phép sửa trực tiếp) -->
+                    <div class="d-flex justify-space-between align-center py-1">
+                      <div class="d-flex align-center gap-1.5">
+                        <v-icon size="16" :class="modalPaidStatusClass">lucide-wallet</v-icon>
+                        <span class="font-weight-medium text-body-2">Số tiền nhận:</span>
+                      </div>
+
+                      <div class="d-flex align-center gap-1.5">
+                        <!-- Input cho phép sửa trực tiếp số tiền nhận -->
+                        <div
+                          class="direct-paid-input-wrap d-flex align-center rounded-lg px-2 py-1 bg-surface border"
+                          :class="{ 'is-focused': isPaidFocused, 'border-primary': isPaidFocused, 'is-modified': isPaidModified }"
+                        >
+                          <input
+                            ref="paidInputRef"
+                            type="text"
+                            :value="displayPaidAmount"
+                            @input="onPaidInputChange"
+                            @focus="onPaidFieldFocus"
+                            @blur="onPaidFieldBlur"
+                            @keydown.enter.prevent="saveDirectPaidAmount"
+                            class="font-weight-bold font-monospace text-right direct-paid-input"
+                            :class="modalPaidStatusClass"
+                            placeholder="0"
+                            title="Bấm vào để tự động điền số tiền cần thanh toán, có thể gõ sửa và bấm Enter hoặc Lưu"
+                            style="width: 120px; outline: none; border: none; font-size: 0.95rem; background: transparent;"
+                          />
+                          <span class="text-caption font-weight-bold ml-1" :class="modalPaidStatusClass">₫</span>
+                        </div>
+
+                        <!-- Nút Lưu khi đã sửa -->
+                        <v-btn
+                          v-if="isPaidModified"
+                          size="small"
+                          color="primary"
+                          variant="flat"
+                          density="comfortable"
+                          class="text-none font-weight-bold px-2 rounded-lg"
+                          :loading="savingPaidAmount"
+                          title="Lưu số tiền nhận (Enter)"
+                          @click="saveDirectPaidAmount"
+                        >
+                          Lưu
+                        </v-btn>
+                      </div>
+                    </div>
+
+                    <!-- Dòng Trạng thái: Còn thiếu (COD) hoặc Đã thu đủ hoặc Tiền thừa (dư) -->
+                    <div class="d-flex justify-space-between align-center py-1 text-caption">
+                      <span class="d-flex align-center gap-1 text-medium-emphasis">
+                        <v-icon size="14" :class="modalPaidStatusClass">
+                          {{ modalPaidStatus === 'full' ? 'lucide-check-circle-2' : (modalPaidStatus === 'excess' ? 'lucide-info' : 'lucide-clock') }}
+                        </v-icon>
+                        <span>{{ modalPaidStatusLabel }}:</span>
+                      </span>
+                      <span :class="['font-weight-bold font-monospace', modalPaidStatusClass]">
+                        {{ modalPaidDifferenceText }}
+                      </span>
+                    </div>
+
+                    <!-- Nút Ghi nhận thu tiền / Điền đủ -->
+                    <div class="pt-2 d-flex justify-end align-center gap-2">
+                      <v-btn
+                        v-if="Math.round(Number(order.paidAmount || 0)) !== Math.round(Number(order.amountTotal || 0))"
+                        size="x-small"
+                        color="primary"
+                        variant="text"
+                        class="text-none font-weight-medium"
+                        prepend-icon="lucide-sparkles"
+                        @click="fillFullPayment"
+                      >
+                        Điền đủ ({{ formatVND(order.amountTotal) }})
+                      </v-btn>
+                      <v-btn
+                        size="small"
+                        color="teal"
+                        variant="tonal"
+                        prepend-icon="lucide-hand-coins"
+                        class="text-none font-weight-bold"
+                        @click="openPaymentDialog"
+                      >
+                        Ghi nhận thanh toán
+                      </v-btn>
+                    </div>
+                  </template>
                 </div>
               </v-card>
             </v-col>
           </v-row>
+
+          <!-- Danh sách Lịch sử thanh toán -->
+          <div v-if="!isEditing && order?.payments?.length" class="mt-4">
+            <v-card variant="outlined" class="rounded-lg pa-3 bg-surface">
+              <div class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center justify-space-between flex-wrap gap-2">
+                <span class="d-flex align-center gap-1">
+                  <v-icon size="16" color="teal">lucide-receipt</v-icon>
+                  Lịch sử thanh toán ({{ order.payments.length }} lần)
+                </span>
+                <v-chip size="x-small" color="success" variant="flat">
+                  Đã thu: {{ formatVND(order.paidAmount || 0) }}
+                </v-chip>
+              </div>
+
+              <v-table density="compact" class="payments-mini-table">
+                <thead>
+                  <tr class="bg-surface-variant">
+                    <th class="text-left" style="width: 140px;">Thời gian</th>
+                    <th class="text-left" style="width: 130px;">Phương thức</th>
+                    <th class="text-right" style="width: 130px;">Số tiền</th>
+                    <th class="text-left">Người nhận / Ghi chú</th>
+                    <th class="text-center" style="width: 40px;"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="p in order.payments" :key="p.id">
+                    <td class="text-caption text-medium-emphasis">{{ formatDateTime(p.paidAt) }}</td>
+                    <td>
+                      <v-chip size="x-small" :color="p.paymentMethod === 'BANK_TRANSFER' ? 'primary' : (p.paymentMethod === 'COD' ? 'amber-darken-3' : 'teal')" variant="tonal">
+                        {{ p.paymentMethod === 'BANK_TRANSFER' ? 'MB Bank' : (p.paymentMethod === 'COD' ? 'Thu hộ COD' : 'Tiền mặt') }}
+                      </v-chip>
+                    </td>
+                    <td class="text-right font-weight-bold font-monospace text-success">
+                      +{{ formatVND(p.amount) }}
+                    </td>
+                    <td class="text-caption text-medium-emphasis text-truncate" style="max-width: 250px;">
+                      <span v-if="p.createdBy?.fullName" class="font-weight-medium text-high-emphasis mr-1">
+                        [{{ p.createdBy.fullName }}]
+                      </span>
+                      <span>{{ p.notes || '—' }}</span>
+                    </td>
+                    <td class="text-center">
+                      <v-btn
+                        icon
+                        size="24"
+                        variant="text"
+                        color="error"
+                        title="Xóa phiếu thu này"
+                        @click="deletePayment(p.id)"
+                      >
+                        <v-icon size="14">lucide-trash-2</v-icon>
+                      </v-btn>
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card>
+          </div>
         </div>
       </v-card-text>
 
@@ -657,6 +805,75 @@
       </v-card>
     </v-dialog>
 
+    <!-- Dialog Ghi nhận thanh toán thủ công (Tiền mặt / COD) -->
+    <v-dialog v-model="showPaymentDialog" max-width="450px" persistent>
+      <v-card class="rounded-xl">
+        <v-card-title class="text-subtitle-1 font-weight-bold d-flex align-center gap-2 bg-surface py-3 px-4 border-b">
+          <v-icon color="teal" size="18">lucide-hand-coins</v-icon>
+          Ghi nhận thanh toán đơn hàng
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <div class="text-caption text-medium-emphasis mb-3">
+            Đơn hàng: <strong class="text-primary font-monospace">{{ order?.orderCode }}</strong>
+            • Còn thiếu: <strong class="text-amber-darken-3 font-monospace">{{ formatVND(remainingAmount) }}</strong>
+          </div>
+
+          <v-text-field
+            v-model.number="paymentForm.amount"
+            label="Số tiền nhận (VNĐ)"
+            type="number"
+            min="1000"
+            step="10000"
+            variant="outlined"
+            density="compact"
+            prepend-inner-icon="lucide-dollar-sign"
+            class="mb-3"
+            :hint="formatVND(paymentForm.amount)"
+            persistent-hint
+            @focus="onPaymentDialogFocus"
+          />
+
+          <v-select
+            v-model="paymentForm.paymentMethod"
+            :items="[
+              { title: 'Tiền mặt tại quầy / Shipper giao nộp', value: 'CASH' },
+              { title: 'Chuyển khoản ngoài', value: 'BANK_TRANSFER' },
+              { title: 'Thu hộ COD', value: 'COD' },
+            ]"
+            item-title="title"
+            item-value="value"
+            label="Phương thức thanh toán"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+          />
+
+          <v-textarea
+            v-model="paymentForm.notes"
+            label="Ghi chú thu tiền"
+            rows="2"
+            variant="outlined"
+            density="compact"
+            placeholder="VD: Khách trả tiền mặt tại quầy, shipper nộp COD..."
+            hide-details
+          />
+        </v-card-text>
+        <v-card-actions class="px-4 py-3 bg-surface border-t d-flex justify-end gap-2">
+          <v-btn variant="text" class="text-none" @click="showPaymentDialog = false">Hủy</v-btn>
+          <v-btn
+            color="teal"
+            variant="flat"
+            class="text-none font-weight-bold"
+            :loading="submittingPayment"
+            :disabled="!paymentForm.amount || paymentForm.amount <= 0"
+            @click="submitPayment"
+          >
+            Xác nhận đã nhận tiền
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar
       v-model="snackbar.show"
       :color="snackbar.color"
@@ -784,6 +1001,238 @@ const snackbar = ref({
   text: '',
   color: 'success',
 });
+
+// ── Payment Management State ────────────────────────────────────────────────
+const showPaymentDialog = ref(false);
+const submittingPayment = ref(false);
+const paymentForm = ref({
+  amount: 0,
+  paymentMethod: 'CASH',
+  notes: '',
+});
+
+const remainingAmount = computed(() => {
+  if (!props.order) return 0;
+  const total = props.order.amountTotal || 0;
+  const paid = (props.order as any).paidAmount || 0;
+  return Math.max(0, total - paid);
+});
+
+// ── Trực tiếp sửa số tiền nhận ──────────────────────────────────────────────
+const paidInputRef = ref<HTMLInputElement | null>(null);
+const numericPaidAmount = ref<number>(0);
+const displayPaidAmount = ref<string>('0');
+const isPaidFocused = ref(false);
+const isPaidModified = ref(false);
+const savingPaidAmount = ref(false);
+
+// Đồng bộ số tiền khi props.order hoặc props.modelValue thay đổi
+watch(
+  () => [props.order?.id, props.order?.paidAmount, props.modelValue],
+  () => {
+    const num = Math.round(Number(props.order?.paidAmount || 0));
+    numericPaidAmount.value = num;
+    displayPaidAmount.value = num > 0 ? formatThousand(num) : '0';
+    isPaidModified.value = false;
+  },
+  { immediate: true }
+);
+
+// 3 trạng thái màu: đen - chưa, xanh lá - đủ, xanh nước - dư
+const modalPaidStatus = computed<'unpaid' | 'full' | 'excess'>(() => {
+  if (!props.order) return 'unpaid';
+  const total = Math.round(Number(props.order.amountTotal || 0));
+  const paid = Math.round(Number(numericPaidAmount.value || 0));
+  if (paid <= 0 || paid < total) return 'unpaid';
+  if (paid === total) return 'full';
+  return 'excess';
+});
+
+const modalPaidStatusClass = computed(() => {
+  if (modalPaidStatus.value === 'full') return 'paid-status-full';
+  if (modalPaidStatus.value === 'excess') return 'paid-status-excess';
+  return 'paid-status-unpaid';
+});
+
+const modalPaidStatusLabel = computed(() => {
+  if (modalPaidStatus.value === 'full') return 'Trạng thái';
+  if (modalPaidStatus.value === 'excess') return 'Tiền thừa (dư)';
+  return 'Còn thiếu (COD)';
+});
+
+const modalPaidDifferenceText = computed(() => {
+  if (!props.order) return '';
+  const total = Math.round(Number(props.order.amountTotal || 0));
+  const paid = Math.round(Number(numericPaidAmount.value || 0));
+  if (paid === total) return 'Đã thu đủ (100%)';
+  if (paid > total) return `+${formatVND(paid - total)}`;
+  return formatVND(total - paid);
+});
+
+// Khi trỏ vào trường: tự động điền số tiền cần thanh toán (có thể sửa)
+function onPaidFieldFocus(e: FocusEvent) {
+  isPaidFocused.value = true;
+  if (!props.order) return;
+  const total = Math.round(Number(props.order.amountTotal || 0));
+  const currentSaved = Math.round(Number(props.order.paidAmount || 0));
+
+  // Nếu số tiền đang là 0 hoặc chưa thu đủ, tự động điền số tiền cần thanh toán
+  if (numericPaidAmount.value === 0 || numericPaidAmount.value < total) {
+    numericPaidAmount.value = total;
+    displayPaidAmount.value = formatThousand(total);
+    isPaidModified.value = total !== currentSaved;
+  }
+
+  // Tự động bôi đen toàn bộ số để người dùng có thể gõ đè sửa ngay
+  const target = e.target as HTMLInputElement;
+  if (target) {
+    setTimeout(() => {
+      target.select();
+    }, 50);
+  }
+}
+
+function onPaidFieldBlur() {
+  isPaidFocused.value = false;
+  if (numericPaidAmount.value > 0) {
+    displayPaidAmount.value = formatThousand(numericPaidAmount.value);
+  } else {
+    displayPaidAmount.value = '0';
+  }
+}
+
+function onPaidInputChange(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const raw = input.value.replace(/\D/g, '');
+  const num = raw ? parseInt(raw, 10) : 0;
+  numericPaidAmount.value = num;
+  displayPaidAmount.value = raw ? formatThousand(num) : '';
+  const currentSaved = Math.round(Number(props.order?.paidAmount || 0));
+  isPaidModified.value = num !== currentSaved;
+}
+
+function fillFullPayment() {
+  if (!props.order) return;
+  const total = Math.round(Number(props.order.amountTotal || 0));
+  numericPaidAmount.value = total;
+  displayPaidAmount.value = formatThousand(total);
+  isPaidModified.value = total !== Math.round(Number(props.order.paidAmount || 0));
+  paidInputRef.value?.focus();
+}
+
+async function saveDirectPaidAmount() {
+  if (!props.order) return;
+  const newAmount = numericPaidAmount.value;
+  if (isNaN(newAmount) || newAmount < 0) return;
+
+  savingPaidAmount.value = true;
+  try {
+    const res = await api.put(`/orders/${props.order.id}/paid-amount`, {
+      paidAmount: newAmount,
+    });
+    if (res.data?.success) {
+      props.order.paidAmount = res.data.paidAmount;
+      if (res.data.payments) {
+        (props.order as any).payments = res.data.payments;
+      }
+      isPaidModified.value = false;
+      snackbar.value = {
+        show: true,
+        text: `Đã cập nhật số tiền nhận thành ${formatVND(newAmount)}!`,
+        color: 'success',
+      };
+      emit('saved', props.order);
+    }
+  } catch (err: any) {
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || err.message || 'Lỗi khi cập nhật số tiền nhận',
+      color: 'error',
+    };
+  } finally {
+    savingPaidAmount.value = false;
+  }
+}
+
+function onPaymentDialogFocus(e: FocusEvent) {
+  const target = e.target as HTMLInputElement;
+  if (target) {
+    setTimeout(() => {
+      target.select();
+    }, 50);
+  }
+}
+
+function openPaymentDialog() {
+  paymentForm.value = {
+    amount: remainingAmount.value > 0 ? remainingAmount.value : 0,
+    paymentMethod: 'CASH',
+    notes: '',
+  };
+  showPaymentDialog.value = true;
+}
+
+async function submitPayment() {
+  if (!props.order || !paymentForm.value.amount || paymentForm.value.amount <= 0) return;
+  submittingPayment.value = true;
+  try {
+    const res = await api.post(`/orders/${props.order.id}/payments`, {
+      amount: paymentForm.value.amount,
+      paymentMethod: paymentForm.value.paymentMethod,
+      notes: paymentForm.value.notes,
+    });
+    if (res.data?.success) {
+      (props.order as any).paidAmount = res.data.paidAmount;
+      if (!(props.order as any).payments) {
+        (props.order as any).payments = [];
+      }
+      (props.order as any).payments.unshift(res.data.payment);
+
+      showPaymentDialog.value = false;
+      snackbar.value = {
+        show: true,
+        text: `Đã ghi nhận thanh toán ${formatVND(res.data.payment.amount)} thành công!`,
+        color: 'success',
+      };
+      emit('saved', props.order);
+    }
+  } catch (err: any) {
+    console.error('Submit payment error:', err);
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || err.message || 'Lỗi khi ghi nhận thanh toán',
+      color: 'error',
+    };
+  } finally {
+    submittingPayment.value = false;
+  }
+}
+
+async function deletePayment(paymentId: string) {
+  if (!props.order || !confirm('Bạn có chắc chắn muốn xóa phiếu thanh toán này?')) return;
+  try {
+    const res = await api.delete(`/orders/${props.order.id}/payments/${paymentId}`);
+    if (res.data?.success) {
+      (props.order as any).paidAmount = res.data.paidAmount;
+      if ((props.order as any).payments) {
+        (props.order as any).payments = (props.order as any).payments.filter((p: any) => p.id !== paymentId);
+      }
+      snackbar.value = {
+        show: true,
+        text: 'Đã xóa phiếu thanh toán thành công',
+        color: 'success',
+      };
+      emit('saved', props.order);
+    }
+  } catch (err: any) {
+    console.error('Delete payment error:', err);
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || err.message || 'Lỗi khi xóa phiếu thanh toán',
+      color: 'error',
+    };
+  }
+}
 
 // Reset edit mode when modal is toggled or order changes
 watch(
@@ -1089,5 +1538,44 @@ const canApproveOrReject = computed(() => {
 :deep(.v-theme--dark) .activity-summary-badge {
   background-color: rgba(255, 179, 0, 0.18);
   color: #fcd34d;
+}
+
+/* 3 trạng thái màu số tiền nhận: Đen - chưa, Xanh lá - đủ, Xanh nước - dư */
+.paid-status-unpaid {
+  color: #0f172a !important;
+}
+:deep(.v-theme--dark) .paid-status-unpaid {
+  color: #f1f5f9 !important;
+}
+
+.paid-status-full {
+  color: #16a34a !important;
+}
+:deep(.v-theme--dark) .paid-status-full {
+  color: #22c55e !important;
+}
+
+.paid-status-excess {
+  color: #0284c7 !important;
+}
+:deep(.v-theme--dark) .paid-status-excess {
+  color: #38bdf8 !important;
+}
+
+.direct-paid-input-wrap {
+  border-color: rgba(var(--v-border-color), 0.28) !important;
+  transition: all 0.2s ease;
+  background-color: rgb(var(--v-theme-surface));
+}
+.direct-paid-input-wrap.is-focused,
+.direct-paid-input-wrap:focus-within {
+  border-color: rgb(var(--v-theme-primary)) !important;
+  box-shadow: 0 0 0 2px rgba(var(--v-theme-primary), 0.15);
+}
+.direct-paid-input-wrap.is-modified {
+  border-color: rgb(var(--v-theme-primary)) !important;
+}
+.direct-paid-input {
+  font-family: monospace, monospace;
 }
 </style>

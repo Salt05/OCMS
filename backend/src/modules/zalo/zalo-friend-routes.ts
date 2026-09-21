@@ -49,6 +49,31 @@ async function resolveZaloTarget(
 
     accountId = conv.zaloAccountId;
     userId = conv.contact?.zaloUid || conv.externalThreadId || '';
+
+    // Auto-heal check: if conversation has outgoing messages, verify if the sender actually matches conv.zaloAccountId
+    try {
+      const lastSelfMsg = await prisma.message.findFirst({
+        where: { conversationId: conv.id, senderType: 'self' },
+        orderBy: { sentAt: 'desc' },
+        select: { senderUid: true }
+      });
+      if (lastSelfMsg?.senderUid) {
+        const realAcc = await prisma.zaloAccount.findFirst({
+          where: { orgId, zaloUid: lastSelfMsg.senderUid, deletedAt: null },
+          select: { id: true, displayName: true }
+        });
+        if (realAcc && realAcc.id !== conv.zaloAccountId && zaloPool.getApi(realAcc.id)) {
+          logger.info(`[zalo-friend] Auto-healed conversation ${conv.id}: re-linked from account ${conv.zaloAccountId} to real sender account ${realAcc.displayName} (${realAcc.id})`);
+          await prisma.conversation.update({
+            where: { id: conv.id },
+            data: { zaloAccountId: realAcc.id }
+          }).catch(() => {});
+          accountId = realAcc.id;
+        }
+      }
+    } catch (err) {
+      logger.warn('[zalo-friend] Auto-heal check error:', err);
+    }
   }
 
   if (!accountId) {
@@ -89,7 +114,7 @@ export async function zaloFriendRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(resolved.statusCode).send({ error: resolved.error });
       }
 
-      const { targetUid, api } = resolved;
+      const { targetUid, api, accountId } = resolved;
 
       try {
         if (typeof api.getFriendRequestStatus !== 'function') {
@@ -116,10 +141,49 @@ export async function zaloFriendRoutes(app: FastifyInstance): Promise<void> {
           privacy: rawStatus?.addFriendPrivacy ?? 0,
         };
       } catch (err: any) {
-        logger.error(`[zalo-friend] getFriendRequestStatus error for ${targetUid}:`, err);
-        return reply.status(500).send({
-          error: err?.message || 'Không thể kiểm tra trạng thái kết bạn Zalo',
-        });
+        logger.warn(`[zalo-friend] getFriendRequestStatus for ${targetUid} returned error (checking other accounts...):`, err?.message || err);
+
+        // Auto-heal attempt: If current account has error (e.g. 114 stranger), check if another connected account in org is friends
+        if (request.query.conversationId) {
+          try {
+            const otherAccounts = await prisma.zaloAccount.findMany({
+              where: { orgId: user.orgId, status: 'connected', deletedAt: null, NOT: { id: accountId } },
+              select: { id: true, displayName: true },
+            });
+            for (const other of otherAccounts) {
+              const otherApi = zaloPool.getApi(other.id);
+              if (otherApi && typeof otherApi.getFriendRequestStatus === 'function') {
+                try {
+                  const otherStatus = await otherApi.getFriendRequestStatus(targetUid);
+                  if (Number(otherStatus?.is_friend) === 1) {
+                    logger.info(`[zalo-friend] Auto-healed conversation ${request.query.conversationId}: found real friend account ${other.displayName} (${other.id})! Re-linking...`);
+                    await prisma.conversation.update({
+                      where: { id: request.query.conversationId },
+                      data: { zaloAccountId: other.id },
+                    }).catch(() => {});
+                    return {
+                      userId: targetUid,
+                      isFriend: true,
+                      isRequested: false,
+                      isRequesting: false,
+                      privacy: otherStatus?.addFriendPrivacy ?? 0,
+                    };
+                  }
+                } catch {}
+              }
+            }
+          } catch (autoErr) {
+            logger.warn('[zalo-friend] Auto-heal scan failed:', autoErr);
+          }
+        }
+
+        return {
+          userId: targetUid,
+          isFriend: false,
+          isRequested: false,
+          isRequesting: false,
+          privacy: 0,
+        };
       }
     },
   );

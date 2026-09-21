@@ -20,7 +20,7 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401 && !isRedirecting) {
       const path = window.location.pathname;
-      if (path !== '/login' && path !== '/setup') {
+      if (path !== '/login' && path !== '/setup' && path !== '/mobile-gateway') {
         isRedirecting = true;
         localStorage.removeItem('token');
         window.location.href = '/login';

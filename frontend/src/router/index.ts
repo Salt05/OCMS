@@ -58,7 +58,7 @@ const routes = [
     path: '/mobile-gateway',
     name: 'MobileGateway',
     component: () => import('@/views/MobileGatewayView.vue'),
-    meta: { layout: 'auth' },
+    meta: { layout: 'auth', wideLayout: true },
   },
   {
     path: '/products',

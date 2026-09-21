@@ -504,12 +504,17 @@
                           v-if="msg.senderType === 'self'"
                           class="msg-sender-badge d-flex align-center gap-2 px-3 py-2"
                         >
-                          <v-avatar size="22" :color="msg.repliedBy ? 'primary' : 'grey-lighten-1'" class="flex-shrink-0">
-                            <v-icon size="12" color="white">{{ msg.repliedBy ? 'lucide-user-round' : 'lucide-smartphone' }}</v-icon>
+                          <v-avatar size="24" :color="getSenderBadge(msg).color" class="flex-shrink-0">
+                            <v-icon size="13" color="white">{{ getSenderBadge(msg).icon }}</v-icon>
                           </v-avatar>
-                          <span class="text-caption font-weight-bold text-truncate" :class="msg.repliedBy ? 'text-primary' : 'text-grey-darken-1'" style="font-size: 12px;">
-                            {{ msg.repliedBy ? (msg.repliedBy.fullName || msg.repliedBy.email) : 'Từ Zalo' }}
-                          </span>
+                          <div class="d-flex flex-column" style="min-width: 0; line-height: 1.2;">
+                            <span class="text-caption font-weight-bold text-truncate" :class="`text-${getSenderBadge(msg).color}`" style="font-size: 12px;">
+                              {{ getSenderBadge(msg).name }}
+                            </span>
+                            <span class="text-grey-darken-1" style="font-size: 10px; opacity: 0.85;">
+                              {{ getSenderBadge(msg).source }}
+                            </span>
+                          </div>
                         </div>
                         <v-divider v-if="msg.senderType === 'self'" />
 
@@ -2015,7 +2020,12 @@ async function loadFriendStatus() {
     }
   } catch (err) {
     if (props.conversation?.id === convId) {
-      friendState.value = null;
+      friendState.value = {
+        isFriend: false,
+        isRequested: false,
+        isRequesting: false,
+        loading: false,
+      };
     }
   }
 }
@@ -2096,6 +2106,31 @@ async function handleUndoFriendRequest() {
   } finally {
     actionFriendLoading.value = false;
   }
+}
+
+function getSenderBadge(msg: Message) {
+  if (msg.isAi) {
+    return { name: 'Trợ lý AI', source: 'Hệ thống AI', isCrm: true, icon: 'lucide-bot', color: 'purple' };
+  }
+  if (msg.isNote) {
+    return { name: msg.senderName || msg.repliedBy?.fullName || 'Ghi chú nội bộ', source: 'Ghi chú nội bộ', isCrm: true, icon: 'lucide-sticky-note', color: 'amber-darken-2' };
+  }
+  // 1. Sent by CRM User via OCMS Web
+  if (msg.repliedBy?.fullName) {
+    return { name: msg.repliedBy.fullName, source: 'OCMS Web', isCrm: true, icon: 'lucide-user-round', color: 'primary' };
+  }
+  if (msg.repliedBy?.email) {
+    return { name: msg.repliedBy.email, source: 'OCMS Web', isCrm: true, icon: 'lucide-user-round', color: 'primary' };
+  }
+  // 2. Sent by Zalo account (senderName is populated like "Mỹ Đạt Lapet", "La Pet - Thanh Quyên")
+  if (msg.senderName && msg.senderName !== 'Unknown' && msg.senderName !== 'Khách hàng') {
+    return { name: msg.senderName, source: 'Tài khoản Zalo', isCrm: false, icon: 'lucide-user', color: 'teal-darken-1' };
+  }
+  // 3. Fallback to conversation's linked Zalo account display name
+  if (props.conversation?.zaloAccount?.displayName) {
+    return { name: props.conversation.zaloAccount.displayName, source: 'Tài khoản Zalo', isCrm: false, icon: 'lucide-user', color: 'teal-darken-1' };
+  }
+  return { name: 'Tài khoản Zalo', source: 'Zalo', isCrm: false, icon: 'lucide-smartphone', color: 'grey-darken-1' };
 }
 
 // ── Undo Message Logic ───────────────────────────────────────────────────────

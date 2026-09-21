@@ -14,6 +14,16 @@
 
       <div class="d-flex align-center flex-wrap ga-2" style="gap: 12px;">
         <v-btn
+          to="/mobile-gateway"
+          color="info"
+          variant="tonal"
+          prepend-icon="lucide-smartphone"
+          class="text-none font-weight-medium"
+        >
+          Test Định Dạng SMS
+        </v-btn>
+
+        <v-btn
           color="secondary"
           variant="outlined"
           prepend-icon="lucide-qr-code"
@@ -85,9 +95,9 @@
             <v-icon color="info" size="18">lucide-landmark</v-icon>
           </div>
           <div class="text-h6 font-weight-bold font-monospace text-high-emphasis">
-            {{ accounts.length || 2 }} Tài khoản MB
+            {{ accounts.length }} Tài khoản
           </div>
-          <div class="text-caption text-success font-weight-medium">🟢 Đang nhận tin nhắn 24/7</div>
+          <div class="text-caption text-success font-weight-medium">🟢 Đang sẵn sàng nhận tin</div>
         </v-card>
       </v-col>
     </v-row>
@@ -107,7 +117,7 @@
       </v-tab>
       <v-tab value="accounts" class="text-none font-weight-medium">
         <v-icon start size="18">lucide-settings</v-icon>
-        Cấu hình 2 Tài khoản MB Bank
+        Cấu hình Tài khoản Ngân hàng
       </v-tab>
     </v-tabs>
 
@@ -364,28 +374,45 @@
         </v-card>
       </v-window-item>
 
-      <!-- TAB 3: BANK ACCOUNTS CONFIG -->
+      <!-- TAB 3: BANK ACCOUNTS CONFIG (CRUD) -->
       <v-window-item value="accounts">
         <v-card variant="outlined" class="rounded-lg pa-4">
-          <div class="text-subtitle-1 font-weight-bold mb-1">Cấu hình 2 Tài khoản MB Bank & Cổng Webhook</div>
-          <div class="text-caption text-medium-emphasis mb-4">
-            Điện thoại Android sử dụng Webhook URL và Secret Token bên dưới để đẩy tin nhắn SMS về OCMS.
+          <div class="d-flex flex-wrap align-center justify-space-between gap-3 mb-4">
+            <div>
+              <div class="text-subtitle-1 font-weight-bold mb-1">Cấu hình Tài khoản Ngân hàng & Cổng Webhook</div>
+              <div class="text-caption text-medium-emphasis">
+                Điện thoại Android sử dụng Webhook URL và Secret Token của từng tài khoản để đẩy tin nhắn SMS về OCMS.
+              </div>
+            </div>
+            <v-btn
+              color="primary"
+              variant="flat"
+              prepend-icon="lucide-plus"
+              class="text-none font-weight-bold rounded-lg"
+              @click="openAddAccountDialog"
+            >
+              Thêm tài khoản mới
+            </v-btn>
           </div>
 
-          <v-row>
-            <v-col v-for="(acc, idx) in accounts" :key="acc.id" cols="12" md="6">
-              <v-card variant="outlined" class="pa-4 rounded-xl border bg-surface">
+          <v-row v-if="accounts.length > 0">
+            <v-col v-for="acc in accounts" :key="acc.id" cols="12" md="6">
+              <v-card variant="outlined" class="pa-4 rounded-xl border bg-surface position-relative">
                 <div class="d-flex align-center justify-space-between mb-3">
                   <div class="d-flex align-center gap-2">
                     <v-avatar color="primary" size="36">
                       <v-icon color="white" size="18">lucide-landmark</v-icon>
                     </v-avatar>
                     <div>
-                      <div class="font-weight-bold text-subtitle-2">{{ acc.bankName }} (TK {{ idx + 1 }})</div>
-                      <div class="text-caption text-medium-emphasis">{{ acc.branch || 'Ngân hàng Quân Đội' }}</div>
+                      <div class="font-weight-bold text-subtitle-2">{{ acc.bankName }} ({{ acc.bankCode || 'BANK' }})</div>
+                      <div class="text-caption text-medium-emphasis">{{ acc.branch || 'Chưa đặt chi nhánh' }}</div>
                     </div>
                   </div>
-                  <v-chip size="small" color="success" variant="flat">HOẠT ĐỘNG</v-chip>
+                  <div class="d-flex align-center gap-2">
+                    <v-chip size="small" :color="acc.isActive ? 'success' : 'grey'" variant="flat">
+                      {{ acc.isActive ? 'HOẠT ĐỘNG' : 'TẠM DỪNG' }}
+                    </v-chip>
+                  </div>
                 </div>
 
                 <div class="text-caption mb-1">
@@ -396,23 +423,306 @@
                   <span class="text-medium-emphasis">Chủ tài khoản:</span>
                   <strong class="ml-2 text-high-emphasis">{{ acc.accountHolder }}</strong>
                 </div>
-                <div class="text-caption mb-2">
+                <div class="text-caption mb-2 d-flex align-center">
                   <span class="text-medium-emphasis">Webhook Secret:</span>
-                  <code class="ml-2 font-monospace text-primary bg-surface-variant px-1 rounded">{{ acc.webhookSecret }}</code>
+                  <code class="ml-2 font-monospace text-primary bg-surface-variant px-2 py-0.5 rounded text-truncate" style="max-width: 220px;">
+                    {{ acc.webhookSecret }}
+                  </code>
+                  <v-btn
+                    icon
+                    size="x-small"
+                    variant="text"
+                    color="primary"
+                    class="ml-1"
+                    title="Sao chép Token"
+                    @click="copyText(acc.webhookSecret, 'Đã sao chép Webhook Secret!')"
+                  >
+                    <v-icon size="14">lucide-copy</v-icon>
+                  </v-btn>
+                </div>
+
+                <div class="text-caption mb-2">
+                  <span class="text-medium-emphasis">Tự động duyệt:</span>
+                  <v-chip size="x-small" :color="acc.autoApprove ? 'primary' : 'default'" variant="tonal" class="ml-2 font-weight-bold">
+                    {{ acc.autoApprove ? `BẬT (Điểm >= ${acc.minTrustScore})` : 'TẮT' }}
+                  </v-chip>
                 </div>
 
                 <v-divider class="my-3" />
 
-                <div class="text-caption text-medium-emphasis mb-1">Webhook URL gửi SMS:</div>
-                <div class="text-caption font-monospace bg-surface-variant pa-2 rounded text-truncate mb-2">
-                  {{ webhookEndpointUrl }}
+                <div class="text-caption text-medium-emphasis mb-1">Webhook URL gửi SMS (trên App):</div>
+                <div class="d-flex align-center justify-space-between bg-surface-variant pa-2 rounded mb-3">
+                  <span class="text-caption font-monospace text-truncate mr-2">{{ webhookEndpointUrl }}</span>
+                  <v-btn
+                    icon
+                    size="x-small"
+                    variant="text"
+                    color="medium-emphasis"
+                    title="Sao chép URL"
+                    @click="copyText(webhookEndpointUrl, 'Đã sao chép Webhook URL!')"
+                  >
+                    <v-icon size="14">lucide-copy</v-icon>
+                  </v-btn>
+                </div>
+
+                <!-- Card Actions: Edit & Delete -->
+                <div class="d-flex align-center justify-end gap-2">
+                  <v-btn
+                    size="small"
+                    variant="tonal"
+                    color="primary"
+                    prepend-icon="lucide-edit"
+                    class="text-none font-weight-medium rounded-lg"
+                    @click="openEditAccountDialog(acc)"
+                  >
+                    Chỉnh sửa
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    variant="tonal"
+                    color="error"
+                    prepend-icon="lucide-trash-2"
+                    class="text-none font-weight-medium rounded-lg"
+                    @click="openDeleteAccountDialog(acc)"
+                  >
+                    Xóa
+                  </v-btn>
                 </div>
               </v-card>
             </v-col>
           </v-row>
+
+          <!-- Empty State -->
+          <div v-else class="text-center py-10">
+            <v-avatar color="surface-variant" size="56" class="mb-3">
+              <v-icon size="28" color="medium-emphasis">lucide-landmark</v-icon>
+            </v-avatar>
+            <div class="text-subtitle-1 font-weight-bold mb-1">Chưa có tài khoản ngân hàng nào</div>
+            <div class="text-caption text-medium-emphasis mb-4">
+              Hãy thêm ít nhất một tài khoản ngân hàng để tiếp nhận SMS đối soát thanh toán.
+            </div>
+            <v-btn
+              color="primary"
+              variant="flat"
+              prepend-icon="lucide-plus"
+              class="text-none font-weight-bold rounded-lg"
+              @click="openAddAccountDialog"
+            >
+              Thêm tài khoản ngay
+            </v-btn>
+          </div>
         </v-card>
       </v-window-item>
     </v-window>
+
+    <!-- Dialog: Thêm / Chỉnh sửa Tài khoản Ngân hàng -->
+    <v-dialog v-model="showAccountDialog" max-width="580" persistent>
+      <v-card class="rounded-xl pa-2">
+        <v-card-title class="d-flex align-center justify-space-between pb-2 border-b">
+          <div class="d-flex align-center gap-2">
+            <v-icon color="primary" size="22">{{ isEditingAccount ? 'lucide-edit' : 'lucide-plus-circle' }}</v-icon>
+            <span class="text-subtitle-1 font-weight-bold">
+              {{ isEditingAccount ? 'Chỉnh sửa Tài khoản Ngân hàng' : 'Thêm Tài khoản Ngân hàng mới' }}
+            </span>
+          </div>
+          <v-btn icon size="small" variant="text" @click="showAccountDialog = false">
+            <v-icon size="18">lucide-x</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-card-text class="pt-4">
+          <v-row dense>
+            <!-- Chọn ngân hàng -->
+            <v-col cols="12" sm="8">
+              <v-combobox
+                v-model="accountForm.bankName"
+                :items="bankPresets.map(b => b.name)"
+                label="Ngân hàng *"
+                variant="outlined"
+                density="compact"
+                placeholder="VD: MB Bank (Quân Đội)"
+                @update:model-value="onBankSelect"
+              />
+            </v-col>
+            <!-- Mã ngân hàng -->
+            <v-col cols="12" sm="4">
+              <v-text-field
+                v-model="accountForm.bankCode"
+                label="Mã ngân hàng *"
+                variant="outlined"
+                density="compact"
+                placeholder="VD: MB"
+              />
+            </v-col>
+
+            <!-- Số tài khoản -->
+            <v-col cols="12" sm="6">
+              <v-text-field
+                v-model="accountForm.accountNumber"
+                label="Số tài khoản *"
+                variant="outlined"
+                density="compact"
+                placeholder="VD: 0380123456789"
+              />
+            </v-col>
+
+            <!-- Tên chủ tài khoản -->
+            <v-col cols="12" sm="6">
+              <v-text-field
+                v-model="accountForm.accountHolder"
+                label="Tên chủ tài khoản *"
+                variant="outlined"
+                density="compact"
+                placeholder="VD: CTY TNHH LA PET"
+                @input="accountForm.accountHolder = accountForm.accountHolder.toUpperCase()"
+              />
+            </v-col>
+
+            <!-- Chi nhánh -->
+            <v-col cols="12">
+              <v-text-field
+                v-model="accountForm.branch"
+                label="Chi nhánh (tùy chọn)"
+                variant="outlined"
+                density="compact"
+                placeholder="VD: Chi nhánh Sài Gòn"
+              />
+            </v-col>
+
+            <!-- Webhook Secret -->
+            <v-col cols="12">
+              <div class="text-caption font-weight-medium mb-1 text-medium-emphasis">
+                Mã Webhook Secret (Device Token điền vào App Android) *
+              </div>
+              <div class="d-flex align-center gap-2">
+                <v-text-field
+                  v-model="accountForm.webhookSecret"
+                  variant="outlined"
+                  density="compact"
+                  placeholder="Mã secret xác thực..."
+                  hide-details
+                  class="font-monospace"
+                />
+                <v-btn
+                  variant="tonal"
+                  color="primary"
+                  class="text-none font-weight-medium"
+                  prepend-icon="lucide-sparkles"
+                  @click="generateRandomSecret"
+                >
+                  Tạo mã
+                </v-btn>
+              </div>
+            </v-col>
+
+            <!-- Cấu hình tự động duyệt -->
+            <v-col cols="12" class="mt-2">
+              <v-card variant="tonal" color="surface-variant" class="pa-3 rounded-lg">
+                <div class="d-flex align-center justify-space-between">
+                  <div>
+                    <div class="text-subtitle-2 font-weight-bold">Tự động duyệt đơn khi khớp tiền</div>
+                    <div class="text-caption text-medium-emphasis">
+                      Hệ thống tự động chuyển trạng thái đơn hàng sang ĐÃ THANH TOÁN
+                    </div>
+                  </div>
+                  <v-switch
+                    v-model="accountForm.autoApprove"
+                    color="primary"
+                    hide-details
+                    density="compact"
+                  />
+                </div>
+
+                <div v-if="accountForm.autoApprove" class="mt-3">
+                  <div class="d-flex justify-space-between text-caption mb-1">
+                    <span>Điểm tin cậy tối thiểu để tự duyệt:</span>
+                    <strong>{{ accountForm.minTrustScore }} / 100</strong>
+                  </div>
+                  <v-slider
+                    v-model="accountForm.minTrustScore"
+                    min="50"
+                    max="100"
+                    step="5"
+                    color="primary"
+                    hide-details
+                  />
+                </div>
+              </v-card>
+            </v-col>
+
+            <!-- Kích hoạt -->
+            <v-col cols="12" class="mt-2">
+              <v-switch
+                v-model="accountForm.isActive"
+                label="Kích hoạt nhận SMS cho tài khoản này"
+                color="success"
+                hide-details
+                density="compact"
+              />
+            </v-col>
+          </v-row>
+        </v-card-text>
+
+        <v-card-actions class="d-flex justify-end gap-2 pa-3 border-t">
+          <v-btn
+            variant="text"
+            class="text-none"
+            @click="showAccountDialog = false"
+          >
+            Hủy bỏ
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            class="text-none font-weight-bold px-4"
+            :loading="savingAccount"
+            @click="saveAccount"
+          >
+            {{ isEditingAccount ? 'Lưu thay đổi' : 'Tạo tài khoản' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Dialog: Xác nhận Xóa Tài khoản -->
+    <v-dialog v-model="showDeleteDialog" max-width="440">
+      <v-card class="rounded-xl pa-4">
+        <div class="d-flex align-center gap-3 mb-3">
+          <v-avatar color="error" variant="tonal" size="40">
+            <v-icon color="error" size="22">lucide-alert-triangle</v-icon>
+          </v-avatar>
+          <div>
+            <div class="text-subtitle-1 font-weight-bold">Xác nhận xóa tài khoản</div>
+            <div class="text-caption text-medium-emphasis">Hành động này không thể hoàn tác</div>
+          </div>
+        </div>
+
+        <div class="text-body-2 mb-4">
+          Bạn có chắc chắn muốn xóa tài khoản <strong>{{ accountToDelete?.bankName }} - {{ accountToDelete?.accountNumber }}</strong> ({{ accountToDelete?.accountHolder }})?
+          <div class="text-caption text-medium-emphasis mt-2">
+            💡 Lưu ý: Các giao dịch đối soát lịch sử đã phát sinh của tài khoản này vẫn được lưu trữ nguyên vẹn trên hệ thống.
+          </div>
+        </div>
+
+        <div class="d-flex justify-end gap-2">
+          <v-btn variant="text" class="text-none" @click="showDeleteDialog = false">Hủy</v-btn>
+          <v-btn
+            color="error"
+            variant="flat"
+            class="text-none font-weight-bold"
+            :loading="deletingAccount"
+            @click="confirmDeleteAccount"
+          >
+            Xóa tài khoản
+          </v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
+    <!-- Snackbar thông báo -->
+    <v-snackbar v-model="showSnackbar" :color="snackbarColor" timeout="3000" location="top">
+      {{ snackbarText }}
+    </v-snackbar>
 
     <!-- Dialog: Test QR Code Connection -->
     <v-dialog v-model="showQrModal" max-width="480">
@@ -452,17 +762,261 @@
         </v-btn>
       </v-card>
     </v-dialog>
+
+    <!-- Dialog: Chọn Đơn Hàng Để Khớp Thanh Toán (Manual Match Order Picker) -->
+    <v-dialog v-model="showOrderMatchDialog" max-width="900" scrollable>
+      <v-card class="rounded-xl overflow-hidden">
+        <!-- Dialog Header -->
+        <v-card-title class="pa-4 bg-surface border-b d-flex align-center justify-space-between">
+          <div class="d-flex align-center gap-2" style="gap: 10px;">
+            <v-avatar color="primary" size="38" class="text-white elevation-1">
+              <v-icon size="20">lucide-shopping-bag</v-icon>
+            </v-avatar>
+            <div>
+              <div class="text-subtitle-1 font-weight-bold">Chọn Đơn Hàng Để Khớp Thanh Toán</div>
+              <div class="text-caption text-medium-emphasis">
+                Tra cứu danh sách đơn hàng để gán và hoàn tất thanh toán
+              </div>
+            </div>
+          </div>
+          <v-btn icon size="small" variant="text" @click="showOrderMatchDialog = false">
+            <v-icon size="18">lucide-x</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <!-- Transaction Context Bar -->
+        <div v-if="selectedTxForMatch" class="pa-3 bg-surface-variant border-b text-caption d-flex align-center justify-space-between flex-wrap" style="gap: 8px;">
+          <div class="d-flex align-center gap-2" style="gap: 8px;">
+            <span class="text-medium-emphasis">Giao dịch cần gán:</span>
+            <span class="font-weight-bold font-monospace text-success text-subtitle-2">
+              +{{ formatVND(selectedTxForMatch.amount) }}
+            </span>
+            <v-chip size="x-small" color="primary" variant="flat" class="font-monospace font-weight-bold">
+              {{ selectedTxForMatch.bankCode }} · *{{ selectedTxForMatch.accountNumber ? selectedTxForMatch.accountNumber.slice(-4) : '****' }}
+            </v-chip>
+          </div>
+          <div class="text-medium-emphasis font-monospace text-xs text-truncate" style="max-width: 420px;">
+            {{ selectedTxForMatch.description || selectedTxForMatch.rawSms }}
+          </div>
+        </div>
+
+        <!-- Search & Filter Controls -->
+        <div class="pa-3 border-b bg-surface">
+          <v-row dense align="center">
+            <!-- Search field -->
+            <v-col cols="12" sm="7">
+              <v-text-field
+                v-model="orderSearchQuery"
+                placeholder="Tìm kiếm theo mã đơn (ORD-..., SO...) hoặc tên khách hàng..."
+                variant="outlined"
+                density="compact"
+                hide-details
+                prepend-inner-icon="lucide-search"
+                clearable
+                @update:model-value="fetchOrdersForLookup"
+                @keydown.enter="fetchOrdersForLookup"
+              />
+            </v-col>
+
+            <!-- Status filter dropdown -->
+            <v-col cols="12" sm="4">
+              <v-select
+                v-model="orderStatusFilter"
+                :items="orderStatusFilterOptions"
+                item-title="text"
+                item-value="value"
+                variant="outlined"
+                density="compact"
+                hide-details
+                prepend-inner-icon="lucide-filter"
+                @update:model-value="fetchOrdersForLookup"
+              />
+            </v-col>
+
+            <!-- Refresh button -->
+            <v-col cols="12" sm="1" class="text-right">
+              <v-btn
+                icon
+                variant="tonal"
+                color="primary"
+                size="small"
+                :loading="orderLookupLoading"
+                title="Tải lại danh sách đơn"
+                @click="fetchOrdersForLookup"
+              >
+                <v-icon size="16">lucide-refresh-cw</v-icon>
+              </v-btn>
+            </v-col>
+          </v-row>
+        </div>
+
+        <!-- Order List Body -->
+        <v-card-text class="pa-0" style="max-height: 480px; overflow-y: auto;">
+          <!-- Loading State -->
+          <div v-if="orderLookupLoading" class="text-center py-8 text-medium-emphasis">
+            <v-progress-circular indeterminate color="primary" size="32" class="mb-2" />
+            <div class="text-caption">Đang tìm kiếm danh sách đơn hàng...</div>
+          </div>
+
+          <!-- Empty State -->
+          <div v-else-if="availableOrders.length === 0" class="text-center py-8 text-medium-emphasis">
+            <v-icon size="42" class="mb-2 opacity-50">lucide-search-x</v-icon>
+            <div class="text-subtitle-2 font-weight-medium">Không tìm thấy đơn hàng nào</div>
+            <div class="text-caption mt-1">
+              Thử tìm với từ khóa khác hoặc chuyển bộ lọc sang "Tất cả trạng thái".
+            </div>
+          </div>
+
+          <!-- Order Table -->
+          <v-table v-else density="compact" class="orders-lookup-table">
+            <thead>
+              <tr class="bg-surface-variant text-caption">
+                <th class="font-weight-bold">MÃ ĐƠN</th>
+                <th class="font-weight-bold">TÊN KHÁCH HÀNG</th>
+                <th class="font-weight-bold">THỜI GIAN ĐẶT</th>
+                <th class="font-weight-bold text-center">TRẠNG THÁI</th>
+                <th class="font-weight-bold text-right">SỐ TIỀN</th>
+                <th class="font-weight-bold text-center" style="width: 100px;">THAO TÁC</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="order in availableOrders"
+                :key="order.id"
+                class="hover-row"
+              >
+                <!-- Mã đơn -->
+                <td>
+                  <div class="d-flex align-center gap-1" style="gap: 6px;">
+                    <span class="font-monospace font-weight-bold text-primary">#{{ order.orderCode }}</span>
+                    <v-chip v-if="isExactAmountMatch(order)" size="x-small" color="success" variant="flat" class="font-weight-bold">
+                      Khớp 100% tiền
+                    </v-chip>
+                  </div>
+                  <div class="text-xs text-medium-emphasis">{{ order.source }}</div>
+                </td>
+
+                <!-- Tên khách hàng -->
+                <td>
+                  <div class="font-weight-medium text-high-emphasis text-truncate" style="max-width: 200px;">
+                    {{ order.customerName }}
+                  </div>
+                  <div v-if="order.customerPhone" class="text-xs text-medium-emphasis font-monospace">
+                    {{ order.customerPhone }}
+                  </div>
+                </td>
+
+                <!-- Thời gian đặt -->
+                <td class="text-caption font-monospace text-medium-emphasis">
+                  {{ formatDate(order.orderDate) }}
+                </td>
+
+                <!-- Trạng thái đơn -->
+                <td class="text-center">
+                  <v-chip size="x-small" :color="getOrderStatusColor(order.status)" variant="tonal" class="font-weight-medium">
+                    {{ getOrderStatusText(order.status) }}
+                  </v-chip>
+                </td>
+
+                <!-- Số tiền -->
+                <td class="text-right font-monospace font-weight-bold" :class="isExactAmountMatch(order) ? 'text-success' : 'text-high-emphasis'">
+                  {{ formatVND(order.amountTotal) }}
+                </td>
+
+                <!-- Thao tác chọn -->
+                <td class="text-center">
+                  <v-btn
+                    color="primary"
+                    size="small"
+                    variant="elevated"
+                    class="text-none font-weight-bold rounded-lg"
+                    :loading="matchingOrderLoading && targetMatchingOrderId === order.id"
+                    @click="selectOrderToMatch(order)"
+                  >
+                    Chọn
+                  </v-btn>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+
+        <!-- Dialog Footer -->
+        <v-card-actions class="pa-3 border-t bg-surface justify-space-between text-caption text-medium-emphasis">
+          <div>Hiển thị <strong>{{ availableOrders.length }}</strong> đơn hàng</div>
+          <v-btn variant="text" size="small" class="text-none" @click="showOrderMatchDialog = false">
+            Đóng
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
-import axios from 'axios';
+import { api } from '@/api';
 
 const activeTab = ref('transactions');
 const loading = ref(false);
 const showQrModal = ref(false);
 const approvingId = ref<string | null>(null);
+
+// Account CRUD State
+const showAccountDialog = ref(false);
+const isEditingAccount = ref(false);
+const savingAccount = ref(false);
+const showDeleteDialog = ref(false);
+const deletingAccount = ref(false);
+const accountToDelete = ref<any>(null);
+
+const showSnackbar = ref(false);
+const snackbarText = ref('');
+const snackbarColor = ref('success');
+
+// Manual Match Order State
+const showOrderMatchDialog = ref(false);
+const selectedTxForMatch = ref<any>(null);
+const orderLookupLoading = ref(false);
+const matchingOrderLoading = ref(false);
+const targetMatchingOrderId = ref<string | null>(null);
+const orderSearchQuery = ref('');
+const orderStatusFilter = ref('all');
+const availableOrders = ref<any[]>([]);
+
+const orderStatusFilterOptions = [
+  { text: 'Tất cả trạng thái', value: 'all' },
+  { text: 'Chờ thanh toán / Đang xử lý', value: 'pending' },
+  { text: 'Đã thanh toán / Hoàn tất', value: 'done' },
+  { text: 'Đã hủy', value: 'cancel' },
+];
+
+const bankPresets = [
+  { name: 'MB Bank (Quân Đội)', code: 'MB' },
+  { name: 'Vietcombank', code: 'VCB' },
+  { name: 'Techcombank', code: 'TCB' },
+  { name: 'VPBank', code: 'VPB' },
+  { name: 'ACB (Á Châu)', code: 'ACB' },
+  { name: 'BIDV', code: 'BIDV' },
+  { name: 'VietinBank', code: 'CTG' },
+  { name: 'TPBank', code: 'TPB' },
+  { name: 'Sacombank', code: 'STB' },
+  { name: 'VIB', code: 'VIB' },
+  { name: 'HDBank', code: 'HDB' },
+];
+
+const accountForm = reactive({
+  id: '',
+  bankName: 'MB Bank',
+  bankCode: 'MB',
+  accountNumber: '',
+  accountHolder: '',
+  branch: '',
+  webhookSecret: '',
+  autoApprove: true,
+  minTrustScore: 85,
+  isActive: true,
+});
 
 const stats = reactive({
   todayTotalAmount: 0,
@@ -492,7 +1046,7 @@ const statusOptions = [
 ];
 
 const accountFilterOptions = computed(() => [
-  { text: 'Tất cả tài khoản MB', value: '' },
+  { text: 'Tất cả tài khoản', value: '' },
   ...accounts.value.map(a => ({
     text: `${a.bankName} - *${a.accountNumber.slice(-4)} (${a.accountHolder})`,
     value: a.id,
@@ -570,17 +1124,12 @@ async function fetchData() {
   loading.value = true;
   try {
     const [statsRes, accountsRes] = await Promise.all([
-      axios.get('/api/v1/payments/stats'),
-      axios.get('/api/v1/payments/accounts'),
+      api.get('/payments/stats'),
+      api.get('/payments/accounts'),
     ]);
 
     Object.assign(stats, statsRes.data);
     accounts.value = accountsRes.data.accounts || [];
-
-    // Nếu chưa có tài khoản nào, khởi tạo sẵn 2 tài khoản mẫu MB
-    if (accounts.value.length === 0) {
-      await initDefaultMbAccounts();
-    }
 
     await Promise.all([fetchTransactions(), fetchSenders()]);
   } catch (err) {
@@ -590,30 +1139,145 @@ async function fetchData() {
   }
 }
 
-async function initDefaultMbAccounts() {
+function onBankSelect(val: string) {
+  const match = bankPresets.find(b => b.name === val);
+  if (match) {
+    accountForm.bankCode = match.code;
+  }
+}
+
+function generateRandomSecret() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let result = 'sec_';
+  for (let i = 0; i < 16; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  accountForm.webhookSecret = result;
+}
+
+function copyText(text: string, msg: string) {
+  if (!text) return;
+  navigator.clipboard?.writeText(text);
+  snackbarText.value = msg;
+  snackbarColor.value = 'success';
+  showSnackbar.value = true;
+}
+
+function openAddAccountDialog() {
+  isEditingAccount.value = false;
+  accountForm.id = '';
+  accountForm.bankName = 'MB Bank';
+  accountForm.bankCode = 'MB';
+  accountForm.accountNumber = '';
+  accountForm.accountHolder = '';
+  accountForm.branch = '';
+  generateRandomSecret();
+  accountForm.autoApprove = true;
+  accountForm.minTrustScore = 85;
+  accountForm.isActive = true;
+  showAccountDialog.value = true;
+}
+
+function openEditAccountDialog(acc: any) {
+  isEditingAccount.value = true;
+  accountForm.id = acc.id;
+  accountForm.bankName = acc.bankName || 'MB Bank';
+  accountForm.bankCode = acc.bankCode || 'MB';
+  accountForm.accountNumber = acc.accountNumber || '';
+  accountForm.accountHolder = acc.accountHolder || '';
+  accountForm.branch = acc.branch || '';
+  accountForm.webhookSecret = acc.webhookSecret || '';
+  accountForm.autoApprove = acc.autoApprove ?? false;
+  accountForm.minTrustScore = acc.minTrustScore ?? 85;
+  accountForm.isActive = acc.isActive ?? true;
+  showAccountDialog.value = true;
+}
+
+async function saveAccount() {
+  if (!accountForm.accountNumber.trim()) {
+    snackbarText.value = 'Vui lòng nhập số tài khoản!';
+    snackbarColor.value = 'error';
+    showSnackbar.value = true;
+    return;
+  }
+  if (!accountForm.accountHolder.trim()) {
+    snackbarText.value = 'Vui lòng nhập tên chủ tài khoản!';
+    snackbarColor.value = 'error';
+    showSnackbar.value = true;
+    return;
+  }
+  if (!accountForm.webhookSecret.trim()) {
+    generateRandomSecret();
+  }
+
+  savingAccount.value = true;
   try {
-    await axios.post('/api/v1/payments/accounts', {
-      accountNumber: '0380123456789',
-      accountHolder: 'CTY TNHH LA PET VIETNAM',
-      bankName: 'MB Bank',
-      bankCode: 'MB',
-      branch: 'Chi nhánh Sài Gòn',
-    });
-    await axios.post('/api/v1/payments/accounts', {
-      accountNumber: '0380987654321',
-      accountHolder: 'VO TAN DUNG',
-      bankName: 'MB Bank',
-      bankCode: 'MB',
-      branch: 'Chi nhánh TP.HCM',
-    });
-    const accRes = await axios.get('/api/v1/payments/accounts');
+    const payload: any = {
+      bankName: accountForm.bankName.trim(),
+      bankCode: accountForm.bankCode.trim(),
+      accountNumber: accountForm.accountNumber.trim(),
+      accountHolder: accountForm.accountHolder.trim().toUpperCase(),
+      branch: accountForm.branch.trim() || null,
+      webhookSecret: accountForm.webhookSecret.trim(),
+      autoApprove: accountForm.autoApprove,
+      minTrustScore: accountForm.minTrustScore,
+      isActive: accountForm.isActive,
+    };
+    if (isEditingAccount.value && accountForm.id) {
+      payload.id = accountForm.id;
+    }
+
+    await api.post('/payments/accounts', payload);
+    snackbarText.value = isEditingAccount.value
+      ? 'Đã cập nhật tài khoản thành công!'
+      : 'Đã thêm tài khoản mới thành công!';
+    snackbarColor.value = 'success';
+    showSnackbar.value = true;
+    showAccountDialog.value = false;
+
+    // Refresh accounts
+    const accRes = await api.get('/payments/accounts');
     accounts.value = accRes.data.accounts || [];
-  } catch (e) {}
+  } catch (err: any) {
+    snackbarText.value = err.response?.data?.error || 'Lỗi khi lưu tài khoản';
+    snackbarColor.value = 'error';
+    showSnackbar.value = true;
+  } finally {
+    savingAccount.value = false;
+  }
+}
+
+function openDeleteAccountDialog(acc: any) {
+  accountToDelete.value = acc;
+  showDeleteDialog.value = true;
+}
+
+async function confirmDeleteAccount() {
+  if (!accountToDelete.value) return;
+  deletingAccount.value = true;
+  try {
+    await api.delete(`/payments/accounts/${accountToDelete.value.id}`);
+    snackbarText.value = 'Đã xóa tài khoản thành công!';
+    snackbarColor.value = 'success';
+    showSnackbar.value = true;
+    showDeleteDialog.value = false;
+    accountToDelete.value = null;
+
+    // Refresh accounts
+    const accRes = await api.get('/payments/accounts');
+    accounts.value = accRes.data.accounts || [];
+  } catch (err: any) {
+    snackbarText.value = err.response?.data?.error || 'Lỗi khi xóa tài khoản';
+    snackbarColor.value = 'error';
+    showSnackbar.value = true;
+  } finally {
+    deletingAccount.value = false;
+  }
 }
 
 async function fetchTransactions() {
   try {
-    const res = await axios.get('/api/v1/payments/transactions', {
+    const res = await api.get('/payments/transactions', {
       params: {
         status: filters.status,
         bankAccountId: filters.bankAccountId,
@@ -628,7 +1292,7 @@ async function fetchTransactions() {
 
 async function fetchSenders() {
   try {
-    const res = await axios.get('/api/v1/payments/senders');
+    const res = await api.get('/payments/senders');
     senders.value = res.data.senders || [];
   } catch (err) {
     console.error('Lỗi lấy danh tính người chuyển:', err);
@@ -645,7 +1309,7 @@ function resetFilters() {
 async function approveTransaction(id: string) {
   approvingId.value = id;
   try {
-    await axios.post(`/api/v1/payments/transactions/${id}/approve`, {});
+    await api.post(`/payments/transactions/${id}/approve`, {});
     await fetchData();
   } catch (err: any) {
     alert(err.response?.data?.error || 'Lỗi khi duyệt giao dịch');
@@ -654,17 +1318,128 @@ async function approveTransaction(id: string) {
   }
 }
 
-function openManualMatch(tx: any) {
-  const code = prompt('Nhập mã đơn hàng (ví dụ ORD-20260920-001 hoặc SO01234) để gán cho giao dịch này:', tx.matchedOrderCode || '');
-  if (code && code.trim()) {
-    // Có thể mở rộng dialog tìm kiếm đơn
-    alert(`Đã chọn gán cho đơn ${code.trim()}`);
+async function openManualMatch(tx: any) {
+  selectedTxForMatch.value = tx;
+  orderSearchQuery.value = tx.matchedOrderCode || '';
+  orderStatusFilter.value = 'all';
+  showOrderMatchDialog.value = true;
+  await fetchOrdersForLookup();
+}
+
+async function fetchOrdersForLookup() {
+  orderLookupLoading.value = true;
+  try {
+    const res = await api.get('/payments/orders-lookup', {
+      params: {
+        search: orderSearchQuery.value.trim(),
+        status: orderStatusFilter.value,
+        limit: 50,
+      },
+    });
+    availableOrders.value = res.data.orders || [];
+  } catch (err: any) {
+    console.error('Lỗi tra cứu đơn hàng:', err);
+    availableOrders.value = [];
+  } finally {
+    orderLookupLoading.value = false;
   }
+}
+
+async function selectOrderToMatch(order: any) {
+  if (!selectedTxForMatch.value) return;
+  targetMatchingOrderId.value = order.id;
+  matchingOrderLoading.value = true;
+  try {
+    await api.post(`/payments/transactions/${selectedTxForMatch.value.id}/approve`, {
+      targetOrderId: order.id,
+      isHistoryOrder: order.isHistoryOrder,
+    });
+    showOrderMatchDialog.value = false;
+    notify(`Đã khớp thành công giao dịch với đơn #${order.orderCode}!`, 'success');
+    await fetchData();
+  } catch (err: any) {
+    alert(err.response?.data?.error || 'Lỗi khi gán đơn hàng cho giao dịch');
+  } finally {
+    matchingOrderLoading.value = false;
+    targetMatchingOrderId.value = null;
+  }
+}
+
+function isExactAmountMatch(order: any): boolean {
+  if (!selectedTxForMatch.value) return false;
+  const txAmt = selectedTxForMatch.value.amount || 0;
+  const orderAmt = order.amountTotal || 0;
+  return Math.abs(txAmt - orderAmt) <= 1000;
+}
+
+function formatDate(dateStr?: string | Date): string {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '—';
+  const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const date = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return `${time} ${date}`;
+}
+
+function getOrderStatusColor(status?: string): string {
+  switch ((status || '').toLowerCase()) {
+    case 'sale':
+    case 'confirmed':
+      return 'primary';
+    case 'done':
+    case 'paid':
+    case 'completed':
+      return 'success';
+    case 'draft':
+    case 'new':
+    case 'pending':
+    case 'processing':
+      return 'warning';
+    case 'cancel':
+    case 'cancelled':
+      return 'error';
+    default:
+      return 'grey';
+  }
+}
+
+function getOrderStatusText(status?: string): string {
+  switch ((status || '').toLowerCase()) {
+    case 'sale':
+      return 'Đã xác nhận (Sale)';
+    case 'confirmed':
+      return 'Đã xác nhận';
+    case 'done':
+      return 'Hoàn tất (Done)';
+    case 'paid':
+      return 'Đã thanh toán';
+    case 'completed':
+      return 'Hoàn thành';
+    case 'draft':
+      return 'Báo giá / Nháp';
+    case 'new':
+      return 'Đơn mới';
+    case 'pending':
+      return 'Chờ xử lý';
+    case 'processing':
+      return 'Đang giao';
+    case 'cancel':
+    case 'cancelled':
+      return 'Đã hủy';
+    default:
+      return status || 'Khác';
+  }
+}
+
+function notify(text: string, color = 'success') {
+  snackbarText.value = text;
+  snackbarColor.value = color;
+  showSnackbar.value = true;
 }
 
 async function toggleAutoApprove(senderId: string, value: boolean) {
   try {
-    await axios.patch(`/api/v1/payments/senders/${senderId}`, {
+    await api.patch(`/payments/senders/${senderId}`, {
       isAutoApproved: value,
     });
     await fetchSenders();

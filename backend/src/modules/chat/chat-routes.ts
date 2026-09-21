@@ -24,6 +24,7 @@ import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 
 export const pendingReplies = new Map<string, string>(); // conversationId -> replyToId
+export const pendingSenders = new Map<string, { userId: string; fullName: string; timestamp: number }>(); // conversationId -> sender info
 
 type QueryParams = Record<string, string>;
 
@@ -41,6 +42,31 @@ export async function getOrResolveActiveZaloInstance(
   conversation: { id: string; zaloAccountId: string; orgId: string },
   userOrgId: string,
 ): Promise<{ instance: any; accountId: string } | null> {
+  // Auto-heal check: if conversation has outgoing messages, verify if the sender actually matches conv.zaloAccountId
+  try {
+    const lastSelfMsg = await prisma.message.findFirst({
+      where: { conversationId: conversation.id, senderType: 'self' },
+      orderBy: { sentAt: 'desc' },
+      select: { senderUid: true },
+    });
+    if (lastSelfMsg?.senderUid) {
+      const realAcc = await prisma.zaloAccount.findFirst({
+        where: { orgId: userOrgId, zaloUid: lastSelfMsg.senderUid, deletedAt: null },
+        select: { id: true },
+      });
+      if (realAcc && realAcc.id !== conversation.zaloAccountId && zaloPool.getInstance(realAcc.id)?.api) {
+        logger.info(`[chat] Auto-healed conversation ${conversation.id}: re-linked from ${conversation.zaloAccountId} to real sender account ${realAcc.id}`);
+        await prisma.conversation
+          .update({
+            where: { id: conversation.id },
+            data: { zaloAccountId: realAcc.id },
+          })
+          .catch(() => {});
+        conversation.zaloAccountId = realAcc.id;
+      }
+    }
+  } catch {}
+
   let instance = zaloPool.getInstance(conversation.zaloAccountId);
   if (instance?.api) {
     return { instance, accountId: conversation.zaloAccountId };
@@ -52,7 +78,7 @@ export async function getOrResolveActiveZaloInstance(
     select: { zaloUid: true },
   });
 
-  const activeAccount = (currentAcc?.zaloUid
+  const activeAccount = currentAcc?.zaloUid
     ? await prisma.zaloAccount.findFirst({
         where: {
           orgId: userOrgId,
@@ -62,14 +88,7 @@ export async function getOrResolveActiveZaloInstance(
         },
         orderBy: { lastConnectedAt: 'desc' },
       })
-    : null) || (await prisma.zaloAccount.findFirst({
-        where: {
-          orgId: userOrgId,
-          status: 'connected',
-          deletedAt: null,
-        },
-        orderBy: { lastConnectedAt: 'desc' },
-      }));
+    : null;
 
   if (activeAccount && zaloPool.getInstance(activeAccount.id)?.api) {
     instance = zaloPool.getInstance(activeAccount.id);
@@ -622,6 +641,7 @@ export async function chatRoutes(app: FastifyInstance) {
               attachments: [],
               isNote: true,
               replyToId: replyToId || null,
+              repliedByUserId: user.id,
               sentAt: new Date(),
             },
             include: {
@@ -632,6 +652,13 @@ export async function chatRoutes(app: FastifyInstance) {
                   content: true,
                   contentType: true,
                   isNote: true,
+                },
+              },
+              repliedBy: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  email: true,
                 },
               },
             },
@@ -669,6 +696,20 @@ export async function chatRoutes(app: FastifyInstance) {
       if (replyToId) {
         pendingReplies.set(conversation.id, replyToId);
       }
+
+      // Track CRM user who triggered this send so incoming socket/sync event preserves repliedBy
+      try {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { fullName: true },
+        });
+        const senderDisplayName = dbUser?.fullName || user.email;
+        pendingSenders.set(conversation.id, {
+          userId: user.id,
+          fullName: senderDisplayName,
+          timestamp: Date.now(),
+        });
+      } catch {}
 
       const resolved = await getOrResolveActiveZaloInstance(conversation, user.orgId);
       if (!resolved?.instance?.api) {
@@ -946,6 +987,20 @@ export async function chatRoutes(app: FastifyInstance) {
         const threadType = conversation.threadType === 'group' ? 1 : 0;
 
         zaloRateLimiter.recordSend(conversation.zaloAccountId);
+
+        // Track CRM user who triggered this upload so incoming socket/sync event preserves repliedBy
+        try {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { fullName: true },
+          });
+          const senderDisplayName = dbUser?.fullName || user.email;
+          pendingSenders.set(conversation.id, {
+            userId: user.id,
+            fullName: senderDisplayName,
+            timestamp: Date.now(),
+          });
+        } catch {}
 
         // Send via zca-js with attachments
         await instance.api.sendMessage(
@@ -1362,6 +1417,12 @@ export async function chatRoutes(app: FastifyInstance) {
         // Immediately persist reaction and broadcast via Socket.IO
         let updatedReactions = message.reactions;
         try {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { fullName: true },
+          });
+          const reactionSenderName = dbUser?.fullName || user.email;
+
           const reactionResult = await handleMessageReaction({
             accountId: conversation.zaloAccountId,
             msgId: message.zaloMsgId,
@@ -1371,7 +1432,7 @@ export async function chatRoutes(app: FastifyInstance) {
             icon,
             rType,
             senderUid: user.id,
-            senderName: user.email,
+            senderName: reactionSenderName,
             isSelf: true,
           });
           if (reactionResult) {

@@ -12,55 +12,119 @@ import { zaloPool } from '../zalo/zalo-pool.js';
 import { randomUUID } from 'node:crypto';
 
 export async function paymentRoutes(app: FastifyInstance) {
+  // ── 0. HEALTH CHECK: Kiểm tra kết nối từ Android Gateway ────────────────────
+  app.get('/api/v1/payments/sms-webhook/health', async (request: FastifyRequest, reply: FastifyReply) => {
+    let token: string | undefined;
+    const authHeader = request.headers['authorization'];
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      token = authHeader.slice(7).trim();
+    }
+    if (!token) {
+      token =
+        (request.headers['x-webhook-secret'] as string) ||
+        (request.headers['x-api-key'] as string);
+    }
+
+    if (!token) {
+      return reply.status(401).send({ status: 'unauthorized' });
+    }
+
+    const account = await prisma.bankAccount.findFirst({
+      where: { webhookSecret: token, isActive: true },
+    });
+
+    if (!account) {
+      return reply.status(401).send({ status: 'unauthorized' });
+    }
+
+    return reply.status(200).send({ status: 'healthy' });
+  });
+
   // ── 1. PUBLIC WEBHOOK: Tiếp nhận SMS từ điện thoại Android ──────────────────
   app.post('/api/v1/payments/sms-webhook', async (request: FastifyRequest, reply: FastifyReply) => {
     const startTime = Date.now();
     const body = (request.body || {}) as SmsPayloadInput & {
+      messageId?: string;
+      message?: string;
+      receivedAt?: string | number;
       secret?: string;
       api_key?: string;
       orgId?: string;
     };
 
-    // Lấy secret token từ header hoặc body
-    const incomingSecret =
-      (request.headers['x-webhook-secret'] as string) ||
-      (request.headers['x-api-key'] as string) ||
-      body.secret ||
-      body.api_key;
+    // Lấy secret token từ header Authorization (Bearer) hoặc header/body legacy
+    let incomingSecret: string | undefined;
+    const authHeader = request.headers['authorization'];
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      incomingSecret = authHeader.slice(7).trim();
+    }
+    if (!incomingSecret) {
+      incomingSecret =
+        (request.headers['x-webhook-secret'] as string) ||
+        (request.headers['x-api-key'] as string) ||
+        body.secret ||
+        body.api_key;
+    }
 
-    if (!body.content || typeof body.content !== 'string') {
+    // Chuẩn hóa nội dung tin nhắn: hỗ trợ cả body.content và body.message (từ Android Gateway)
+    const rawContent = (body.content ?? body.message ?? '').trim();
+    if (!rawContent) {
       return reply.status(400).send({
         success: false,
-        error: 'Nội dung tin nhắn (content) không được để trống',
+        error: 'Nội dung tin nhắn (content hoặc message) không được để trống',
       });
+    }
+
+    // Chuẩn hóa thời gian: hỗ trợ cả body.timestamp (number) và body.receivedAt (chuỗi ISO-8601)
+    let normalizedTimestamp = body.timestamp ?? body.receivedAt;
+    if (typeof normalizedTimestamp === 'string' && isNaN(Number(normalizedTimestamp))) {
+      const parsedTs = Date.parse(normalizedTimestamp);
+      if (!isNaN(parsedTs)) {
+        normalizedTimestamp = parsedTs;
+      }
     }
 
     try {
       // 1. Phân tích bóc tách SMS
-      const parsed = parseIncomingSms(body);
+      const parsed = parseIncomingSms({
+        ...body,
+        content: rawContent,
+        timestamp: normalizedTimestamp,
+      });
 
-      // 2. Tra cứu tài khoản ngân hàng trong CSDL
-      let bankAccount = parsed.accountNumber
-        ? await prisma.bankAccount.findFirst({
-            where: { accountNumber: parsed.accountNumber, isActive: true },
-          })
-        : null;
-
-      // Nếu không tìm thấy theo STK bóc tách, thử tìm theo SIM slot hoặc lấy tài khoản MB đầu tiên
-      if (!bankAccount) {
+      // 2. Xác thực Token & Tra cứu tài khoản ngân hàng trong CSDL
+      let bankAccount = null;
+      if (incomingSecret) {
         bankAccount = await prisma.bankAccount.findFirst({
-          where: { isActive: true },
-          orderBy: { createdAt: 'asc' },
+          where: { webhookSecret: incomingSecret, isActive: true },
         });
-      }
 
-      // Xác thực Token: Nếu tài khoản có cấu hình webhookSecret thì bắt buộc phải khớp
-      if (bankAccount?.webhookSecret && incomingSecret) {
-        if (bankAccount.webhookSecret !== incomingSecret) {
-          logger.warn(`[sms-webhook] Sai secret token cho tài khoản ${bankAccount.accountNumber}`);
+        if (!bankAccount) {
+          logger.warn('[sms-webhook] Webhook secret token không hợp lệ hoặc tài khoản không tồn tại/chưa kích hoạt');
           return reply.status(401).send({
             success: false,
             error: 'Webhook secret token không hợp lệ',
+          });
+        }
+      } else {
+        // Legacy fallback: Không có token gửi lên
+        if (parsed.accountNumber) {
+          bankAccount = await prisma.bankAccount.findFirst({
+            where: { accountNumber: parsed.accountNumber, isActive: true },
+          });
+        }
+        if (!bankAccount) {
+          bankAccount = await prisma.bankAccount.findFirst({
+            where: { isActive: true },
+            orderBy: { createdAt: 'asc' },
+          });
+        }
+        // Nếu tài khoản yêu cầu webhookSecret mà request không gửi token
+        if (bankAccount?.webhookSecret) {
+          logger.warn(`[sms-webhook] Thiếu webhook secret token cho tài khoản ${bankAccount.accountNumber}`);
+          return reply.status(401).send({
+            success: false,
+            error: 'Thiếu mã xác thực (Authorization: Bearer <TOKEN>)',
           });
         }
       }
@@ -70,7 +134,26 @@ export async function paymentRoutes(app: FastifyInstance) {
         return reply.status(500).send({ success: false, error: 'Chưa có tổ chức nào được cấu hình trong hệ thống' });
       }
 
-      // 3. Kiểm tra chống trùng lặp (Anti-Duplicate / Idempotency Check)
+      // 3. Kiểm tra chống trùng lặp đa tầng (Multi-layer Anti-Duplicate)
+      // Tầng 1: Kiểm tra theo gatewayMessageId (SHA-256 từ Android Gateway)
+      if (body.messageId) {
+        const existingByGatewayId = await prisma.bankTransaction.findUnique({
+          where: { gatewayMessageId: body.messageId },
+        });
+
+        if (existingByGatewayId) {
+          logger.info(`[sms-webhook] Phát hiện tin nhắn trùng lặp từ Gateway (gatewayMessageId: ${body.messageId.slice(0, 10)}...) -> Bỏ qua`);
+          return reply.status(200).send({
+            success: true,
+            message: 'Giao dịch đã được ghi nhận trước đó (Idempotent by Gateway Message ID)',
+            transactionId: existingByGatewayId.id,
+            status: existingByGatewayId.status,
+            isDuplicate: true,
+          });
+        }
+      }
+
+      // Tầng 2: Kiểm tra chống trùng lặp nghiệp vụ (Idempotency Hash nội dung)
       const existingTx = await prisma.bankTransaction.findUnique({
         where: { idempotencyHash: parsed.idempotencyHash },
       });
@@ -98,6 +181,7 @@ export async function paymentRoutes(app: FastifyInstance) {
           bankCode: parsed.bankCode || 'MB',
           accountNumber: parsed.accountNumber || bankAccount?.accountNumber || 'UNKNOWN',
           deviceId: body.deviceId || null,
+          gatewayMessageId: body.messageId || null,
           amount: parsed.amount,
           type: parsed.type,
           balanceAfter: parsed.balanceAfter,
@@ -157,6 +241,130 @@ export async function paymentRoutes(app: FastifyInstance) {
       return reply.status(500).send({
         success: false,
         error: err.message || 'Lỗi xử lý tin nhắn SMS ngân hàng',
+      });
+    }
+  });
+
+  // GET /api/v1/payments/simulator-accounts — Danh sách tài khoản ngân hàng phục vụ giả lập & test
+  app.get('/api/v1/payments/simulator-accounts', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const accounts = await prisma.bankAccount.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          bankCode: true,
+          bankName: true,
+          accountNumber: true,
+          accountHolder: true,
+          webhookSecret: true,
+          autoApprove: true,
+          minTrustScore: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      return reply.send({ success: true, accounts });
+    } catch (err: any) {
+      return reply.status(500).send({ success: false, error: err.message });
+    }
+  });
+
+  // POST /api/v1/payments/test-parse — Trình giả lập bóc tách SMS (Dry-run parser & scoring preview)
+  app.post('/api/v1/payments/test-parse', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = (request.body || {}) as {
+      sender?: string;
+      content?: string;
+      message?: string;
+      timestamp?: number | string;
+      receivedAt?: string;
+      simAccountNumber?: string;
+      bankAccountId?: string;
+      orgId?: string;
+    };
+
+    const rawContent = (body.content ?? body.message ?? '').trim();
+    if (!rawContent) {
+      return reply.status(400).send({
+        success: false,
+        error: 'Nội dung tin nhắn không được để trống',
+      });
+    }
+
+    try {
+      // 1. Chuẩn hóa timestamp
+      let normalizedTimestamp: any = body.timestamp ?? body.receivedAt ?? Date.now();
+      if (typeof normalizedTimestamp === 'string' && isNaN(Number(normalizedTimestamp))) {
+        const parsedTs = Date.parse(normalizedTimestamp);
+        if (!isNaN(parsedTs)) {
+          normalizedTimestamp = parsedTs;
+        }
+      }
+
+      // 2. Phân tích bóc tách cú pháp SMS
+      const parsed = parseIncomingSms({
+        ...body,
+        content: rawContent,
+        timestamp: normalizedTimestamp,
+      });
+
+      // 3. Tra cứu tài khoản ngân hàng liên kết
+      let incomingSecret: string | undefined;
+      const authHeader = request.headers['authorization'];
+      if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+        incomingSecret = authHeader.slice(7).trim();
+      }
+      if (!incomingSecret) {
+        incomingSecret =
+          (request.headers['x-webhook-secret'] as string) ||
+          (request.headers['x-api-key'] as string) ||
+          (body as any).secret;
+      }
+
+      let bankAccount = null;
+      if (body.bankAccountId) {
+        bankAccount = await prisma.bankAccount.findUnique({
+          where: { id: body.bankAccountId },
+        });
+      } else if (incomingSecret) {
+        bankAccount = await prisma.bankAccount.findFirst({
+          where: { webhookSecret: incomingSecret, isActive: true },
+        });
+      } else if (parsed.accountNumber || body.simAccountNumber) {
+        bankAccount = await prisma.bankAccount.findFirst({
+          where: {
+            accountNumber: parsed.accountNumber || body.simAccountNumber,
+            isActive: true,
+          },
+        });
+      }
+
+      const orgId = bankAccount?.orgId || body.orgId || (await prisma.organization.findFirst())?.id;
+      if (!orgId) {
+        return reply.status(500).send({ success: false, error: 'Chưa có tổ chức nào được cấu hình trong hệ thống' });
+      }
+
+      // 4. Đánh giá thử nghiệm qua Scoring Engine (Dry-run, không lưu DB)
+      const scoring = await evaluateAndMatchTransaction(orgId, parsed, bankAccount?.id);
+
+      return reply.send({
+        success: true,
+        dryRun: true,
+        parsed,
+        scoring,
+        bankAccount: bankAccount ? {
+          id: bankAccount.id,
+          bankCode: bankAccount.bankCode,
+          bankName: bankAccount.bankName,
+          accountNumber: bankAccount.accountNumber,
+          accountHolder: bankAccount.accountHolder,
+          autoApprove: bankAccount.autoApprove,
+          minTrustScore: bankAccount.minTrustScore,
+        } : null,
+      });
+    } catch (err: any) {
+      logger.error('[test-parse] Lỗi bóc tách thử nghiệm:', err);
+      return reply.status(500).send({
+        success: false,
+        error: err.message || 'Lỗi bóc tách tin nhắn SMS',
       });
     }
   });
@@ -300,7 +508,111 @@ export async function paymentRoutes(app: FastifyInstance) {
       }
     });
 
-    // GET /api/v1/payments/accounts — Danh sách 2 tài khoản ngân hàng MB
+    // GET /api/v1/payments/orders-lookup — Tra cứu danh sách đơn hàng cho popup chọn đơn
+    authGroup.get('/api/v1/payments/orders-lookup', async (request: FastifyRequest) => {
+      const user = request.user!;
+      const query = (request.query || {}) as {
+        search?: string;
+        status?: string;
+        limit?: string;
+      };
+
+      const limit = Math.min(100, Math.max(1, parseInt(query.limit || '50', 10)));
+      const search = (query.search || '').trim();
+      const statusFilter = (query.status || '').trim().toLowerCase();
+
+      // 1. Tìm trong OrderHistory (đơn Odoo/hệ thống)
+      const historyWhere: any = { orgId: user.orgId };
+      if (search) {
+        historyWhere.OR = [
+          { orderCode: { contains: search, mode: 'insensitive' } },
+          { partnerName: { contains: search, mode: 'insensitive' } },
+          { customerProfile: { name: { contains: search, mode: 'insensitive' } } },
+          { customerProfile: { phone: { contains: search } } },
+        ];
+      }
+      if (statusFilter && statusFilter !== 'all') {
+        if (statusFilter === 'pending') {
+          historyWhere.state = { in: ['draft', 'sent', 'sale'] };
+        } else if (statusFilter === 'done') {
+          historyWhere.state = { in: ['done', 'paid'] };
+        } else if (statusFilter === 'cancel') {
+          historyWhere.state = 'cancel';
+        } else {
+          historyWhere.state = statusFilter;
+        }
+      }
+
+      // 2. Tìm trong Order (đơn CRM nội bộ)
+      const orderWhere: any = { orgId: user.orgId };
+      if (search) {
+        orderWhere.OR = [
+          { orderCode: { contains: search, mode: 'insensitive' } },
+          { contact: { fullName: { contains: search, mode: 'insensitive' } } },
+          { contact: { phone: { contains: search } } },
+        ];
+      }
+      if (statusFilter && statusFilter !== 'all') {
+        if (statusFilter === 'pending') {
+          orderWhere.status = { in: ['new', 'draft', 'pending', 'processing', 'confirmed'] };
+        } else if (statusFilter === 'done') {
+          orderWhere.status = { in: ['paid', 'completed'] };
+        } else if (statusFilter === 'cancel') {
+          orderWhere.status = 'cancelled';
+        } else {
+          orderWhere.status = statusFilter;
+        }
+      }
+
+      const [histories, crmOrders] = await Promise.all([
+        prisma.orderHistory.findMany({
+          where: historyWhere,
+          include: { customerProfile: true },
+          orderBy: { dateOrder: 'desc' },
+          take: limit,
+        }),
+        prisma.order.findMany({
+          where: orderWhere,
+          include: { contact: true },
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+        }),
+      ]);
+
+      const unifiedOrders = [
+        ...histories.map((h) => ({
+          id: h.id,
+          orderCode: h.orderCode,
+          customerName: h.partnerName || h.customerProfile?.name || 'Khách hàng',
+          customerPhone: h.customerProfile?.phone || null,
+          orderDate: h.dateOrder || h.createdAt,
+          status: h.state || 'sale',
+          amountTotal: h.amountTotal || 0,
+          isHistoryOrder: true,
+          source: 'Hệ thống',
+        })),
+        ...crmOrders.map((o) => ({
+          id: o.id,
+          orderCode: o.orderCode,
+          customerName: o.contact?.fullName || 'Khách hàng CRM',
+          customerPhone: o.contact?.phone || null,
+          orderDate: o.createdAt,
+          status: o.status || 'new',
+          amountTotal: o.totalAmount || 0,
+          isHistoryOrder: false,
+          source: 'CRM',
+        })),
+      ];
+
+      unifiedOrders.sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+
+      return {
+        success: true,
+        orders: unifiedOrders.slice(0, limit),
+      };
+    });
+
+    // GET /api/v1/payments/accounts — Danh sách tài khoản ngân hàng
     authGroup.get('/api/v1/payments/accounts', async (request: FastifyRequest) => {
       const user = request.user!;
       const accounts = await prisma.bankAccount.findMany({
@@ -331,45 +643,126 @@ export async function paymentRoutes(app: FastifyInstance) {
         webhookSecret?: string;
         autoApprove?: boolean;
         minTrustScore?: number;
+        isActive?: boolean;
       };
 
       if (!body.accountNumber || !body.accountHolder) {
         return reply.status(400).send({ error: 'Vui lòng cung cấp số tài khoản và tên chủ tài khoản' });
       }
 
-      const secret = body.webhookSecret || randomUUID().replace(/-/g, '').slice(0, 16);
+      const accountNumberTrimmed = body.accountNumber.trim();
+      const accountHolderTrimmed = body.accountHolder.trim().toUpperCase();
 
-      const account = await prisma.bankAccount.upsert({
-        where: {
-          orgId_accountNumber: {
+      // Trường hợp 1: Cập nhật tài khoản đã tồn tại theo ID
+      if (body.id) {
+        const existing = await prisma.bankAccount.findFirst({
+          where: { id: body.id, orgId: user.orgId },
+        });
+
+        if (!existing) {
+          return reply.status(404).send({ error: 'Không tìm thấy tài khoản ngân hàng' });
+        }
+
+        // Kiểm tra xem số tài khoản mới có bị trùng với tài khoản khác trong cùng org không
+        const dupAcc = await prisma.bankAccount.findFirst({
+          where: {
             orgId: user.orgId,
-            accountNumber: body.accountNumber.trim(),
+            accountNumber: accountNumberTrimmed,
+            NOT: { id: body.id },
           },
-        },
-        create: {
-          id: body.id || randomUUID(),
+        });
+        if (dupAcc) {
+          return reply.status(400).send({ error: 'Số tài khoản này đã được sử dụng bởi tài khoản khác' });
+        }
+
+        // Kiểm tra webhookSecret mới có bị trùng với tài khoản khác không
+        const targetSecret = body.webhookSecret?.trim() || existing.webhookSecret;
+        if (targetSecret !== existing.webhookSecret) {
+          const dupSecret = await prisma.bankAccount.findUnique({
+            where: { webhookSecret: targetSecret },
+          });
+          if (dupSecret) {
+            return reply.status(400).send({ error: 'Mã Webhook Secret này đã tồn tại trong hệ thống' });
+          }
+        }
+
+        const updated = await prisma.bankAccount.update({
+          where: { id: body.id },
+          data: {
+            bankName: body.bankName?.trim() || existing.bankName,
+            bankCode: body.bankCode?.trim() || existing.bankCode,
+            accountNumber: accountNumberTrimmed,
+            accountHolder: accountHolderTrimmed,
+            branch: body.branch !== undefined ? body.branch : existing.branch,
+            webhookSecret: targetSecret,
+            autoApprove: body.autoApprove !== undefined ? body.autoApprove : existing.autoApprove,
+            minTrustScore: body.minTrustScore !== undefined ? body.minTrustScore : existing.minTrustScore,
+            isActive: body.isActive !== undefined ? body.isActive : existing.isActive,
+          },
+        });
+
+        return reply.send({ success: true, account: updated });
+      }
+
+      // Trường hợp 2: Thêm mới tài khoản
+      const dupAcc = await prisma.bankAccount.findFirst({
+        where: {
           orgId: user.orgId,
-          bankName: body.bankName || 'MB Bank',
-          bankCode: body.bankCode || 'MB',
-          accountNumber: body.accountNumber.trim(),
-          accountHolder: body.accountHolder.trim().toUpperCase(),
-          branch: body.branch || null,
+          accountNumber: accountNumberTrimmed,
+        },
+      });
+      if (dupAcc) {
+        return reply.status(400).send({ error: 'Số tài khoản này đã tồn tại trong tổ chức' });
+      }
+
+      const secret = (body.webhookSecret || randomUUID().replace(/-/g, '').slice(0, 16)).trim();
+      const dupSecret = await prisma.bankAccount.findUnique({
+        where: { webhookSecret: secret },
+      });
+      if (dupSecret) {
+        return reply.status(400).send({ error: 'Mã Webhook Secret này đã được sử dụng, vui lòng đổi mã khác' });
+      }
+
+      const newAccount = await prisma.bankAccount.create({
+        data: {
+          id: randomUUID(),
+          orgId: user.orgId,
+          bankName: body.bankName?.trim() || 'MB Bank',
+          bankCode: body.bankCode?.trim() || 'MB',
+          accountNumber: accountNumberTrimmed,
+          accountHolder: accountHolderTrimmed,
+          branch: body.branch?.trim() || null,
           webhookSecret: secret,
           autoApprove: body.autoApprove ?? false,
           minTrustScore: body.minTrustScore ?? 85,
-        },
-        update: {
-          bankName: body.bankName,
-          bankCode: body.bankCode,
-          accountHolder: body.accountHolder.trim().toUpperCase(),
-          branch: body.branch,
-          ...(body.webhookSecret ? { webhookSecret: body.webhookSecret } : {}),
-          ...(body.autoApprove !== undefined ? { autoApprove: body.autoApprove } : {}),
-          ...(body.minTrustScore !== undefined ? { minTrustScore: body.minTrustScore } : {}),
+          isActive: body.isActive !== undefined ? body.isActive : true,
         },
       });
 
-      return { success: true, account };
+      return reply.send({ success: true, account: newAccount });
+    });
+
+    // DELETE /api/v1/payments/accounts/:id — Xóa tài khoản ngân hàng
+    authGroup.delete('/api/v1/payments/accounts/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      if (!['owner', 'admin'].includes(user.role)) {
+        return reply.status(403).send({ error: 'Chỉ quản trị viên mới có quyền xóa tài khoản ngân hàng' });
+      }
+
+      const { id } = request.params as { id: string };
+      const account = await prisma.bankAccount.findFirst({
+        where: { id, orgId: user.orgId },
+      });
+
+      if (!account) {
+        return reply.status(404).send({ error: 'Không tìm thấy tài khoản ngân hàng cần xóa' });
+      }
+
+      await prisma.bankAccount.delete({
+        where: { id },
+      });
+
+      return reply.send({ success: true, message: 'Đã xóa tài khoản ngân hàng thành công' });
     });
 
     // GET /api/v1/payments/senders — Danh sách danh tính người chuyển đã học (Whitelist)

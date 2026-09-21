@@ -412,6 +412,17 @@ export async function orderRoutes(app: FastifyInstance) {
         lines: {
           orderBy: { odooLineId: 'asc' },
         },
+        payments: {
+          include: {
+            createdBy: {
+              select: { id: true, fullName: true, email: true },
+            },
+            bankTransaction: {
+              select: { id: true, accountNumber: true, bankCode: true, refCode: true, transactionTime: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
         ...({ appliedPromotions: true } as any),
       },
     });
@@ -556,6 +567,193 @@ export async function orderRoutes(app: FastifyInstance) {
         salesperson: orderObj.salesperson?.trim() || fallbackSalesperson || 'Chưa phân công',
       },
     };
+  });
+
+  // ── Ghi nhận thanh toán thủ công (Tiền mặt, COD, Chuyển khoản ngoài) ────────
+  app.post('/api/v1/orders/:id/payments', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as {
+      amount: number;
+      paymentMethod?: string;
+      notes?: string;
+      paidAt?: string;
+    };
+
+    const amount = Number(body.amount);
+    if (isNaN(amount) || amount <= 0) {
+      return reply.status(400).send({ error: 'Số tiền thanh toán phải lớn hơn 0' });
+    }
+
+    const isNumeric = /^\d+$/.test(id);
+    const order = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [
+          { id },
+          ...(isNumeric ? [{ odooOrderId: parseInt(id) }] : []),
+          { orderCode: id },
+        ],
+      },
+    });
+
+    if (!order) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng' });
+    }
+
+    // Tạo phiếu thanh toán OrderPayment
+    const payment = await prisma.orderPayment.create({
+      data: {
+        orgId: user.orgId,
+        orderHistoryId: order.id,
+        amount,
+        paymentMethod: body.paymentMethod || 'CASH',
+        notes: body.notes?.trim() || null,
+        createdById: user.id,
+        paidAt: body.paidAt ? new Date(body.paidAt) : new Date(),
+      },
+      include: {
+        createdBy: {
+          select: { id: true, fullName: true, email: true },
+        },
+      },
+    });
+
+    // Tính lại tổng số tiền đã thanh toán từ tất cả các lần OrderPayment
+    const sumAgg = await prisma.orderPayment.aggregate({
+      where: { orgId: user.orgId, orderHistoryId: order.id },
+      _sum: { amount: true },
+    });
+    const newPaidAmount = sumAgg._sum.amount || 0;
+
+    const updatedOrder = await prisma.orderHistory.update({
+      where: { id: order.id },
+      data: {
+        paidAmount: newPaidAmount,
+        updatedAt: new Date(),
+      },
+    });
+
+    logger.info(`[order-payments] Đã ghi nhận thanh toán ${amount.toLocaleString('vi-VN')} đ (${body.paymentMethod || 'CASH'}) cho đơn ${order.orderCode} bởi user ${user.email}`);
+
+    return {
+      success: true,
+      message: 'Ghi nhận thanh toán thành công',
+      payment,
+      paidAmount: newPaidAmount,
+      remainingAmount: Math.max(0, updatedOrder.amountTotal - newPaidAmount),
+    };
+  });
+
+  // ── Xóa / Hủy phiếu thanh toán (Nếu nhập sai) ──────────────────────────────
+  app.delete('/api/v1/orders/:id/payments/:paymentId', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id, paymentId } = request.params as { id: string; paymentId: string };
+
+    const payment = await prisma.orderPayment.findFirst({
+      where: { id: paymentId, orgId: user.orgId },
+    });
+
+    if (!payment) {
+      return reply.status(404).send({ error: 'Không tìm thấy phiếu thanh toán' });
+    }
+
+    await prisma.orderPayment.delete({
+      where: { id: paymentId },
+    });
+
+    // Cập nhật lại paidAmount
+    const orderHistoryId = payment.orderHistoryId;
+    let newPaidAmount = 0;
+    if (orderHistoryId) {
+      const sumAgg = await prisma.orderPayment.aggregate({
+        where: { orgId: user.orgId, orderHistoryId },
+        _sum: { amount: true },
+      });
+      newPaidAmount = sumAgg._sum.amount || 0;
+      await prisma.orderHistory.update({
+        where: { id: orderHistoryId },
+        data: { paidAmount: newPaidAmount },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Đã xóa phiếu thanh toán',
+      paidAmount: newPaidAmount,
+    };
+  });
+
+  // ── Cập nhật trực tiếp số tiền đã nhận của đơn hàng ───────────────────────
+  app.put('/api/v1/orders/:id/paid-amount', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as { paidAmount: number; notes?: string };
+    const newPaid = Number(body.paidAmount);
+    if (isNaN(newPaid) || newPaid < 0) {
+      return reply.status(400).send({ error: 'Số tiền nhận không hợp lệ' });
+    }
+
+    const isNumeric = /^\d+$/.test(id);
+    const order = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [{ id }, ...(isNumeric ? [{ odooOrderId: parseInt(id, 10) }] : []), { orderCode: id }],
+      },
+    });
+
+    if (!order) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng' });
+    }
+
+    const oldPaid = order.paidAmount || 0;
+    const diff = newPaid - oldPaid;
+
+    const updated = await prisma.orderHistory.update({
+      where: { id: order.id },
+      data: {
+        paidAmount: newPaid,
+        updatedAt: new Date(),
+      },
+    });
+
+    if (diff !== 0) {
+      await prisma.orderPayment.create({
+        data: {
+          orgId: user.orgId,
+          orderHistoryId: order.id,
+          amount: diff,
+          paymentMethod: 'CASH',
+          notes: body.notes?.trim() || `Cập nhật trực tiếp số tiền nhận từ ${oldPaid.toLocaleString('vi-VN')} đ sang ${newPaid.toLocaleString('vi-VN')} đ`,
+          createdById: user.id,
+          paidAt: new Date(),
+        },
+      });
+    }
+
+    logger.info(`[order-payments] User ${user.email} đã cập nhật số tiền nhận cho đơn ${order.orderCode}: ${oldPaid} -> ${newPaid}`);
+
+    const payments = await prisma.orderPayment.findMany({
+      where: { orderHistoryId: order.id, orgId: user.orgId },
+      include: {
+        createdBy: {
+          select: { id: true, fullName: true, email: true },
+        },
+        bankTransaction: {
+          select: { id: true, accountNumber: true, bankCode: true, refCode: true, transactionTime: true },
+        },
+      },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    return reply.send({
+      success: true,
+      order: updated,
+      paidAmount: updated.paidAmount,
+      remainingAmount: Math.max(0, updated.amountTotal - updated.paidAmount),
+      payments,
+      message: 'Cập nhật số tiền đã nhận thành công!',
+    });
   });
 
   // ── Distinct Salespersons for filter dropdown ─────────────────────────────

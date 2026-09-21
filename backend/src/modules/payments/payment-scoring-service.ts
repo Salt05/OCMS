@@ -313,9 +313,36 @@ export async function executeOrderApproval(
 
   // 1. Cập nhật OrderHistory (nếu là đơn Odoo/History)
   if (orderHistoryId) {
+    // 1.1 Ghi nhận phiếu thanh toán OrderPayment (chống tạo trùng lặp)
+    const existingPayment = await prisma.orderPayment.findFirst({
+      where: { orgId, bankTransactionId: transaction.id },
+    });
+    if (!existingPayment) {
+      await prisma.orderPayment.create({
+        data: {
+          orgId,
+          orderHistoryId,
+          amount: transaction.amount,
+          paymentMethod: 'BANK_TRANSFER',
+          bankTransactionId: transaction.id,
+          notes: transaction.description || `Khớp từ SMS MB Bank STK *${transaction.accountNumber?.slice(-4) || ''}`,
+          createdById: approverUserId || null,
+          paidAt: transaction.transactionTime || new Date(),
+        },
+      });
+    }
+
+    // 1.2 Tính tổng số tiền đã thanh toán
+    const sumAgg = await prisma.orderPayment.aggregate({
+      where: { orgId, orderHistoryId },
+      _sum: { amount: true },
+    });
+    const totalPaid = sumAgg._sum.amount || transaction.amount;
+
     const updatedHistory = await prisma.orderHistory.update({
       where: { id: orderHistoryId },
       data: {
+        paidAmount: totalPaid,
         note: transaction.notes
           ? `${transaction.notes}\n[Đã thanh toán qua MB Bank ${transaction.accountNumber}]`
           : `[Đã thanh toán qua MB Bank ${transaction.accountNumber}]`,
@@ -338,9 +365,34 @@ export async function executeOrderApproval(
 
   // 2. Cập nhật Order (nếu là đơn CRM)
   if (regularOrderId) {
+    const existingPayment = await prisma.orderPayment.findFirst({
+      where: { orgId, bankTransactionId: transaction.id },
+    });
+    if (!existingPayment) {
+      await prisma.orderPayment.create({
+        data: {
+          orgId,
+          orderId: regularOrderId,
+          amount: transaction.amount,
+          paymentMethod: 'BANK_TRANSFER',
+          bankTransactionId: transaction.id,
+          notes: transaction.description || `Khớp từ SMS MB Bank STK *${transaction.accountNumber?.slice(-4) || ''}`,
+          createdById: approverUserId || null,
+          paidAt: transaction.transactionTime || new Date(),
+        },
+      });
+    }
+
+    const sumAgg = await prisma.orderPayment.aggregate({
+      where: { orgId, orderId: regularOrderId },
+      _sum: { amount: true },
+    });
+    const totalPaid = sumAgg._sum.amount || transaction.amount;
+
     const updatedOrder = await prisma.order.update({
       where: { id: regularOrderId },
       data: {
+        paidAmount: totalPaid,
         status: 'paid',
         updatedAt: new Date(),
       },

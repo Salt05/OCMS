@@ -6,7 +6,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
 import { emitWebhook } from '../api/webhook-service.js';
-import { pendingReplies } from './chat-routes.js';
+import { pendingReplies, pendingSenders } from './chat-routes.js';
 import { chatbotService, isRecentAiMessage } from '../chatbot/chatbot-service.js';
 import { chatbotStateMachine } from '../chatbot/chatbot-state-machine.js';
 import { findMatchingContact } from '../contacts/contact-merge-service.js';
@@ -126,7 +126,7 @@ export async function handleIncomingMessage(
   try {
     const account = await prisma.zaloAccount.findUnique({
       where: { id: msg.accountId },
-      select: { orgId: true, ownerUserId: true },
+      select: { orgId: true, ownerUserId: true, displayName: true },
     });
     if (!account) return null;
 
@@ -235,6 +235,22 @@ export async function handleIncomingMessage(
       pendingReplies.delete(conversation.id);
     }
 
+    const pendingSender = pendingSenders.get(conversation.id);
+    let repliedByUserId: string | null = null;
+    let senderName = msg.senderName || null;
+
+    if (msg.isSelf) {
+      if (pendingSender && Date.now() - pendingSender.timestamp < 60000) {
+        repliedByUserId = pendingSender.userId;
+        if (!senderName || senderName === 'Unknown') {
+          senderName = pendingSender.fullName;
+        }
+        pendingSenders.delete(conversation.id);
+      } else if (!senderName || senderName === 'Unknown') {
+        senderName = account?.displayName || null;
+      }
+    }
+
     const isAi = msg.isSelf ? isRecentAiMessage(conversation.id, msg.content || '') : false;
 
     const message = await prisma.message.create({
@@ -244,11 +260,12 @@ export async function handleIncomingMessage(
         zaloMsgId: msg.msgId || null,
         senderType: msg.isSelf ? 'self' : 'contact',
         senderUid: msg.senderUid,
-        senderName: msg.senderName || null,
+        senderName,
         content: msg.content || '',
         contentType: msg.contentType || 'text',
         attachments,
         replyToId,
+        repliedByUserId,
         isAi,
         sentAt,
       },
@@ -260,6 +277,13 @@ export async function handleIncomingMessage(
             content: true,
             contentType: true,
             isNote: true,
+          },
+        },
+        repliedBy: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
           },
         },
       },
@@ -485,12 +509,17 @@ async function findOrCreateConversation(
     select: { id: true, contactId: true, zaloAccountId: true, contact: { select: { assignedUserId: true } } },
   });
 
-  // 2. Auto-recognize existing conversation in org when reconnecting or re-adding account
+  // 2. Auto-recognize existing conversation in org when reconnecting or re-adding account (same zaloUid only)
   if (!existing && externalThreadId) {
+    const currentMsgAcc = await prisma.zaloAccount.findUnique({
+      where: { id: msg.accountId },
+      select: { zaloUid: true },
+    });
     const existingInOrg = await prisma.conversation.findFirst({
       where: {
         orgId,
         externalThreadId,
+        ...(currentMsgAcc?.zaloUid ? { zaloAccount: { zaloUid: currentMsgAcc.zaloUid } } : {}),
       },
       orderBy: { lastMessageAt: 'desc' },
       select: { id: true, contactId: true, zaloAccountId: true, contact: { select: { assignedUserId: true } } },
