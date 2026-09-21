@@ -537,6 +537,25 @@
                             class="msg-action-item text-warning"
                             @click.stop="openUndoConfirm(msg)"
                           />
+
+                          <!-- Tải về tài liệu / tệp đính kèm nếu có -->
+                          <v-list-item
+                            v-if="getFileInfo(msg)?.href"
+                            :id="`msg-download-${msg.id}`"
+                            prepend-icon="lucide-download"
+                            title="Tải về tệp tin"
+                            class="msg-action-item text-primary"
+                            @click.stop="downloadFile(getFileInfo(msg)!.href, getFileInfo(msg)!.name)"
+                          />
+                          <!-- Tải về hình ảnh nếu có -->
+                          <v-list-item
+                            v-else-if="getImageUrl(msg)"
+                            :id="`msg-download-img-${msg.id}`"
+                            prepend-icon="lucide-download"
+                            title="Tải về hình ảnh"
+                            class="msg-action-item text-primary"
+                            @click.stop="downloadFile(getImageUrl(msg)!, 'image.jpg')"
+                          />
                         </v-list>
                       </v-card>
                     </v-menu>
@@ -614,24 +633,66 @@
                   <span>🎥 Video</span>
                 </div>
               </div>
-              <!-- File/PDF -->
-              <div v-else-if="getFileInfo(msg)" class="file-card">
-                <v-icon size="20" class="mr-2" color="info">lucide-file-text</v-icon>
-                <div class="flex-grow-1">
-                  <div class="text-body-2 font-weight-medium">{{ getFileInfo(msg)!.name }}</div>
-                  <div class="text-caption" style="opacity: 0.6;">{{ getFileInfo(msg)!.size }}</div>
+              <!-- Call Event (Cuộc gọi thoại / Video / Cuộc gọi nhỡ) -->
+              <div v-else-if="!isVideoMessage(msg) && isCallMessage(msg)" class="call-event-card">
+                <div class="d-flex align-center">
+                  <div
+                    class="call-icon-circle d-flex align-center justify-center flex-shrink-0 mr-3"
+                    :style="{ background: getCallInfo(msg).iconBg }"
+                  >
+                    <v-icon :color="getCallInfo(msg).iconColor" size="20">{{ getCallInfo(msg).icon }}</v-icon>
+                  </div>
+                  <div class="call-info flex-grow-1 min-w-0 pr-2">
+                    <div class="d-flex align-center gap-2">
+                      <span class="call-title font-weight-bold text-body-2" :style="{ color: getCallInfo(msg).iconColor }">
+                        {{ getCallInfo(msg).title }}
+                      </span>
+                      <span
+                        v-if="getCallInfo(msg).status === 'connected' && getCallInfo(msg).formattedDuration"
+                        class="call-duration-badge"
+                      >
+                        {{ getCallInfo(msg).formattedDuration }}
+                      </span>
+                    </div>
+                    <div class="call-subtitle text-caption text-grey-darken-1 mt-0.5">
+                      {{ getCallInfo(msg).subtitle }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- File/PDF/Document -->
+              <div
+                v-else-if="getFileInfo(msg)"
+                class="file-card"
+                :class="{ 'file-card-clickable': !!getFileInfo(msg)!.href }"
+                @click="getFileInfo(msg)!.href && downloadFile(getFileInfo(msg)!.href, getFileInfo(msg)!.name)"
+                :title="getFileInfo(msg)!.href ? 'Bấm để tải về: ' + getFileInfo(msg)!.name : ''"
+              >
+                <v-icon size="24" class="mr-2.5 flex-shrink-0" :color="getFileColor(getFileInfo(msg)!.name)">
+                  {{ getFileIcon(getFileInfo(msg)!.name) }}
+                </v-icon>
+                <div class="flex-grow-1 min-w-0 pr-2">
+                  <div class="text-body-2 font-weight-medium text-truncate" :title="getFileInfo(msg)!.name">
+                    {{ getFileInfo(msg)!.name }}
+                  </div>
+                  <div class="text-caption text-grey-darken-1 d-flex align-center gap-1" style="font-size: 11px;">
+                    <span>{{ getFileInfo(msg)!.size }}</span>
+                    <span v-if="getFileInfo(msg)!.href" class="text-primary font-weight-medium ml-1">• Tải về</span>
+                  </div>
                 </div>
                 <v-btn
                   v-if="getFileInfo(msg)!.href"
-                  icon
-                  size="x-small"
-                  variant="text"
+                  icon="lucide-download"
+                  size="small"
+                  variant="tonal"
+                  color="primary"
+                  class="flex-shrink-0"
                   title="Tải về"
                   @click.stop="downloadFile(getFileInfo(msg)!.href, getFileInfo(msg)!.name)"
-                >
-                  <v-icon size="16">lucide-download</v-icon>
-                </v-btn>
+                />
               </div>
+
               <!-- Sticker/Voice/GIF -->
               <div v-else-if="msg.contentType === 'sticker'" class="d-flex align-center">
                 <v-img :src="getStickerUrl(msg) || ''" alt="Sticker" width="120" height="120" contain />
@@ -667,33 +728,6 @@
                 <v-btn size="x-small" variant="tonal" color="warning" class="mt-2" prepend-icon="lucide-calendar-sync" @click="syncAppointment(msg)">
                   Đồng bộ lịch
                 </v-btn>
-              </div>
-              <!-- Call Event (Cuộc gọi thoại / Video / Cuộc gọi nhỡ) -->
-              <div v-else-if="!isVideoMessage(msg) && isCallMessage(msg)" class="call-event-card">
-                <div class="d-flex align-center">
-                  <div
-                    class="call-icon-circle d-flex align-center justify-center flex-shrink-0 mr-3"
-                    :style="{ background: getCallInfo(msg).iconBg }"
-                  >
-                    <v-icon :color="getCallInfo(msg).iconColor" size="20">{{ getCallInfo(msg).icon }}</v-icon>
-                  </div>
-                  <div class="call-info flex-grow-1 min-w-0 pr-2">
-                    <div class="d-flex align-center gap-2">
-                      <span class="call-title font-weight-bold text-body-2" :style="{ color: getCallInfo(msg).iconColor }">
-                        {{ getCallInfo(msg).title }}
-                      </span>
-                      <span
-                        v-if="getCallInfo(msg).status === 'connected' && getCallInfo(msg).formattedDuration"
-                        class="call-duration-badge"
-                      >
-                        {{ getCallInfo(msg).formattedDuration }}
-                      </span>
-                    </div>
-                    <div class="call-subtitle text-caption text-grey-darken-1 mt-0.5">
-                      {{ getCallInfo(msg).subtitle }}
-                    </div>
-                  </div>
-                </div>
               </div>
               <!-- Bank Card (Thẻ tài khoản ngân hàng / VietQR) -->
               <div v-else-if="isBankCardMessage(msg)" class="zalo-bank-card-bubble">
@@ -3226,6 +3260,11 @@ function isVideoMessage(msg: Message): boolean {
 function getFileInfo(msg: Message): { name: string; size: string; href: string } | null {
   if (isVideoMessage(msg)) return null;
   if (getImageUrl(msg)) return null;
+  if (isCallMessage(msg)) return null;
+  if (msg.contentType === 'call') return null;
+  if (isReminderMessage(msg)) return null;
+  if (isBankCardMessage(msg)) return null;
+  if (isContactCardMessage(msg)) return null;
 
   let title = '';
   let href = '';
@@ -3236,6 +3275,14 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
   if (msg.content?.startsWith('{')) {
     try {
       const p = JSON.parse(msg.content);
+      if (
+        p.title === 'sendBubbleMessage' ||
+        p.action?.includes('call') ||
+        p.action === 'recommened.calltime' ||
+        (p.description && typeof p.description === 'string' && p.description.toLowerCase().includes('cuộc gọi'))
+      ) {
+        return null;
+      }
       const params = typeof p.params === 'string' ? JSON.parse(p.params) : p.params;
       title = p.title || p.name || '';
       href = p.href || p.url || p.downloadUrl || '';
@@ -3244,10 +3291,11 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
     } catch {}
   }
 
-  // 2. Check attachments or fileInfo
-  const att = (Array.isArray((msg as any).attachments) && (msg as any).attachments[0]) || (msg as any).fileInfo;
-  if (att) {
-    if (!href) href = att.url || (msg as any).mediaUrl || '';
+  // 2. Check attachments or fileInfo (safely search for item with url)
+  const attList = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
+  const att = attList.find((a: any) => a && typeof a === 'object' && (a.url || a.href)) || (msg as any).fileInfo || attList[0];
+  if (att && typeof att === 'object') {
+    if (!href) href = att.url || att.href || (msg as any).mediaUrl || '';
     if (!title) title = att.title || att.fileName || att.name || '';
     if (!bytes) bytes = parseInt(att.size || att.fileSize || '0') || 0;
   }
@@ -3256,10 +3304,14 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
     href = (msg as any).mediaUrl;
   }
 
+  // If there is no download link and this is not a known file with a filename extension, do not treat as file
+  if (title === 'sendBubbleMessage') return null;
+  if (!href && (!title || !title.includes('.'))) return null;
+
   const isDoc =
     msg.contentType === 'file' ||
     msg.contentType === 'document' ||
-    (href && (href.includes('dlf1.vn') || href.includes('zfcloud.zdn.vn') || href.includes('dlfl.vn')));
+    Boolean(href && (href.includes('dlf1.vn') || href.includes('zfcloud.zdn.vn') || href.includes('dlfl.vn') || href.includes('zdn.vn')));
 
   if (!isDoc && !href && !title) return null;
 
@@ -3281,6 +3333,26 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
     return { name: finalName, size: sizeStr, href };
   }
   return null;
+}
+
+function getFileIcon(name: string = '') {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  if (['pdf'].includes(ext)) return 'lucide-file-text';
+  if (['doc', 'docx'].includes(ext)) return 'lucide-file-text';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'lucide-sheet';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'lucide-archive';
+  if (['mp3', 'wav', 'ogg', 'm4a', 'aac'].includes(ext)) return 'lucide-music';
+  if (['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(ext)) return 'lucide-video';
+  return 'lucide-file';
+}
+
+function getFileColor(name: string = '') {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  if (['pdf'].includes(ext)) return 'red-darken-1';
+  if (['doc', 'docx'].includes(ext)) return 'blue-darken-1';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'green-darken-1';
+  if (['zip', 'rar', '7z'].includes(ext)) return 'amber-darken-2';
+  return 'primary';
 }
 
 interface BankCardData {
@@ -3747,6 +3819,15 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   border-radius: var(--radius-inputs);
   background: var(--color-soft-stone);
   border: 1px solid var(--color-chalk);
+  transition: all 0.2s ease;
+}
+.file-card-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.file-card-clickable:hover {
+  background: rgba(0, 104, 255, 0.07);
+  border-color: rgba(0, 104, 255, 0.28);
 }
 .chat-image-container {
   max-width: 360px;

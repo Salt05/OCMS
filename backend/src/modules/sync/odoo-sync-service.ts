@@ -405,7 +405,11 @@ class OdooSyncService {
 
         const existing = await prisma.orderHistory.findUnique({
           where: { orgId_odooOrderId: { orgId: oid, odooOrderId: order.id } },
-          select: { id: true },
+          select: {
+            id: true,
+            paidAmount: true,
+            payments: { select: { amount: true } },
+          },
         });
 
         if (existing) {
@@ -414,13 +418,31 @@ class OdooSyncService {
           newCount++;
         }
 
+        // Tính toán số tiền đã thanh toán:
+        // 1. Ưu tiên số tiền thực thu từ các phiếu thu nội bộ trong OCMS (nếu có)
+        // 2. Nếu chưa có phiếu thu riêng: Quy ước thực tế Odoo là Đơn bán (sale/done) có chữ đen (khác 'to invoice') là đã thanh toán đủ 100%
+        let effectivePaidAmount = 0;
+        if (existing?.payments && existing.payments.length > 0) {
+          effectivePaidAmount = existing.payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+        } else {
+          const isOdooPaid = (order.state === 'sale' || order.state === 'done') && order.invoice_status !== 'to invoice';
+          if (isOdooPaid) {
+            effectivePaidAmount = parseFloat(order.amount_total) || 0;
+          }
+        }
+
+        const fullOrderData = {
+          ...orderData,
+          paidAmount: effectivePaidAmount,
+        };
+
         const orderHistory = await prisma.orderHistory.upsert({
           where: { orgId_odooOrderId: { orgId: oid, odooOrderId: order.id } },
-          update: orderData,
+          update: fullOrderData,
           create: {
             orgId: oid,
             odooOrderId: order.id,
-            ...orderData,
+            ...fullOrderData,
           },
         });
 

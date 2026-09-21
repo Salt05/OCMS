@@ -217,12 +217,12 @@ export function getCallInfo(msg: { contentType?: string; content?: string | null
 
   // Determine direction:
   // If senderType is 'self': isCaller === 1 means outbound.
-  // If senderType is 'contact': isCaller === 1 means inbound from contact.
-  let direction: 'outbound' | 'inbound' = 'outbound';
-  if (msg.senderType === 'contact') {
-    direction = isCaller === 0 ? 'outbound' : 'inbound';
-  } else {
+  // If senderType is 'contact': isCaller === 0 (or default) means inbound from contact.
+  let direction: 'outbound' | 'inbound' = 'inbound';
+  if (msg.senderType === 'self') {
     direction = isCaller === 0 ? 'inbound' : 'outbound';
+  } else {
+    direction = isCaller === 1 ? 'outbound' : 'inbound';
   }
 
   // Determine status:
