@@ -263,15 +263,10 @@ export async function evaluateAndMatchTransaction(
     result.scoringDetails.amountMatch &&
     (result.suggestedOrderHistoryId || result.suggestedOrderId)
   ) {
-    // Nếu điểm cao và khách quen đã được bật autoApprove
-    if (isAccountAutoApprove && isHighTrustScore && (isSenderTrusted || result.scoringDetails.codeMatch)) {
-      result.status = 'MATCHED';
-      result.matchedBy = isSenderTrusted ? 'AUTO_HIGH_TRUST' : 'AUTO_EXACT_CODE';
-      result.autoApproveEligible = true;
-    } else {
-      // Giai đoạn 1: Gợi ý sẵn cho kế toán duyệt 1-click
-      result.status = result.status === 'PARTIAL' ? 'PARTIAL' : (result.status === 'OVERPAID' ? 'OVERPAID' : 'SUGGESTED');
-    }
+    // Đề xuất cho kế toán duyệt, không tự động coi là đã thanh toán chỉ vì có điểm tin cậy
+    result.status = result.status === 'PARTIAL' ? 'PARTIAL' : (result.status === 'OVERPAID' ? 'OVERPAID' : 'SUGGESTED');
+    result.matchedBy = isSenderTrusted ? 'AUTO_HIGH_TRUST' : (result.scoringDetails.codeMatch ? 'AUTO_EXACT_CODE' : undefined);
+    result.autoApproveEligible = false;
   }
 
   return result;

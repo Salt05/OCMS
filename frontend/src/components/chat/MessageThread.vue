@@ -290,7 +290,17 @@
           <span class="text-caption text-grey ml-2">Đang tải tin cũ hơn...</span>
         </div>
         <v-progress-linear v-if="loading && messages.length > 0" indeterminate color="primary" class="mb-2" />
-        <template v-for="msg in messages.filter(m => !isUndoSyncMessage(m))" :key="msg.id">
+        <template v-for="(msg, idx) in visibleMessages" :key="msg.id">
+          <!-- Zalo-style Date / Time Divider -->
+          <div
+            v-if="shouldShowMessageDivider(idx)"
+            class="w-100 d-flex justify-center my-3 message-date-divider-wrapper"
+          >
+            <div class="message-date-divider-pill">
+              {{ formatChatDividerTime(msg.sentAt) }}
+            </div>
+          </div>
+
           <!-- AI Context Start Marker Divider -->
           <div
             v-if="isContextStart(msg)"
@@ -828,7 +838,7 @@
               <div v-else-if="isContactCardMessage(msg)" class="zalo-contact-card-bubble">
                 <div class="contact-card-surface">
                   <!-- Header: Contact Icon + Title + Badge -->
-                  <div class="contact-card-header d-flex align-center justify-space-between mb-2.5">
+                  <div class="contact-card-header d-flex align-center justify-space-between mb-3">
                     <div class="d-flex align-center gap-2">
                       <div class="contact-card-icon-wrap d-flex align-center justify-center">
                         <v-icon color="primary" size="18">lucide-contact</v-icon>
@@ -839,35 +849,73 @@
                         </div>
                       </div>
                     </div>
-                    <v-chip size="x-small" color="primary" variant="flat" class="text-caption font-weight-bold px-1.5" style="height: 18px; font-size: 10px;">
+                    <v-chip size="x-small" color="primary" variant="flat" class="text-caption font-weight-bold px-2" style="height: 20px; font-size: 11px;">
                       Liên hệ
                     </v-chip>
                   </div>
 
-                  <!-- Body: Name, Phone & QR Thumbnail -->
-                  <div class="contact-card-body d-flex align-center justify-space-between gap-3">
+                  <!-- Body: Avatar + Name + Phone & QR Thumbnail -->
+                  <div class="contact-card-body d-flex align-center gap-3">
+                    <!-- Contact Avatar -->
+                    <v-avatar size="52" class="contact-card-avatar flex-shrink-0" rounded="lg">
+                      <v-img
+                        v-if="getContactCardData(msg)?.avatarUrl && !failedContactAvatar[msg.id]"
+                        :src="getContactCardData(msg)!.avatarUrl"
+                        alt="Avatar"
+                        cover
+                        @error="failedContactAvatar[msg.id] = true"
+                      >
+                        <template #placeholder>
+                          <div class="d-flex align-center justify-center fill-height bg-grey-lighten-3">
+                            <v-icon size="24" color="grey">lucide-user</v-icon>
+                          </div>
+                        </template>
+                      </v-img>
+                      <div v-else class="d-flex align-center justify-center fill-height w-100 bg-blue-grey-lighten-5">
+                        <v-icon size="28" color="primary">lucide-user</v-icon>
+                      </div>
+                    </v-avatar>
+
+                    <!-- Contact Details (Name + Phone) -->
                     <div class="contact-card-info flex-grow-1 min-w-0">
-                      <div v-if="getContactCardData(msg)?.caption && getContactCardData(msg)?.caption !== getContactCardData(msg)?.phone" class="contact-card-name text-body-2 font-weight-bold text-truncate mb-0.5">
+                      <!-- Contact Name -->
+                      <div class="contact-card-name text-subtitle-2 font-weight-bold text-high-emphasis text-truncate mb-0.5" :title="getContactCardData(msg)?.name">
+                        {{ getContactCardData(msg)?.name || 'Danh thiếp Zalo' }}
+                      </div>
+
+                      <!-- Sub-caption / Note if any -->
+                      <div
+                        v-if="getContactCardData(msg)?.caption && getContactCardData(msg)?.caption !== getContactCardData(msg)?.name && getContactCardData(msg)?.caption !== getContactCardData(msg)?.phone"
+                        class="text-caption text-grey text-truncate mb-1"
+                        style="font-size: 11px;"
+                      >
                         {{ getContactCardData(msg)!.caption }}
                       </div>
-                      <div class="text-caption text-grey-darken-1 mb-0.5" style="font-size: 11px;">
-                        Số điện thoại
-                      </div>
-                      <div class="contact-card-phone text-h6 font-weight-bold text-primary font-mono d-flex align-center gap-1.5">
-                        <v-icon size="16" color="primary">lucide-phone</v-icon>
-                        <span>{{ getContactCardData(msg)?.phone || 'Chưa rõ số' }}</span>
-                        <v-btn
-                          v-if="getContactCardData(msg)?.phone"
-                          icon
-                          size="x-small"
-                          variant="text"
-                          color="primary"
-                          class="contact-copy-btn"
-                          :title="copiedPhone === getContactCardData(msg)?.phone ? 'Đã chép!' : 'Sao chép số điện thoại'"
-                          @click.stop="copyPhoneNumber(getContactCardData(msg)!.phone)"
-                        >
-                          <v-icon size="14">{{ copiedPhone === getContactCardData(msg)?.phone ? 'lucide-check' : 'lucide-copy' }}</v-icon>
-                        </v-btn>
+
+                      <!-- Phone Number Section -->
+                      <div class="contact-card-phone-wrap">
+                        <div class="text-caption text-grey-darken-1" style="font-size: 11px;">
+                          Số điện thoại
+                        </div>
+                        <div v-if="getContactCardData(msg)?.phone" class="contact-card-phone text-body-1 font-weight-bold text-primary font-mono d-flex align-center gap-1.5">
+                          <v-icon size="15" color="primary">lucide-phone</v-icon>
+                          <span>{{ getContactCardData(msg)?.phone }}</span>
+                          <v-btn
+                            icon
+                            size="x-small"
+                            variant="text"
+                            color="primary"
+                            class="contact-copy-btn"
+                            :title="copiedPhone === getContactCardData(msg)?.phone ? 'Đã chép!' : 'Sao chép số điện thoại'"
+                            @click.stop="copyPhoneNumber(getContactCardData(msg)!.phone)"
+                          >
+                            <v-icon size="14">{{ copiedPhone === getContactCardData(msg)?.phone ? 'lucide-check' : 'lucide-copy' }}</v-icon>
+                          </v-btn>
+                        </div>
+                        <div v-else class="text-caption text-grey font-italic d-flex align-center gap-1 mt-0.5" style="font-size: 12px;">
+                          <v-icon size="13" color="grey">lucide-phone-off</v-icon>
+                          <span>Chưa công khai SĐT</span>
+                        </div>
                       </div>
                     </div>
 
@@ -876,7 +924,7 @@
                       v-if="getContactCardData(msg)?.qrCodeUrl && !failedContactQr[msg.id]"
                       class="contact-card-qr-box flex-shrink-0 cursor-pointer"
                       title="Bấm để phóng to mã QR"
-                      @click.stop="openSingleImagePreview(getContactCardData(msg)!.qrCodeUrl!, 'Mã QR Zalo - ' + (getContactCardData(msg)?.phone || 'Danh thiếp'))"
+                      @click.stop="openSingleImagePreview(getContactCardData(msg)!.qrCodeUrl!, 'Mã QR Zalo - ' + (getContactCardData(msg)?.name || 'Danh thiếp'))"
                     >
                       <img
                         :src="getContactCardData(msg)!.qrCodeUrl"
@@ -922,7 +970,7 @@
                       color="primary"
                       class="text-none font-weight-bold flex-grow-1"
                       style="height: 28px; border-radius: 6px; font-size: 12px;"
-                      @click.stop="openSingleImagePreview(getContactCardData(msg)!.qrCodeUrl!, 'Mã QR Zalo - ' + (getContactCardData(msg)?.phone || 'Danh thiếp'))"
+                      @click.stop="openSingleImagePreview(getContactCardData(msg)!.qrCodeUrl!, 'Mã QR Zalo - ' + (getContactCardData(msg)?.name || 'Danh thiếp'))"
                     >
                       <v-icon size="13" class="mr-1">lucide-qr-code</v-icon>
                       Xem QR
@@ -1067,7 +1115,7 @@
             </div>
           </div>
         </template>
-        <div v-if="!loading && messages.filter(m => !isUndoSyncMessage(m)).length === 0" class="text-center pa-8 text-grey">Chưa có tin nhắn</div>
+        <div v-if="!loading && visibleMessages.length === 0" class="text-center pa-8 text-grey">Chưa có tin nhắn</div>
       </div>
 
       <!-- Input -->
@@ -1830,6 +1878,7 @@ import logoLight from '@/assets/logo-light.png';
 import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
 import { isCallMessage, getCallInfo, isVideoPayload } from '@/utils/call-helpers';
 import { useTags } from '@/composables/use-tags';
+import { formatChatDividerTime, shouldShowChatDivider } from '@/utils/date-formatters';
 
 function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -3223,6 +3272,18 @@ function isUndoSyncMessage(msg: Message): boolean {
   return false;
 }
 
+const visibleMessages = computed(() => {
+  return (props.messages || []).filter((m) => !isUndoSyncMessage(m));
+});
+
+function shouldShowMessageDivider(idx: number): boolean {
+  const msgs = visibleMessages.value;
+  if (!msgs || idx < 0 || idx >= msgs.length) return false;
+  const currMsg = msgs[idx];
+  const prevMsg = idx > 0 ? msgs[idx - 1] : null;
+  return shouldShowChatDivider(currMsg?.sentAt, prevMsg?.sentAt);
+}
+
 /** Check if message is a video (either contentType === 'video' or file with video extension) */
 function isVideoMessage(msg: Message): boolean {
   if (msg.contentType === 'video') return true;
@@ -3393,7 +3454,9 @@ function copyBankNumber(num: string) {
 }
 
 export interface ContactCardData {
+  name: string;
   phone: string;
+  avatarUrl?: string;
   caption?: string;
   qrCodeUrl?: string;
   contactUid?: string;
@@ -3401,25 +3464,7 @@ export interface ContactCardData {
 
 const copiedPhone = ref<string | null>(null);
 const failedContactQr = ref<Record<string, boolean>>({});
-
-function isContactCardMessage(msg: Message | any): boolean {
-  if (!msg) return false;
-  if (msg.contentType === 'contact_card') return true;
-  if (!msg.content) return false;
-  if (typeof msg.content === 'string') {
-    if (msg.content.includes('qrCodeUrl') || (msg.content.includes('phone') && (msg.content.includes('qr-talk') || msg.content.includes('contactUid') || msg.content.includes('caption')))) {
-      try {
-        const p = JSON.parse(msg.content);
-        return Boolean(p.qrCodeUrl || (p.phone && (p.contactUid || p.caption)));
-      } catch {
-        return false;
-      }
-    }
-  } else if (typeof msg.content === 'object' && msg.content !== null) {
-    return Boolean(msg.content.qrCodeUrl || (msg.content.phone && (msg.content.contactUid || msg.content.caption)));
-  }
-  return false;
-}
+const failedContactAvatar = ref<Record<string, boolean>>({});
 
 function getContactCardData(msg: Message | any): ContactCardData | null {
   if (!msg?.content) return null;
@@ -3432,12 +3477,102 @@ function getContactCardData(msg: Message | any): ContactCardData | null {
     }
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
+
+  // Disqualify web link shares, grab links, or calls
+  if (
+    parsed.action === 'recommened.link' ||
+    parsed.action === 'recommended.link' ||
+    parsed.action?.includes('call') ||
+    parsed.action === 'recommened.calltime'
+  ) {
+    return null;
+  }
+
+  // Parse inner description if it is a JSON string (standard in Zalo contact shares)
+  let descObj: any = null;
+  if (typeof parsed.description === 'string' && parsed.description.trim().startsWith('{')) {
+    try {
+      descObj = JSON.parse(parsed.description);
+    } catch {}
+  } else if (typeof parsed.description === 'object' && parsed.description !== null) {
+    descObj = parsed.description;
+  }
+
+  // 1. Phone number
+  let phone = '';
+  if (descObj?.phone) phone = String(descObj.phone).trim();
+  else if (descObj?.phoneNumber) phone = String(descObj.phoneNumber).trim();
+  else if (parsed.phone) phone = String(parsed.phone).trim();
+  else if (parsed.phoneNumber) phone = String(parsed.phoneNumber).trim();
+  else if (typeof parsed.description === 'string') {
+    const m = parsed.description.match(/(0\d{9,10}|\+84\d{9,10})/);
+    if (m) phone = m[1];
+  }
+
+  // 2. Name
+  let name = '';
+  if (parsed.title && !parsed.title.startsWith('http') && !parsed.title.startsWith('{')) {
+    name = String(parsed.title).trim();
+  } else if (parsed.name) {
+    name = String(parsed.name).trim();
+  } else if (descObj?.name) {
+    name = String(descObj.name).trim();
+  } else if (descObj?.caption && descObj.caption !== phone) {
+    name = String(descObj.caption).trim();
+  } else if (parsed.caption && parsed.caption !== phone) {
+    name = String(parsed.caption).trim();
+  }
+
+  // 3. Avatar URL
+  let avatarUrl = '';
+  if (parsed.thumb && !parsed.thumb.includes('ecard_newfriend')) {
+    avatarUrl = parsed.thumb;
+  } else if (parsed.avatar || parsed.avatarUrl) {
+    avatarUrl = parsed.avatar || parsed.avatarUrl;
+  } else if (descObj?.thumb || descObj?.avatar || descObj?.avatarUrl) {
+    avatarUrl = descObj.thumb || descObj.avatar || descObj.avatarUrl;
+  } else if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+    avatarUrl = msg.attachments[0].thumbUrl || msg.attachments[0].url || '';
+  }
+
+  // 4. QR Code URL
+  let qrCodeUrl = descObj?.qrCodeUrl || parsed.qrCodeUrl || '';
+
+  // 5. Contact UID
+  let contactUid = '';
+  if (typeof parsed.params === 'string' && !parsed.params.startsWith('{')) {
+    contactUid = parsed.params.trim();
+  } else if (descObj?.gUid || descObj?.uid) {
+    contactUid = String(descObj.gUid || descObj.uid).trim();
+  } else if (parsed.uid) {
+    contactUid = String(parsed.uid).trim();
+  }
+
+  // 6. Caption
+  const caption = (descObj?.caption || parsed.caption || '') !== phone ? (descObj?.caption || parsed.caption) : '';
+
+  const isCard =
+    parsed.action === 'recommened.user' ||
+    parsed.action === 'recommended.user' ||
+    msg.contentType === 'contact_card' ||
+    Boolean(phone) ||
+    Boolean(qrCodeUrl && name);
+
+  if (!isCard) return null;
+
   return {
-    phone: parsed.phone || parsed.caption || '',
-    caption: parsed.caption || parsed.name || '',
-    qrCodeUrl: parsed.qrCodeUrl || '',
-    contactUid: parsed.contactUid || parsed.uid || '',
+    name: name || (phone ? `Liên hệ ${phone}` : 'Danh thiếp Zalo'),
+    phone,
+    avatarUrl,
+    caption,
+    qrCodeUrl,
+    contactUid,
   };
+}
+
+function isContactCardMessage(msg: Message | any): boolean {
+  if (!msg) return false;
+  return getContactCardData(msg) !== null;
 }
 
 function copyPhoneNumber(phone: string) {
@@ -4686,6 +4821,35 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   background-color: rgba(0, 104, 255, 0.1) !important;
 }
 
+/* ── Message Date / Time Divider (Zalo style) ── */
+.message-date-divider-wrapper {
+  pointer-events: none;
+  user-select: none;
+  position: relative;
+  z-index: 1;
+}
+
+.message-date-divider-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.3);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 3px 12px;
+  border-radius: 9999px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  letter-spacing: 0.1px;
+}
+
+.v-theme--dark .message-date-divider-pill {
+  background-color: rgba(255, 255, 255, 0.16);
+  color: #f3f4f6;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
 /* ── Call Event Card ── */
 .call-event-card {
   min-width: 200px;
@@ -4751,8 +4915,18 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 
 /* ── Contact Card Bubble Styles (Zalo Contact Card / QR Share Contact) ── */
 .zalo-contact-card-bubble {
-  max-width: 320px;
+  max-width: 350px;
   width: 100%;
+}
+
+.contact-card-avatar {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  border-radius: 10px !important;
+}
+
+.v-theme--dark .contact-card-avatar {
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .contact-card-surface {

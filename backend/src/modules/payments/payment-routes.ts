@@ -8,6 +8,7 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { parseIncomingSms, type SmsPayloadInput } from './sms-parser.js';
 import { evaluateAndMatchTransaction, executeOrderApproval } from './payment-scoring-service.js';
+import { reconcileTransaction, RECON_STATUS } from './reconciliation-service.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { randomUUID } from 'node:crypto';
 
@@ -147,7 +148,7 @@ export async function paymentRoutes(app: FastifyInstance) {
             success: true,
             message: 'Giao dịch đã được ghi nhận trước đó (Idempotent by Gateway Message ID)',
             transactionId: existingByGatewayId.id,
-            status: existingByGatewayId.status,
+            status: (existingByGatewayId as any).reconciliationStatus || existingByGatewayId.status,
             isDuplicate: true,
           });
         }
@@ -164,16 +165,27 @@ export async function paymentRoutes(app: FastifyInstance) {
           success: true,
           message: 'Giao dịch đã được ghi nhận trước đó (Idempotent)',
           transactionId: existingTx.id,
-          status: existingTx.status,
+          status: (existingTx as any).reconciliationStatus || existingTx.status,
           isDuplicate: true,
         });
       }
 
-      // 4. Đưa vào Bộ não Chấm điểm & So khớp Đơn hàng (Scoring Engine)
+      // 4. Chạy Reconciliation 2 tầng (Hard Rules + Scoring)
+      const reconciliation = await reconcileTransaction(orgId, parsed, bankAccount?.id);
+
+      // 5. Chạy Legacy Scoring Engine (backward-compatible, dùng cho các case không có order code)
       const scoring = await evaluateAndMatchTransaction(orgId, parsed, bankAccount?.id);
 
-      // 5. Lưu bản ghi BankTransaction vào PostgreSQL
-      const newTx = await prisma.bankTransaction.create({
+      // Merge: Reconciliation ưu tiên, legacy scoring làm fallback
+      const finalStatus = reconciliation.legacyScoringStatus;
+      const finalSuggestedHistoryId = reconciliation.matchedOrderHistoryId || scoring.suggestedOrderHistoryId;
+      const finalSuggestedOrderId = reconciliation.matchedOrderId || scoring.suggestedOrderId;
+      const finalSuggestedCode = reconciliation.matchedOrderCode || scoring.suggestedOrderCode;
+      const finalMatchedBy = reconciliation.legacyMatchedBy || scoring.matchedBy || null;
+      const finalAutoApprove = reconciliation.legacyAutoApproveEligible || scoring.autoApproveEligible;
+
+      // 6. Lưu bản ghi BankTransaction vào PostgreSQL
+      const newTx = await (prisma.bankTransaction.create as any)({
         data: {
           id: randomUUID(),
           orgId,
@@ -191,50 +203,60 @@ export async function paymentRoutes(app: FastifyInstance) {
           description: parsed.description,
           rawSms: parsed.rawSms,
           idempotencyHash: parsed.idempotencyHash,
+          // Parsed data (raw SMS vẫn được giữ nguyên)
+          parsedOrderCode: parsed.parsedOrderCode,
+          parsedCustomerName: parsed.parsedCustomerName,
+          // Reconciliation 2-tier results
+          reconciliationStatus: reconciliation.status,
+          reconciliationScore: reconciliation.score,
+          reconciliationReasons: reconciliation.reasons,
+          // Legacy scoring (backward-compatible)
           confidenceScore: scoring.confidenceScore,
           scoringDetails: scoring.scoringDetails,
-          status: scoring.status,
-          suggestedOrderHistoryId: scoring.suggestedOrderHistoryId,
-          suggestedOrderId: scoring.suggestedOrderId,
-          matchedOrderCode: scoring.suggestedOrderCode,
-          matchedBy: scoring.matchedBy || null,
+          status: finalStatus,
+          suggestedOrderHistoryId: finalSuggestedHistoryId,
+          suggestedOrderId: finalSuggestedOrderId,
+          matchedOrderCode: finalSuggestedCode,
+          matchedBy: finalMatchedBy,
         },
       });
 
-      // 6. Nếu đủ điều kiện tự động duyệt (Giai đoạn 2), kích hoạt duyệt ngay lập tức!
-      if (scoring.autoApproveEligible && scoring.status === 'MATCHED') {
-        try {
-          await executeOrderApproval(
-            orgId,
-            newTx.id,
-            undefined, // Hệ thống tự duyệt
-            scoring.suggestedOrderHistoryId || scoring.suggestedOrderId || undefined,
-            !!scoring.suggestedOrderHistoryId
-          );
-          logger.info(`[sms-webhook] TỰ ĐỘNG DUYỆT THÀNH CÔNG đơn hàng #${scoring.suggestedOrderCode}`);
-        } catch (autoErr: any) {
-          logger.warn(`[sms-webhook] Lỗi khi tự động duyệt đơn: ${autoErr.message}`);
-        }
-      }
+      // 7. Giao dịch mới nhận được chỉ ở trạng thái 'Khớp đề xuất / Chờ duyệt' (hoặc cần kiểm tra),
+      // không tự ý đánh dấu đã thanh toán mà phải chờ nhân viên kế toán bấm 'Xác nhận thanh toán'.
+      logger.info(
+        `[sms-webhook] Nhận SMS giao dịch #${newTx.id} - Số tiền: ${parsed.amount.toLocaleString('vi-VN')} đ - Trạng thái: ${finalStatus} (Chờ kế toán xác nhận)`
+      );
 
-      // 7. Bắn Socket.IO realtime để giao diện hiển thị dòng mới ngay tức thì
+      // 8. Bắn Socket.IO realtime để giao diện hiển thị dòng mới ngay tức thì
       try {
         zaloPool.getIO()?.emit('payment:new_transaction', {
           transaction: newTx,
           scoring,
+          reconciliation: {
+            status: reconciliation.status,
+            score: reconciliation.score,
+            reasons: reconciliation.reasons,
+          },
         });
       } catch (err) {}
 
       const durationMs = Date.now() - startTime;
-      logger.info(`[sms-webhook] Xử lý SMS MB Bank thành công trong ${durationMs}ms - Số tiền: ${parsed.amount.toLocaleString('vi-VN')} đ - Điểm: ${scoring.confidenceScore}/100 - Trạng thái: ${scoring.status}`);
+      logger.info(`[sms-webhook] Xử lý SMS MB Bank thành công trong ${durationMs}ms - Số tiền: ${parsed.amount.toLocaleString('vi-VN')} đ - Reconciliation: ${reconciliation.status} (score: ${reconciliation.score}) - Legacy: ${finalStatus}`);
 
       return reply.send({
         success: true,
         transactionId: newTx.id,
-        status: scoring.status,
+        // Reconciliation 2-tier response
+        status: reconciliation.status,
+        score: reconciliation.score,
+        reasons: reconciliation.reasons,
+        orderCode: finalSuggestedCode,
+        parsedOrderCode: parsed.parsedOrderCode,
+        parsedCustomerName: parsed.parsedCustomerName,
+        // Legacy fields (backward-compatible)
         confidenceScore: scoring.confidenceScore,
-        suggestedOrderCode: scoring.suggestedOrderCode,
-        autoApproved: scoring.autoApproveEligible,
+        suggestedOrderCode: finalSuggestedCode,
+        autoApproved: finalAutoApprove && reconciliation.status === RECON_STATUS.AUTO_PAID,
       });
     } catch (err: any) {
       logger.error('[sms-webhook] Lỗi xử lý SMS:', err);
@@ -433,23 +455,21 @@ export async function paymentRoutes(app: FastifyInstance) {
         search?: string;
         from?: string;
         to?: string;
+        tab?: 'pending' | 'approved' | 'all';
       };
 
       const page = Math.max(1, parseInt(query.page || '1', 10));
       const limit = Math.min(100, Math.max(1, parseInt(query.limit || '25', 10)));
       const skip = (page - 1) * limit;
 
-      const where: any = { orgId: user.orgId };
+      const baseWhere: any = { orgId: user.orgId };
 
-      if (query.status) {
-        where.status = query.status;
-      }
       if (query.bankAccountId) {
-        where.bankAccountId = query.bankAccountId;
+        baseWhere.bankAccountId = query.bankAccountId;
       }
       if (query.search) {
         const s = query.search.trim();
-        where.OR = [
+        baseWhere.OR = [
           { description: { contains: s, mode: 'insensitive' } },
           { matchedOrderCode: { contains: s, mode: 'insensitive' } },
           { senderNameRaw: { contains: s, mode: 'insensitive' } },
@@ -457,9 +477,33 @@ export async function paymentRoutes(app: FastifyInstance) {
         ];
       }
       if (query.from || query.to) {
-        where.transactionTime = {};
-        if (query.from) where.transactionTime.gte = new Date(query.from);
-        if (query.to) where.transactionTime.lte = new Date(query.to.includes('T') ? query.to : `${query.to}T23:59:59.999Z`);
+        baseWhere.transactionTime = {};
+        if (query.from) baseWhere.transactionTime.gte = new Date(query.from);
+        if (query.to) baseWhere.transactionTime.lte = new Date(query.to.includes('T') ? query.to : `${query.to}T23:59:59.999Z`);
+      }
+
+      // Đếm số lượng cho 2 tab: CHƯA DUYỆT và ĐÃ DUYỆT
+      const [pendingCount, approvedCount] = await Promise.all([
+        prisma.bankTransaction.count({
+          where: { ...baseWhere, status: { not: 'MATCHED' } },
+        }),
+        prisma.bankTransaction.count({
+          where: { ...baseWhere, status: 'MATCHED' },
+        }),
+      ]);
+
+      const where: any = { ...baseWhere };
+
+      if (query.tab === 'approved') {
+        where.status = 'MATCHED';
+      } else if (query.tab === 'pending') {
+        if (query.status) {
+          where.status = query.status;
+        } else {
+          where.status = { not: 'MATCHED' };
+        }
+      } else if (query.status) {
+        where.status = query.status;
       }
 
       const [transactions, total] = await Promise.all([
@@ -467,8 +511,8 @@ export async function paymentRoutes(app: FastifyInstance) {
           where,
           include: {
             bankAccount: { select: { bankName: true, accountNumber: true, accountHolder: true } },
-            matchedOrderHistory: { select: { id: true, orderCode: true, partnerName: true, amountTotal: true, state: true } },
-            matchedOrder: { select: { id: true, orderCode: true, totalAmount: true, status: true } },
+            matchedOrderHistory: { select: { id: true, orderCode: true, partnerName: true, amountTotal: true, state: true, paidAmount: true } },
+            matchedOrder: { select: { id: true, orderCode: true, totalAmount: true, status: true, paidAmount: true } },
           },
           orderBy: { transactionTime: 'desc' },
           skip,
@@ -477,12 +521,102 @@ export async function paymentRoutes(app: FastifyInstance) {
         prisma.bankTransaction.count({ where }),
       ]);
 
+      // Enrich: Tìm thông tin đơn đề xuất và người duyệt
+      const suggestedHistoryIds = transactions
+        .map((t) => t.suggestedOrderHistoryId)
+        .filter(Boolean) as string[];
+      const suggestedOrderIds = transactions
+        .map((t) => t.suggestedOrderId)
+        .filter(Boolean) as string[];
+      const matchedUserIds = transactions
+        .map((t) => t.matchedUserId)
+        .filter(Boolean) as string[];
+
+      const [suggestedHistories, suggestedCrmOrders, matchedUsers] = await Promise.all([
+        suggestedHistoryIds.length > 0
+          ? prisma.orderHistory.findMany({
+              where: { id: { in: suggestedHistoryIds }, orgId: user.orgId },
+              select: {
+                id: true,
+                orderCode: true,
+                partnerName: true,
+                amountTotal: true,
+                state: true,
+                paidAmount: true,
+                customerProfile: { select: { name: true, phone: true } },
+              },
+            })
+          : [],
+        suggestedOrderIds.length > 0
+          ? prisma.order.findMany({
+              where: { id: { in: suggestedOrderIds }, orgId: user.orgId },
+              select: {
+                id: true,
+                orderCode: true,
+                totalAmount: true,
+                status: true,
+                paidAmount: true,
+                contact: { select: { fullName: true, phone: true } },
+              },
+            })
+          : [],
+        matchedUserIds.length > 0
+          ? prisma.user.findMany({
+              where: { id: { in: matchedUserIds } },
+              select: { id: true, fullName: true, email: true },
+            })
+          : [],
+      ]);
+
+      const historyMap = new Map(suggestedHistories.map((h) => [h.id, h]));
+      const crmMap = new Map(suggestedCrmOrders.map((o) => [o.id, o]));
+      const userMap = new Map(matchedUsers.map((u) => [u.id, u]));
+
+      const enrichedTransactions = transactions.map((t) => {
+        let suggestedOrder = null;
+        if (t.suggestedOrderHistoryId && historyMap.has(t.suggestedOrderHistoryId)) {
+          const h = historyMap.get(t.suggestedOrderHistoryId)!;
+          suggestedOrder = {
+            id: h.id,
+            orderCode: h.orderCode,
+            customerName: h.partnerName || h.customerProfile?.name || 'Khách hàng',
+            customerPhone: h.customerProfile?.phone || null,
+            amountTotal: h.amountTotal || 0,
+            paidAmount: h.paidAmount || 0,
+            status: h.state,
+            isHistoryOrder: true,
+          };
+        } else if (t.suggestedOrderId && crmMap.has(t.suggestedOrderId)) {
+          const o = crmMap.get(t.suggestedOrderId)!;
+          suggestedOrder = {
+            id: o.id,
+            orderCode: o.orderCode,
+            customerName: o.contact?.fullName || 'Khách hàng',
+            customerPhone: o.contact?.phone || null,
+            amountTotal: o.totalAmount || 0,
+            paidAmount: o.paidAmount || 0,
+            status: o.status,
+            isHistoryOrder: false,
+          };
+        }
+
+        const matchedUser = t.matchedUserId && userMap.has(t.matchedUserId) ? userMap.get(t.matchedUserId) : null;
+
+        return {
+          ...t,
+          suggestedOrder,
+          matchedUser,
+        };
+      });
+
       return {
-        transactions,
+        transactions: enrichedTransactions,
         total,
         page,
         limit,
         totalPages: Math.ceil(total / limit),
+        pendingCount,
+        approvedCount,
       };
     });
 

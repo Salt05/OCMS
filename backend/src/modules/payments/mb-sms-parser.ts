@@ -52,7 +52,15 @@ export function extractCandidateOrderCodes(text: string): string[] {
     }
   }
 
-  // 2. Khớp mã SO Odoo: SO012345, SO 12345, SO-12345
+  // 2. Khớp mã S0XXXX Odoo (format phổ biến nhất): S02312, S02300, S12345
+  const s0Matches = normalized.match(/\bS0\d{4,6}\b/g);
+  if (s0Matches) {
+    for (const m of s0Matches) {
+      codes.add(m);
+    }
+  }
+
+  // 3. Khớp mã SO Odoo: SO012345, SO 12345, SO-12345
   const soMatches = normalized.match(/\bSO[-_ ]?[0-9]{3,7}\b/gi);
   if (soMatches) {
     for (const m of soMatches) {
@@ -60,7 +68,7 @@ export function extractCandidateOrderCodes(text: string): string[] {
     }
   }
 
-  // 3. Khớp mã AI: AI-XXXXXXXX hoặc SO-AI-XXXXXXXX
+  // 4. Khớp mã AI: AI-XXXXXXXX hoặc SO-AI-XXXXXXXX
   const aiMatches = normalized.match(/\b(?:SO-)?AI-[A-Z0-9]{6,12}\b/gi);
   if (aiMatches) {
     for (const m of aiMatches) {
@@ -68,7 +76,7 @@ export function extractCandidateOrderCodes(text: string): string[] {
     }
   }
 
-  // 4. Khớp từ khóa DH / DON HANG: DH12345, DH-12345, DON 12345
+  // 5. Khớp từ khóa DH / DON HANG: DH12345, DH-12345, DON 12345
   const dhMatches = normalized.match(/(?:DH|DON|ORDER)[-_ ]?([A-Z0-9]{4,12})/gi);
   if (dhMatches) {
     for (const m of dhMatches) {
@@ -114,6 +122,81 @@ export function extractSenderNameFromMB(description: string): string | null {
 }
 
 /**
+ * Parsed transfer content: order code + customer name
+ */
+export interface ParsedTransferContent {
+  orderCode: string | null;
+  customerName: string | null;
+}
+
+/**
+ * Bóc tách thông tin từ nội dung chuyển khoản (ND field):
+ * - Order Code (S02312, ORD-..., SO...)
+ * - Customer Name (phần text sau order code, nếu là tên người)
+ *
+ * Hỗ trợ các dạng nội dung:
+ * - "TT S02312 NGUYEN VAN A"
+ * - "THANH TOAN S02312 NGUYEN VAN A"
+ * - "Thanh toan don S02312"
+ * - "S02312 NGUYEN VAN A"
+ * - "S02312"
+ * - "NGUYEN VAN A chuyen tien"
+ */
+export function extractTransferContent(description: string): ParsedTransferContent {
+  const result: ParsedTransferContent = { orderCode: null, customerName: null };
+  if (!description) return result;
+
+  const text = description.trim();
+  const upper = text.toUpperCase();
+
+  // 1. Tìm order code trong nội dung
+  // Ưu tiên S0XXXX (Odoo), sau đó ORD-..., SO...
+  const orderCodePatterns: RegExp[] = [
+    /\bS0\d{4,6}\b/i,                           // S02312, S02300
+    /\bORD[-_ ]?[0-9]{8}[-_ ]?[0-9]{2,4}\b/i,   // ORD-20260920-001
+    /\bSO[-_ ]?[0-9]{3,7}\b/i,                   // SO12345
+    /\b(?:SO-)?AI-[A-Z0-9]{6,12}\b/i,            // AI-A1B2C3D4
+    /\b(?:DH|DON)[-_ ]?[A-Z0-9]{4,12}\b/i,       // DH12345
+  ];
+
+  let codeMatch: RegExpMatchArray | null = null;
+  for (const pattern of orderCodePatterns) {
+    codeMatch = upper.match(pattern);
+    if (codeMatch) {
+      result.orderCode = codeMatch[0].replace(/[-_ ]/g, '').toUpperCase();
+      break;
+    }
+  }
+
+  // 2. Tìm customer name — phần text sau order code
+  if (codeMatch) {
+    const codeEndIdx = upper.indexOf(codeMatch[0]) + codeMatch[0].length;
+    let afterCode = text.slice(codeEndIdx).trim();
+
+    // Bỏ các từ khóa phổ biến ở đầu: "chuyen tien", "ck", "thanh toan"
+    afterCode = afterCode.replace(/^\s*(?:chuyen\s*tien|ck|chuyenkhoan|chuyen\s*khoan)\s*/i, '').trim();
+
+    // Tên người: chỉ chứa chữ cái (có/không dấu) và khoảng trắng, tối thiểu 4 ký tự, tối đa 40
+    const nameCandidate = afterCode.replace(/\s+/g, ' ').trim();
+    if (nameCandidate.length >= 4 && nameCandidate.length <= 40 && /^[A-Za-zÀ-ỹ\s]+$/.test(nameCandidate)) {
+      result.customerName = nameCandidate.toUpperCase();
+    }
+  } else {
+    // Không tìm thấy order code — thử tìm tên người gửi từ các pattern đặc biệt
+    // Dạng: "NGUYEN VAN A chuyen tien" hoặc "NGUYEN VAN A TT ..."
+    const nameBeforeKeyword = upper.match(/^([A-Z\s]{4,30})\s+(?:CHUYEN|CK|THANH TOAN|TT|CHUYENKHOAN|CHUYEN KHOAN)/i);
+    if (nameBeforeKeyword && nameBeforeKeyword[1]) {
+      const name = nameBeforeKeyword[1].trim();
+      if (name.length >= 4 && !/\d/.test(name)) {
+        result.customerName = name;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Parser chính cho MB Bank SMS
  */
 export function parseMbBankSms(smsContent: string, simAccountNumberFallback?: string): ParsedBankSms {
@@ -148,19 +231,25 @@ export function parseMbBankSms(smsContent: string, simAccountNumberFallback?: st
     result.accountNumber = simAccountNumberFallback.trim();
   }
 
-  // ── 2. Bóc tách Số tiền giao dịch (GD: +500,000VND hoặc tang 500,000VND) ──
+  // ── 2. Bóc tách Số tiền giao dịch (GD: +500,000VND hoặc TK xxx +500,000VND hoặc tang 500,000VND) ──
   let rawAmount = '';
-  const gdMatch = cleanContent.match(/(?:GD|Giao dich)[:\s]*([+-]?\s*[0-9.,]+(?:\s*VND)?)/i);
-  if (gdMatch) {
-    rawAmount = gdMatch[1];
+  // Ưu tiên cú pháp chuẩn MB mới nhất: TK <acc> +500,000VND hoặc -500,000VND
+  const tkAmountMatch = cleanContent.match(/TK\s+[0-9]{6,16}\s+([+-]\s*[0-9.,]+(?:\s*VND)?)/i);
+  if (tkAmountMatch) {
+    rawAmount = tkAmountMatch[1];
   } else {
-    // Thử mẫu biến động: tang 500,000 VND / cong 500.000 VND
-    const altAmountMatch = cleanContent.match(/(?:tang|cong|\+)\s*([0-9.,]+)\s*(?:VND|d)?/i);
-    if (altAmountMatch) {
-      rawAmount = `+${altAmountMatch[1]}`;
+    const gdMatch = cleanContent.match(/(?:GD|Giao dich)[:\s]*([+-]?\s*[0-9.,]+(?:\s*VND)?)/i);
+    if (gdMatch) {
+      rawAmount = gdMatch[1];
     } else {
-      const minusMatch = cleanContent.match(/(?:giam|tru|-)\s*([0-9.,]+)\s*(?:VND|d)?/i);
-      if (minusMatch) rawAmount = `-${minusMatch[1]}`;
+      // Thử mẫu biến động: tang 500,000 VND / cong 500.000 VND
+      const altAmountMatch = cleanContent.match(/(?:tang|cong|\+)\s*([0-9.,]+)\s*(?:VND|d)?/i);
+      if (altAmountMatch) {
+        rawAmount = `+${altAmountMatch[1]}`;
+      } else {
+        const minusMatch = cleanContent.match(/(?:giam|tru|-)\s*([0-9.,]+)\s*(?:VND|d)?/i);
+        if (minusMatch) rawAmount = `-${minusMatch[1]}`;
+      }
     }
   }
 
@@ -170,20 +259,26 @@ export function parseMbBankSms(smsContent: string, simAccountNumberFallback?: st
     result.type = type;
   }
 
-  // ── 3. Bóc tách Số dư sau giao dịch (SD: 15,200,000VND) ──
+  // ── 3. Bóc tách Số dư sau giao dịch (SD: 15,200,000VND hoặc So du: 15,200,000VND) ──
   const sdMatch = cleanContent.match(/(?:SD|So du)[:\s]*([0-9.,]+(?:\s*VND)?)/i);
   if (sdMatch) {
     result.balanceAfter = cleanAmount(sdMatch[1]).amount;
   }
 
-  // ── 4. Bóc tách Thời gian giao dịch (20/09/26 14:30 hoặc 14:30 20/09/2026) ──
-  const dateMatch = cleanContent.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\s+(\d{1,2}:\d{2}(?::\d{2})?)/);
-  const dateMatchAlt = cleanContent.match(/(\d{1,2}:\d{2}(?::\d{2})?)\s+(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
+  // ── 4. Bóc tách Thời gian giao dịch ──
+  // MB format: "luc 14:30 20/09/2026" hoặc "20/09/26 14:30" hoặc "14:30 20/09/2026"
+  const lucMatch = cleanContent.match(/luc\s+(\d{1,2}:\d{2}(?::\d{2})?)\s+(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i);
+  if (lucMatch) {
+    result.transactionTime = parseDateTime(lucMatch[2], lucMatch[1]);
+  } else {
+    const dateMatch = cleanContent.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\s+(\d{1,2}:\d{2}(?::\d{2})?)/);
+    const dateMatchAlt = cleanContent.match(/(\d{1,2}:\d{2}(?::\d{2})?)\s+(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/);
 
-  if (dateMatch) {
-    result.transactionTime = parseDateTime(dateMatch[1], dateMatch[2]);
-  } else if (dateMatchAlt) {
-    result.transactionTime = parseDateTime(dateMatchAlt[2], dateMatchAlt[1]);
+    if (dateMatch) {
+      result.transactionTime = parseDateTime(dateMatch[1], dateMatch[2]);
+    } else if (dateMatchAlt) {
+      result.transactionTime = parseDateTime(dateMatchAlt[2], dateMatchAlt[1]);
+    }
   }
 
   // ── 5. Bóc tách Nội dung chuyển khoản (ND: ...) ──

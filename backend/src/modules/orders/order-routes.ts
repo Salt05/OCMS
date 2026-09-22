@@ -658,29 +658,116 @@ export async function orderRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Không tìm thấy phiếu thanh toán' });
     }
 
+    // 1. Xóa bản ghi OrderPayment
     await prisma.orderPayment.delete({
       where: { id: paymentId },
     });
 
-    // Cập nhật lại paidAmount
+    // 2. Cập nhật lại paidAmount cho đơn hàng (OrderHistory hoặc Order CRM)
     const orderHistoryId = payment.orderHistoryId;
     let newPaidAmount = 0;
+    let orderCode = '';
+
     if (orderHistoryId) {
       const sumAgg = await prisma.orderPayment.aggregate({
         where: { orgId: user.orgId, orderHistoryId },
         _sum: { amount: true },
       });
       newPaidAmount = sumAgg._sum.amount || 0;
-      await prisma.orderHistory.update({
+      const updatedHistory = await prisma.orderHistory.update({
         where: { id: orderHistoryId },
-        data: { paidAmount: newPaidAmount },
+        data: { paidAmount: newPaidAmount, updatedAt: new Date() },
       });
+      orderCode = updatedHistory.orderCode;
+    } else if (payment.orderId) {
+      const sumAgg = await prisma.orderPayment.aggregate({
+        where: { orgId: user.orgId, orderId: payment.orderId },
+        _sum: { amount: true },
+      });
+      newPaidAmount = sumAgg._sum.amount || 0;
+      const updatedOrder = await prisma.order.update({
+        where: { id: payment.orderId },
+        data: { paidAmount: newPaidAmount, updatedAt: new Date() },
+      });
+      orderCode = updatedOrder.orderCode;
+    }
+
+    // 3. Hoàn tác trạng thái BankTransaction nếu phiếu thanh toán này gắn với giao dịch ngân hàng
+    let unlinkedTxId: string | null = null;
+    let targetTx = null;
+
+    if (payment.bankTransactionId) {
+      targetTx = await prisma.bankTransaction.findFirst({
+        where: { id: payment.bankTransactionId, orgId: user.orgId },
+      });
+    } else if (orderHistoryId) {
+      // Fallback: Tìm giao dịch đang MATCHED với đơn này và cùng số tiền
+      targetTx = await prisma.bankTransaction.findFirst({
+        where: {
+          orgId: user.orgId,
+          matchedOrderHistoryId: orderHistoryId,
+          amount: payment.amount,
+          status: 'MATCHED',
+        },
+        orderBy: { transactionTime: 'desc' },
+      });
+    } else if (payment.orderId) {
+      targetTx = await prisma.bankTransaction.findFirst({
+        where: {
+          orgId: user.orgId,
+          matchedOrderId: payment.orderId,
+          amount: payment.amount,
+          status: 'MATCHED',
+        },
+        orderBy: { transactionTime: 'desc' },
+      });
+    }
+
+    if (targetTx) {
+      unlinkedTxId = targetTx.id;
+      await prisma.bankTransaction.update({
+        where: { id: targetTx.id },
+        data: {
+          status: 'MANUAL_REVIEW',
+          matchedOrderHistoryId: null,
+          matchedOrderId: null,
+          matchedOrderCode: null,
+          matchedBy: null,
+          matchedUserId: null,
+          matchedAt: null,
+          // Nếu gợi ý đơn trước đó cũng trỏ vào đơn bị xóa này thì xóa gợi ý để nhân viên chọn đơn khác
+          ...(orderHistoryId && targetTx.suggestedOrderHistoryId === orderHistoryId ? { suggestedOrderHistoryId: null } : {}),
+          ...(payment.orderId && targetTx.suggestedOrderId === payment.orderId ? { suggestedOrderId: null } : {}),
+          updatedAt: new Date(),
+        },
+      });
+
+      logger.info(
+        `[order-payments] Đã hủy liên kết BankTransaction #${targetTx.id} khỏi đơn ${orderCode || id}, chuyển về trạng thái cần chọn đơn (MANUAL_REVIEW)`
+      );
+    }
+
+    // 4. Phát socket realtime để các màn hình đối soát thanh toán cập nhật tức thì
+    try {
+      if (unlinkedTxId) {
+        zaloPool.getIO()?.emit('payment:unmatched', {
+          transactionId: unlinkedTxId,
+          orderCode,
+        });
+      }
+      zaloPool.getIO()?.emit('order:updated', {
+        orderCode,
+        paidAmount: newPaidAmount,
+      });
+    } catch (socketErr) {
+      // Non-blocking
     }
 
     return {
       success: true,
-      message: 'Đã xóa phiếu thanh toán',
+      message: 'Đã xóa phiếu thanh toán và cập nhật lại giao dịch thanh toán',
       paidAmount: newPaidAmount,
+      unlinkedTransactionId: unlinkedTxId,
     };
   });
 

@@ -864,6 +864,7 @@ import { useTags, type TagGroup } from '@/composables/use-tags';
 import TagGroupDialog from '@/components/common/TagGroupDialog.vue';
 import { api } from '@/api/index';
 import { isCallMessage, getCallInfo, isVideoPayload } from '@/utils/call-helpers';
+import { formatSidebarTime } from '@/utils/date-formatters';
 
 const props = defineProps<{
   conversations: Conversation[];
@@ -1440,7 +1441,20 @@ function lastMessagePreview(conv: Conversation): string {
     if (msg.content?.startsWith('{')) {
       try {
         const p = JSON.parse(msg.content);
-        return `[Danh thiếp] ${p.caption || p.name || p.phone || 'Liên hệ'}`;
+        let name = (p.title && !p.title.startsWith('http') && !p.title.startsWith('{')) ? p.title : (p.name || p.caption || '');
+        let phone = p.phone || '';
+        if (typeof p.description === 'string' && p.description.trim().startsWith('{')) {
+          try {
+            const d = JSON.parse(p.description);
+            if (d.phone) phone = d.phone;
+            if (!name && d.name) name = d.name;
+            if (!name && d.caption && d.caption !== phone) name = d.caption;
+          } catch {}
+        }
+        if (name && phone) return `[Danh thiếp] ${name} - ${phone}`;
+        if (name) return `[Danh thiếp] ${name}`;
+        if (phone) return `[Danh thiếp] ${phone}`;
+        return '[Danh thiếp] Liên hệ';
       } catch {}
     }
     return '[Danh thiếp]';
@@ -1498,13 +1512,17 @@ function lastMessagePreview(conv: Conversation): string {
 }
 
 function formatTime(dateStr: string | null): string {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return `${d.getHours()}:${d.getMinutes().toString().padStart(2, '0')}`;
+  return formatSidebarTime(dateStr);
 }
 </script>
 
 <style scoped>
+.zalo-conv-time {
+  font-size: 11px !important;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
 .zalo-search-box { background-color: rgba(0,0,0,0.05); border-radius: 8px; height: 36px; }
 .zalo-conv-header-btn { width: 36px; height: 36px; transition: all 0.15s ease; }
 .zalo-conv-header-btn:hover { border-color: #0068ff !important; color: #0068ff !important; }

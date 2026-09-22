@@ -147,29 +147,36 @@ export function isBankCardContent(msgType: string | undefined, content: any): bo
  * Check if the message represents a Zalo contact card / QR share contact.
  */
 export function isContactCardContent(msgType: string | undefined, content: any): boolean {
-  const typeStr = String(msgType || '').toLowerCase();
-  if (typeStr && (typeStr.includes('recommended') || typeStr.includes('card') || typeStr.includes('contact') || typeStr === '6')) {
-    return true;
-  }
-  if (!content) return false;
-
   let parsed = content;
   if (typeof content === 'string') {
-    if (content.includes('qrCodeUrl') || (content.includes('phone') && (content.includes('qr-talk') || content.includes('contactUid') || content.includes('caption')))) {
-      try {
+    try {
+      if (content.startsWith('{')) {
         parsed = JSON.parse(content);
-      } catch {
-        return false;
       }
-    } else {
-      return false;
-    }
+    } catch {}
   }
 
-  if (typeof parsed === 'object' && parsed !== null) {
+  if (parsed && typeof parsed === 'object') {
+    if (parsed.action === 'recommened.link' || parsed.action === 'recommended.link') {
+      return false;
+    }
+    if (parsed.action === 'recommened.calltime' || parsed.action?.includes('call')) {
+      return false;
+    }
+    if (parsed.action === 'recommened.user' || parsed.action === 'recommended.user') {
+      return true;
+    }
     if (parsed.qrCodeUrl || (parsed.phone && (parsed.contactUid || parsed.caption))) {
       return true;
     }
+    if (typeof parsed.description === 'string' && parsed.description.includes('phone')) {
+      return true;
+    }
+  }
+
+  const typeStr = String(msgType || '').toLowerCase();
+  if (typeStr && (typeStr.includes('contact') || typeStr === '6')) {
+    return true;
   }
 
   return false;
@@ -208,7 +215,7 @@ export function detectContentType(msgType: string | undefined, content: any): st
     }
     return 'file';
   }
-  if (msgType.includes('recommended') || msgType.includes('card')) return 'contact_card';
+  if (msgType.includes('card') && !msgType.includes('bank')) return 'contact_card';
   if (typeof content === 'object' && content !== null) return 'rich';
   return 'text';
 }

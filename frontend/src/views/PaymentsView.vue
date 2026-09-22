@@ -125,37 +125,87 @@
     <v-window v-model="activeTab">
       <!-- TAB 1: TRANSACTIONS -->
       <v-window-item value="transactions">
+        <!-- Sub-Tabs: CHƯA DUYỆT vs ĐÃ DUYỆT -->
+        <div class="d-flex align-center justify-space-between flex-wrap ga-3 mb-4">
+          <v-btn-toggle
+            v-model="reviewSubTab"
+            mandatory
+            color="primary"
+            variant="outlined"
+            density="comfortable"
+            class="rounded-lg bg-surface border elevation-1"
+            @update:model-value="onSubTabChange"
+          >
+            <v-btn value="pending" class="text-none font-weight-bold px-4 py-2">
+              <v-icon start size="18" color="warning">lucide-clock</v-icon>
+              CHƯA DUYỆT
+              <v-chip
+                size="x-small"
+                color="warning"
+                variant="flat"
+                class="ml-2 font-weight-bold"
+              >
+                {{ pendingCount }}
+              </v-chip>
+            </v-btn>
+
+            <v-btn value="approved" class="text-none font-weight-bold px-4 py-2">
+              <v-icon start size="18" color="success">lucide-check-check</v-icon>
+              ĐÃ DUYỆT
+              <v-chip
+                size="x-small"
+                color="success"
+                variant="flat"
+                class="ml-2 font-weight-bold"
+              >
+                {{ approvedCount }}
+              </v-chip>
+            </v-btn>
+          </v-btn-toggle>
+
+          <div class="text-caption text-medium-emphasis d-none d-md-block">
+            <span v-if="reviewSubTab === 'pending'" class="d-flex align-center ga-1">
+              <v-icon size="14" color="warning">lucide-alert-circle</v-icon>
+              Giao dịch mới nhận được giữ ở trạng thái <strong>Chờ duyệt</strong>. Bấm <strong>Xác nhận thanh toán</strong> để cập nhật đơn sang <strong>PAID</strong>.
+            </span>
+            <span v-else class="d-flex align-center ga-1">
+              <v-icon size="14" color="success">lucide-shield-check</v-icon>
+              Lịch sử các giao dịch đã được nhân viên/kế toán xác nhận thanh toán thành công.
+            </span>
+          </div>
+        </div>
+
         <!-- Filters -->
         <v-card variant="outlined" class="rounded-lg mb-4 pa-3">
           <v-row dense align="center">
-            <v-col cols="12" sm="6" md="3">
+            <v-col cols="12" sm="6" md="4">
               <v-text-field
                 v-model="filters.search"
                 density="compact"
                 variant="outlined"
                 hide-details
-                placeholder="Tìm nội dung, mã đơn, người gửi..."
+                placeholder="Tìm nội dung SMS, mã đơn, người gửi, STK..."
                 prepend-inner-icon="lucide-search"
                 clearable
                 @update:model-value="fetchTransactions"
               />
             </v-col>
 
-            <v-col cols="6" sm="6" md="2">
+            <v-col v-if="reviewSubTab === 'pending'" cols="6" sm="6" md="3">
               <v-select
                 v-model="filters.status"
-                :items="statusOptions"
+                :items="pendingStatusOptions"
                 item-title="text"
                 item-value="value"
                 density="compact"
                 variant="outlined"
                 hide-details
-                placeholder="Trạng thái"
+                placeholder="Lọc trạng thái chưa duyệt"
                 @update:model-value="fetchTransactions"
               />
             </v-col>
 
-            <v-col cols="6" sm="6" md="3">
+            <v-col :cols="reviewSubTab === 'pending' ? '6' : '12'" sm="6" :md="reviewSubTab === 'pending' ? '3' : '6'">
               <v-select
                 v-model="filters.bankAccountId"
                 :items="accountFilterOptions"
@@ -185,29 +235,30 @@
         </v-card>
 
         <!-- Transactions Table -->
-        <v-card variant="outlined" class="rounded-lg mb-4 overflow-hidden">
+        <v-card variant="outlined" class="rounded-lg mb-4 overflow-hidden shadow-sm">
           <v-progress-linear v-if="loading" indeterminate color="primary" />
 
-          <v-table density="compact" hover class="payments-table">
+          <!-- TAB 1 CONTENT: CHƯA DUYỆT -->
+          <v-table v-if="reviewSubTab === 'pending'" density="compact" hover class="payments-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th style="width: 140px;" class="text-left">Thời gian</th>
-                <th style="width: 130px;" class="text-left">Tài khoản nhận</th>
-                <th style="width: 130px;" class="text-right">Số tiền</th>
-                <th style="width: 150px;" class="text-left">Người chuyển</th>
-                <th class="text-left">Nội dung SMS (ND)</th>
-                <th style="width: 170px;" class="text-left">Đơn hàng đề xuất</th>
-                <th style="width: 110px;" class="text-center">Độ tin cậy</th>
-                <th style="width: 120px;" class="text-center">Trạng thái</th>
-                <th style="width: 140px;" class="text-center">Thao tác</th>
+                <th style="width: 120px;" class="text-left">Thời gian</th>
+                <th style="width: 110px;" class="text-left">TK nhận</th>
+                <th style="width: 130px;" class="text-right">Số tiền nhận</th>
+                <th style="width: 220px;" class="text-left">Người gửi & ND tin nhắn</th>
+                <th style="width: 210px;" class="text-left">Đơn hàng đề xuất</th>
+                <th style="width: 200px;" class="text-left">Trạng thái & Cảnh báo</th>
+                <th style="width: 190px;" class="text-center">Thao tác</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!loading && transactions.length === 0">
-                <td colspan="9" class="text-center text-medium-emphasis py-8">
-                  <v-icon icon="lucide-inbox" size="36" color="grey" class="mb-2" />
-                  <div class="text-body-2 font-weight-medium">Chưa có giao dịch biến động số dư nào</div>
-                  <div class="text-caption text-grey">Bạn có thể bấm "Kết nối Điện thoại (Test QR)" để thử bắn tin nhắn giả lập</div>
+                <td colspan="7" class="text-center text-medium-emphasis py-8">
+                  <v-avatar color="warning" variant="tonal" size="48" class="mb-2">
+                    <v-icon icon="lucide-check-circle" size="28" color="warning" />
+                  </v-avatar>
+                  <div class="text-subtitle-2 font-weight-bold">Không có giao dịch nào đang chờ duyệt!</div>
+                  <div class="text-caption text-grey">Tất cả giao dịch biến động số dư đã được xử lý xong.</div>
                 </td>
               </tr>
 
@@ -226,81 +277,222 @@
 
                 <!-- Amount -->
                 <td class="text-right">
-                  <span class="font-weight-bold font-monospace text-caption" :class="tx.type === 'IN' ? 'text-success' : 'text-error'">
+                  <span class="font-weight-bold font-monospace text-subtitle-2" :class="tx.type === 'IN' ? 'text-success' : 'text-error'">
                     {{ tx.type === 'IN' ? '+' : '-' }}{{ formatVND(tx.amount) }}
                   </span>
                 </td>
 
-                <!-- Sender Name -->
-                <td class="text-caption text-high-emphasis font-weight-medium text-truncate" style="max-width: 150px;" :title="tx.senderNameRaw || ''">
-                  {{ tx.senderNameRaw || '—' }}
-                </td>
-
-                <!-- Description -->
-                <td class="text-caption text-medium-emphasis text-truncate" style="max-width: 250px;" :title="tx.description">
-                  {{ tx.description }}
-                </td>
-
-                <!-- Matched / Suggested Order -->
-                <td>
-                  <div v-if="tx.matchedOrderCode" class="d-flex align-center gap-1">
-                    <v-icon size="14" color="success">lucide-check</v-icon>
-                    <strong class="text-caption text-success font-monospace">#{{ tx.matchedOrderCode }}</strong>
+                <!-- Sender & SMS Description -->
+                <td style="max-width: 220px;">
+                  <div class="font-weight-medium text-caption text-high-emphasis text-truncate" :title="tx.senderNameRaw || ''">
+                    <v-icon size="12" color="medium-emphasis" class="mr-1">lucide-user</v-icon>
+                    <span>{{ tx.senderNameRaw || 'Khách vãng lai' }}</span>
                   </div>
-                  <div v-else-if="tx.suggestedOrderHistoryId || tx.suggestedOrderId" class="d-flex align-center gap-1">
-                    <v-icon size="14" color="warning">lucide-sparkles</v-icon>
-                    <span class="text-caption text-warning font-monospace font-weight-medium">Gợi ý #{{ tx.matchedOrderCode || 'Đơn gần nhất' }}</span>
+                  <div class="text-xs text-medium-emphasis text-truncate font-monospace" :title="tx.description">
+                    {{ tx.description }}
                   </div>
-                  <span v-else class="text-caption text-disabled">—</span>
                 </td>
 
-                <!-- Confidence Score -->
-                <td class="text-center">
-                  <v-chip
-                    size="x-small"
-                    :color="getScoreColor(tx.confidenceScore)"
-                    variant="flat"
-                    class="font-weight-bold"
-                  >
-                    {{ tx.confidenceScore }}/100
-                  </v-chip>
+                <!-- Suggested Order -->
+                <td style="max-width: 210px;">
+                  <!-- Có đơn đề xuất -->
+                  <div v-if="tx.suggestedOrder || tx.matchedOrderCode">
+                    <div class="d-flex align-center ga-1">
+                      <v-chip
+                        size="x-small"
+                        color="primary"
+                        variant="flat"
+                        class="font-weight-bold font-monospace cursor-pointer order-code-chip"
+                        prepend-icon="lucide-file-text"
+                        @click="openOrderDetailByCode(tx.suggestedOrder?.orderCode || tx.matchedOrderCode)"
+                      >
+                        {{ tx.suggestedOrder?.orderCode || tx.matchedOrderCode }}
+                      </v-chip>
+                    </div>
+                    <div v-if="tx.suggestedOrder?.customerName" class="text-xs text-medium-emphasis text-truncate mt-1" :title="tx.suggestedOrder.customerName">
+                      {{ tx.suggestedOrder.customerName }}
+                    </div>
+                    <div v-if="tx.suggestedOrder?.amountTotal" class="text-xs font-monospace font-weight-medium text-high-emphasis">
+                      Cần thu: {{ formatVND(tx.suggestedOrder.amountTotal) }}
+                    </div>
+                  </div>
+                  <!-- Chưa có đơn -->
+                  <div v-else class="text-caption text-disabled d-flex align-center ga-1">
+                    <v-icon size="14" color="grey">lucide-help-circle</v-icon>
+                    <span>Chưa nhận diện được đơn</span>
+                  </div>
                 </td>
 
-                <!-- Status -->
-                <td class="text-center">
-                  <v-chip size="x-small" :color="getStatusColor(tx.status)" variant="flat" class="font-weight-medium">
-                    {{ getStatusLabel(tx.status) }}
-                  </v-chip>
+                <!-- Status & Warning Reasons -->
+                <td style="max-width: 200px;">
+                  <div class="d-flex flex-column ga-1 align-start">
+                    <v-chip
+                      size="x-small"
+                      :color="getTransactionWarning(tx).color"
+                      variant="flat"
+                      class="font-weight-bold"
+                    >
+                      <v-icon start size="12" v-if="getTransactionWarning(tx).icon">{{ getTransactionWarning(tx).icon }}</v-icon>
+                      {{ getTransactionWarning(tx).title }}
+                    </v-chip>
+                    <div v-if="getTransactionWarning(tx).subtitle" class="text-xs font-weight-medium" :class="`text-${getTransactionWarning(tx).color}`">
+                      {{ getTransactionWarning(tx).subtitle }}
+                    </div>
+                  </div>
                 </td>
 
                 <!-- Actions -->
                 <td class="text-center">
-                  <div class="d-flex align-center justify-center gap-1" style="gap: 4px;">
-                    <!-- 1-Click Approve Button -->
-                    <v-btn
-                      v-if="tx.status !== 'MATCHED' && (tx.suggestedOrderHistoryId || tx.suggestedOrderId)"
-                      color="success"
-                      size="x-small"
-                      variant="elevated"
-                      class="text-none font-weight-bold"
-                      :loading="approvingId === tx.id"
-                      @click="approveTransaction(tx.id)"
-                    >
-                      Duyệt khớp
-                    </v-btn>
+                  <div class="d-flex align-center justify-center ga-1" style="gap: 6px;">
+                    <!-- Nút Xác nhận thanh toán (Khi đã có đơn đề xuất) -->
+                    <template v-if="tx.suggestedOrderHistoryId || tx.suggestedOrderId || tx.matchedOrderCode">
+                      <v-btn
+                        color="success"
+                        size="small"
+                        variant="elevated"
+                        class="text-none font-weight-bold shadow-sm"
+                        :loading="approvingId === tx.id"
+                        title="Xác nhận thanh toán và cập nhật đơn hàng thành PAID"
+                        @click="approveTransaction(tx.id)"
+                      >
+                        <v-icon start size="15">lucide-check</v-icon>
+                        Xác nhận thanh toán
+                      </v-btn>
 
-                    <!-- Manual Match Modal Button -->
-                    <v-btn
-                      v-if="tx.status !== 'MATCHED'"
-                      color="primary"
-                      size="x-small"
-                      variant="outlined"
-                      class="text-none"
-                      @click="openManualMatch(tx)"
-                    >
-                      Chọn đơn
-                    </v-btn>
+                      <!-- Nút đổi sang đơn khác -->
+                      <v-btn
+                        icon
+                        size="28"
+                        variant="text"
+                        color="medium-emphasis"
+                        title="Đổi sang đơn hàng khác"
+                        @click="openManualMatch(tx)"
+                      >
+                        <v-icon size="16">lucide-edit-3</v-icon>
+                      </v-btn>
+                    </template>
+
+                    <!-- Nút Chọn đơn (Khi chưa có đơn đề xuất) -->
+                    <template v-else>
+                      <v-btn
+                        color="primary"
+                        size="small"
+                        variant="outlined"
+                        class="text-none font-weight-bold"
+                        @click="openManualMatch(tx)"
+                      >
+                        <v-icon start size="15">lucide-search</v-icon>
+                        Chọn đơn
+                      </v-btn>
+                    </template>
                   </div>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+
+          <!-- TAB 2 CONTENT: ĐÃ DUYỆT -->
+          <v-table v-else density="compact" hover class="payments-table">
+            <thead>
+              <tr class="bg-surface-variant">
+                <th style="width: 120px;" class="text-left">Thời gian GD</th>
+                <th style="width: 110px;" class="text-left">TK nhận</th>
+                <th style="width: 130px;" class="text-right">Số tiền</th>
+                <th style="width: 220px;" class="text-left">Người chuyển & ND SMS</th>
+                <th style="width: 180px;" class="text-left">Đơn hàng đã khớp</th>
+                <th style="width: 130px;" class="text-center">Trạng thái</th>
+                <th style="width: 200px;" class="text-left">Người duyệt & Thời gian</th>
+                <th style="width: 110px;" class="text-center">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!loading && transactions.length === 0">
+                <td colspan="8" class="text-center text-medium-emphasis py-8">
+                  <v-icon icon="lucide-inbox" size="36" color="grey" class="mb-2" />
+                  <div class="text-subtitle-2 font-weight-medium">Chưa có giao dịch nào trong danh sách đã duyệt</div>
+                  <div class="text-caption text-grey">Khi kế toán xác nhận thanh toán ở tab "Chưa duyệt", giao dịch sẽ hiển thị tại đây.</div>
+                </td>
+              </tr>
+
+              <tr v-for="tx in transactions" :key="tx.id">
+                <!-- Time -->
+                <td class="text-caption text-medium-emphasis">
+                  {{ formatDateTime(tx.transactionTime) }}
+                </td>
+
+                <!-- Account -->
+                <td>
+                  <v-chip size="x-small" color="primary" variant="tonal" class="font-monospace font-weight-bold">
+                    MB *{{ tx.accountNumber ? tx.accountNumber.slice(-4) : '...' }}
+                  </v-chip>
+                </td>
+
+                <!-- Amount -->
+                <td class="text-right">
+                  <span class="font-weight-bold font-monospace text-subtitle-2 text-success">
+                    +{{ formatVND(tx.amount) }}
+                  </span>
+                </td>
+
+                <!-- Sender Name & SMS -->
+                <td style="max-width: 220px;">
+                  <div class="text-caption font-weight-medium text-high-emphasis text-truncate" :title="tx.senderNameRaw || ''">
+                    {{ tx.senderNameRaw || 'Khách vãng lai' }}
+                  </div>
+                  <div class="text-xs text-medium-emphasis text-truncate font-monospace" :title="tx.description">
+                    {{ tx.description }}
+                  </div>
+                </td>
+
+                <!-- Matched Order -->
+                <td>
+                  <div class="d-flex align-center ga-1">
+                    <v-icon size="14" color="success">lucide-check-circle-2</v-icon>
+                    <v-chip
+                      size="x-small"
+                      color="success"
+                      variant="flat"
+                      class="font-weight-bold font-monospace cursor-pointer order-code-chip"
+                      prepend-icon="lucide-file-text"
+                      @click="openOrderDetailByCode(tx.matchedOrderCode)"
+                    >
+                      {{ tx.matchedOrderCode }}
+                    </v-chip>
+                  </div>
+                  <div v-if="tx.matchedOrderHistory?.partnerName || tx.matchedOrder?.contact?.fullName" class="text-xs text-medium-emphasis text-truncate mt-1">
+                    {{ tx.matchedOrderHistory?.partnerName || tx.matchedOrder?.contact?.fullName }}
+                  </div>
+                </td>
+
+                <!-- Status -->
+                <td class="text-center">
+                  <v-chip size="x-small" color="success" variant="flat" class="font-weight-bold">
+                    ✓ Đã duyệt
+                  </v-chip>
+                </td>
+
+                <!-- Approver & Approval Time -->
+                <td>
+                  <div class="d-flex align-center ga-1 text-caption font-weight-medium text-high-emphasis">
+                    <v-icon size="13" color="primary">lucide-user-check</v-icon>
+                    <span>{{ tx.matchedUser?.fullName || (tx.matchedBy === 'MANUAL_STAFF' ? 'Kế toán duyệt' : (tx.matchedBy || 'Nhân viên')) }}</span>
+                  </div>
+                  <div class="text-xs text-medium-emphasis font-monospace">
+                    {{ formatDateTime(tx.matchedAt || tx.updatedAt) }}
+                  </div>
+                </td>
+
+                <!-- Actions: View Order -->
+                <td class="text-center">
+                  <v-btn
+                    color="primary"
+                    size="x-small"
+                    variant="tonal"
+                    class="text-none font-weight-medium"
+                    @click="openOrderDetailByCode(tx.matchedOrderCode)"
+                  >
+                    Xem đơn
+                  </v-btn>
                 </td>
               </tr>
             </tbody>
@@ -785,18 +977,82 @@
         </v-card-title>
 
         <!-- Transaction Context Bar -->
-        <div v-if="selectedTxForMatch" class="pa-3 bg-surface-variant border-b text-caption d-flex align-center justify-space-between flex-wrap" style="gap: 8px;">
-          <div class="d-flex align-center gap-2" style="gap: 8px;">
-            <span class="text-medium-emphasis">Giao dịch cần gán:</span>
-            <span class="font-weight-bold font-monospace text-success text-subtitle-2">
-              +{{ formatVND(selectedTxForMatch.amount) }}
-            </span>
-            <v-chip size="x-small" color="primary" variant="flat" class="font-monospace font-weight-bold">
-              {{ selectedTxForMatch.bankCode }} · *{{ selectedTxForMatch.accountNumber ? selectedTxForMatch.accountNumber.slice(-4) : '****' }}
-            </v-chip>
+        <div v-if="selectedTxForMatch" class="pa-3 bg-surface-variant border-b">
+          <!-- Row 1: Thông tin tiền, tài khoản, thời gian, người gửi -->
+          <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-2">
+            <div class="d-flex align-center flex-wrap ga-2">
+              <span class="text-caption text-medium-emphasis font-weight-medium">Giao dịch cần gán:</span>
+              <span class="font-weight-bold font-monospace text-success text-subtitle-1">
+                +{{ formatVND(selectedTxForMatch.amount) }}
+              </span>
+              <v-chip size="x-small" color="primary" variant="flat" class="font-monospace font-weight-bold">
+                {{ selectedTxForMatch.bankCode }} · {{ selectedTxForMatch.accountNumber ? '*' + selectedTxForMatch.accountNumber.slice(-4) : '****' }}
+              </v-chip>
+              <v-chip v-if="selectedTxForMatch.transactionTime" size="x-small" variant="text" class="text-medium-emphasis font-monospace px-1">
+                <v-icon start size="12">lucide-clock</v-icon>
+                {{ formatDateTime(selectedTxForMatch.transactionTime) }}
+              </v-chip>
+              <v-chip v-if="selectedTxForMatch.senderNameRaw" size="x-small" color="info" variant="tonal" class="font-weight-medium">
+                <v-icon start size="12">lucide-user</v-icon>
+                {{ selectedTxForMatch.senderNameRaw }}
+              </v-chip>
+              <v-chip v-if="selectedTxForMatch.refCode" size="x-small" variant="outlined" class="text-medium-emphasis font-monospace">
+                Mã GD: {{ selectedTxForMatch.refCode }}
+              </v-chip>
+            </div>
+
+            <div v-if="selectedTxForMatch.parsedOrderCode" class="d-flex align-center ga-1">
+              <span class="text-caption text-medium-emphasis">Mã gợi ý:</span>
+              <v-chip
+                size="x-small"
+                color="primary"
+                variant="outlined"
+                class="font-monospace font-weight-bold cursor-pointer"
+                title="Bấm để lọc theo mã gợi ý này"
+                @click="searchByParsedCode(selectedTxForMatch.parsedOrderCode)"
+              >
+                #{{ selectedTxForMatch.parsedOrderCode }}
+              </v-chip>
+            </div>
           </div>
-          <div class="text-medium-emphasis font-monospace text-xs text-truncate" style="max-width: 420px;">
-            {{ selectedTxForMatch.description || selectedTxForMatch.rawSms }}
+
+          <!-- Row 2: Khung hiển thị đầy đủ Nội dung thanh toán (Full Payment Content) -->
+          <div class="pa-2.5 rounded-lg border bg-surface d-flex flex-column ga-1">
+            <div class="d-flex align-center justify-space-between ga-2">
+              <div class="text-caption font-weight-bold text-primary d-flex align-center ga-1">
+                <v-icon size="14">lucide-message-square</v-icon>
+                <span>Nội dung thanh toán:</span>
+              </div>
+              <v-btn
+                v-if="selectedTxForMatch.description || selectedTxForMatch.rawSms"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                class="text-none font-weight-medium"
+                prepend-icon="lucide-copy"
+                title="Sao chép toàn bộ nội dung thanh toán"
+                @click="copyText(selectedTxForMatch.description || selectedTxForMatch.rawSms, 'Đã sao chép nội dung thanh toán')"
+              >
+                Sao chép nội dung
+              </v-btn>
+            </div>
+
+            <!-- Nội dung thanh toán đầy đủ 100%, không bị cắt xén, tự xuống dòng -->
+            <div
+              class="font-monospace text-body-2 text-high-emphasis user-select-text"
+              style="word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.5;"
+            >
+              {{ selectedTxForMatch.description || selectedTxForMatch.rawSms || '— Không có nội dung thanh toán —' }}
+            </div>
+
+            <!-- SMS gốc đầy đủ nếu khác với description -->
+            <div
+              v-if="selectedTxForMatch.rawSms && selectedTxForMatch.description && selectedTxForMatch.rawSms.trim() !== selectedTxForMatch.description.trim()"
+              class="text-xs text-medium-emphasis pt-1 mt-1 border-t font-monospace user-select-text"
+              style="word-break: break-word; overflow-wrap: anywhere; line-height: 1.4;"
+            >
+              <span class="text-disabled font-weight-medium">SMS gốc:</span> {{ selectedTxForMatch.rawSms }}
+            </div>
           </div>
         </div>
 
@@ -950,17 +1206,32 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Order Detail Popup -->
+    <OrderDetailModal
+      v-model="showOrderDetail"
+      :order="orderDetailData"
+      :loading="orderDetailLoading"
+      @saved="onOrderDetailSaved"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { api } from '@/api';
+import { io, Socket } from 'socket.io-client';
+import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
 
 const activeTab = ref('transactions');
 const loading = ref(false);
 const showQrModal = ref(false);
 const approvingId = ref<string | null>(null);
+
+// Order detail popup state
+const showOrderDetail = ref(false);
+const orderDetailData = ref<any>(null);
+const orderDetailLoading = ref(false);
 
 // Account CRUD State
 const showAccountDialog = ref(false);
@@ -1036,14 +1307,22 @@ const transactions = ref<any[]>([]);
 const senders = ref<any[]>([]);
 const accounts = ref<any[]>([]);
 
-const statusOptions = [
-  { text: 'Tất cả trạng thái', value: '' },
-  { text: 'Chờ duyệt / Gợi ý', value: 'SUGGESTED' },
-  { text: 'Đã khớp thành công', value: 'MATCHED' },
+const reviewSubTab = ref<'pending' | 'approved'>('pending');
+const pendingCount = ref(0);
+const approvedCount = ref(0);
+
+const pendingStatusOptions = [
+  { text: 'Tất cả trạng thái chưa duyệt', value: '' },
+  { text: 'Khớp đề xuất / Chờ duyệt', value: 'SUGGESTED' },
   { text: 'Chuyển thiếu tiền', value: 'PARTIAL' },
   { text: 'Chuyển thừa tiền', value: 'OVERPAID' },
-  { text: 'Cần kiểm tra lại', value: 'MANUAL_REVIEW' },
+  { text: 'Cần chọn đơn / Kiểm tra', value: 'MANUAL_REVIEW' },
 ];
+
+function onSubTabChange() {
+  filters.status = '';
+  fetchTransactions();
+}
 
 const accountFilterOptions = computed(() => [
   { text: 'Tất cả tài khoản', value: '' },
@@ -1080,44 +1359,94 @@ function formatDateTime(d?: string | Date | null): string {
   });
 }
 
-function getScoreColor(score = 0): string {
-  if (score >= 85) return 'success';
-  if (score >= 50) return 'warning';
-  return 'error';
-}
 
-function getStatusColor(status = ''): string {
-  switch (status) {
-    case 'MATCHED':
-      return 'success';
-    case 'SUGGESTED':
-      return 'warning';
-    case 'PARTIAL':
-      return 'amber-darken-3';
-    case 'OVERPAID':
-      return 'info';
-    case 'MANUAL_REVIEW':
-      return 'error';
-    default:
-      return 'grey';
-  }
-}
+function getTransactionWarning(tx: any): { type: string; title: string; subtitle?: string; color: string; icon?: string } {
+  const reasons: string[] = Array.isArray(tx.reconciliationReasons)
+    ? tx.reconciliationReasons
+    : (typeof tx.reconciliationReasons === 'string' ? JSON.parse(tx.reconciliationReasons || '[]') : []);
 
-function getStatusLabel(status = ''): string {
-  switch (status) {
-    case 'MATCHED':
-      return 'Đã khớp';
-    case 'SUGGESTED':
-      return 'Chờ duyệt 1-click';
-    case 'PARTIAL':
-      return 'Thiếu tiền';
-    case 'OVERPAID':
-      return 'Thừa tiền';
-    case 'MANUAL_REVIEW':
-      return 'Cần kiểm tra';
-    default:
-      return status;
+  // 1. Thiếu tiền
+  if (tx.status === 'PARTIAL' || reasons.includes('AMOUNT_PARTIAL')) {
+    const orderAmt = tx.suggestedOrder?.amountTotal || 0;
+    const diff = orderAmt > tx.amount ? orderAmt - tx.amount : 0;
+    return {
+      type: 'partial',
+      title: 'Thiếu tiền',
+      subtitle: diff > 0 ? `Thiếu ${formatVND(diff)}` : undefined,
+      color: 'amber-darken-3',
+      icon: 'lucide-alert-triangle',
+    };
   }
+
+  // 2. Thừa tiền
+  if (tx.status === 'OVERPAID' || reasons.includes('AMOUNT_OVER')) {
+    const orderAmt = tx.suggestedOrder?.amountTotal || 0;
+    const diff = tx.amount > orderAmt ? tx.amount - orderAmt : 0;
+    return {
+      type: 'overpaid',
+      title: 'Thừa tiền',
+      subtitle: diff > 0 ? `Thừa +${formatVND(diff)}` : undefined,
+      color: 'info',
+      icon: 'lucide-info',
+    };
+  }
+
+  // 3. Đơn đã thanh toán trước đó
+  if (tx.reconciliationStatus === 'PAYMENT_AFTER_PAID' || reasons.includes('ORDER_ALREADY_PAID')) {
+    return {
+      type: 'already_paid',
+      title: 'Đơn đã thanh toán',
+      subtitle: 'Đã thu đủ trước đó (tránh thu trùng)',
+      color: 'warning',
+      icon: 'lucide-alert-circle',
+    };
+  }
+
+  // 4. Đơn đã hủy
+  if (tx.reconciliationStatus === 'ORDER_CANCELLED' || reasons.includes('ORDER_CANCELLED')) {
+    return {
+      type: 'cancelled',
+      title: 'Đơn đã hủy',
+      subtitle: 'Đơn trên hệ thống đã bị hủy',
+      color: 'error',
+      icon: 'lucide-x-circle',
+    };
+  }
+
+  // 5. Không tìm thấy đơn
+  if (
+    tx.reconciliationStatus === 'ORDER_NOT_FOUND' ||
+    reasons.includes('ORDER_NOT_FOUND') ||
+    (!tx.matchedOrderCode && !tx.suggestedOrder && !tx.suggestedOrderHistoryId && !tx.suggestedOrderId)
+  ) {
+    return {
+      type: 'not_found',
+      title: 'Không tìm thấy đơn',
+      subtitle: 'Mã trong SMS không khớp đơn nào',
+      color: 'error',
+      icon: 'lucide-help-circle',
+    };
+  }
+
+  // 6. Điểm tin cậy thấp
+  if ((tx.confidenceScore || 0) < 60 || reasons.includes('NO_ORDER_CODE')) {
+    return {
+      type: 'low_score',
+      title: 'Điểm tin cậy thấp',
+      subtitle: `Độ tin cậy: ${tx.confidenceScore || 0}/100`,
+      color: 'error',
+      icon: 'lucide-shield-alert',
+    };
+  }
+
+  // 7. Khớp đề xuất / Chờ duyệt
+  return {
+    type: 'suggested',
+    title: 'Khớp đề xuất / Chờ duyệt',
+    subtitle: `Độ tin cậy: ${tx.confidenceScore || 90}/100`,
+    color: 'warning',
+    icon: 'lucide-sparkles',
+  };
 }
 
 async function fetchData() {
@@ -1279,12 +1608,15 @@ async function fetchTransactions() {
   try {
     const res = await api.get('/payments/transactions', {
       params: {
+        tab: reviewSubTab.value,
         status: filters.status,
         bankAccountId: filters.bankAccountId,
         search: filters.search,
       },
     });
     transactions.value = res.data.transactions || [];
+    pendingCount.value = res.data.pendingCount || 0;
+    approvedCount.value = res.data.approvedCount || 0;
   } catch (err) {
     console.error('Lỗi lấy giao dịch:', err);
   }
@@ -1309,7 +1641,8 @@ function resetFilters() {
 async function approveTransaction(id: string) {
   approvingId.value = id;
   try {
-    await api.post(`/payments/transactions/${id}/approve`, {});
+    const res = await api.post(`/payments/transactions/${id}/approve`, {});
+    notify(`Đã xác nhận thanh toán thành công cho đơn #${res.data?.orderCode || ''}!`, 'success');
     await fetchData();
   } catch (err: any) {
     alert(err.response?.data?.error || 'Lỗi khi duyệt giao dịch');
@@ -1320,10 +1653,16 @@ async function approveTransaction(id: string) {
 
 async function openManualMatch(tx: any) {
   selectedTxForMatch.value = tx;
-  orderSearchQuery.value = tx.matchedOrderCode || '';
+  orderSearchQuery.value = tx.matchedOrderCode || tx.parsedOrderCode || tx.suggestedOrder?.orderCode || '';
   orderStatusFilter.value = 'all';
   showOrderMatchDialog.value = true;
   await fetchOrdersForLookup();
+}
+
+function searchByParsedCode(code: string) {
+  if (!code) return;
+  orderSearchQuery.value = code;
+  fetchOrdersForLookup();
 }
 
 async function fetchOrdersForLookup() {
@@ -1452,8 +1791,53 @@ function openMobileTestInNewTab() {
   window.open(mobileGatewayDirectUrl.value, '_blank');
 }
 
+async function openOrderDetailByCode(code: string) {
+  if (!code) return;
+  showOrderDetail.value = true;
+  orderDetailLoading.value = true;
+  orderDetailData.value = null;
+  try {
+    const res = await api.get(`/orders/${encodeURIComponent(code)}`);
+    orderDetailData.value = res.data.order;
+  } catch (err: any) {
+    console.error('[Payments] Lỗi tải chi tiết đơn:', err);
+    orderDetailData.value = null;
+  } finally {
+    orderDetailLoading.value = false;
+  }
+}
+
+async function onOrderDetailSaved() {
+  await fetchData();
+}
+
+// Khi đóng popup chi tiết đơn, tự động làm mới danh sách giao dịch
+watch(showOrderDetail, (open) => {
+  if (!open) {
+    fetchTransactions();
+  }
+});
+
+let socket: Socket | null = null;
+
 onMounted(() => {
   fetchData();
+  try {
+    socket = io({ transports: ['websocket', 'polling'] });
+    socket.on('payment:new_transaction', () => fetchData());
+    socket.on('payment:matched', () => fetchData());
+    socket.on('payment:unmatched', () => fetchData());
+    socket.on('order:updated', () => fetchData());
+  } catch (err) {
+    console.warn('Lỗi kết nối Socket.IO ở PaymentsView:', err);
+  }
+});
+
+onUnmounted(() => {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
 });
 </script>
 
@@ -1466,5 +1850,14 @@ onMounted(() => {
 }
 .payments-table td {
   height: 48px;
+}
+
+.order-code-chip {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.order-code-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(var(--v-theme-success), 0.35);
 }
 </style>

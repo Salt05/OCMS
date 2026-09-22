@@ -3,7 +3,7 @@
  * Điều phối bóc tách tin nhắn SMS đa ngân hàng và tạo mã băm chống trùng lặp (Idempotency Hash).
  */
 import { createHash } from 'node:crypto';
-import { parseMbBankSms, type ParsedBankSms } from './mb-sms-parser.js';
+import { parseMbBankSms, extractTransferContent, type ParsedBankSms } from './mb-sms-parser.js';
 
 export interface SmsPayloadInput {
   sender?: string; // Tên người gửi SMS (ví dụ: "MBBANK", "MB Bank", "9704...")
@@ -26,6 +26,8 @@ export interface ParseResult {
   refCode: string | null;
   candidateOrderCodes: string[];
   candidatePhones: string[];
+  parsedOrderCode: string | null;
+  parsedCustomerName: string | null;
   idempotencyHash: string;
   isValid: boolean;
   errorMessage?: string;
@@ -84,9 +86,21 @@ export function parseIncomingSms(input: SmsPayloadInput): ParseResult {
     rawSms
   );
 
+  // Bóc tách Order Code + Customer Name từ nội dung chuyển khoản (ND field)
+  const transferContent = extractTransferContent(parsed.description);
+
+  // Nếu extractTransferContent tìm được order code mà candidateOrderCodes chưa có, thêm vào đầu
+  const finalCandidateCodes = [...parsed.candidateOrderCodes];
+  if (transferContent.orderCode && !finalCandidateCodes.some(c => c.toUpperCase() === transferContent.orderCode!.toUpperCase())) {
+    finalCandidateCodes.unshift(transferContent.orderCode);
+  }
+
   return {
     ...parsed,
+    candidateOrderCodes: finalCandidateCodes,
     transactionTime: finalTxTime,
+    parsedOrderCode: transferContent.orderCode,
+    parsedCustomerName: transferContent.customerName,
     idempotencyHash,
     rawSms,
   };

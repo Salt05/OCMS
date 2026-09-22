@@ -762,6 +762,15 @@ model BankTransaction {
   gatewayMessageId        String?   @unique @map("gateway_message_id")
   idempotencyHash         String    @unique @map("idempotency_hash")
   
+  // Parsed data from SMS content (raw SMS always preserved above)
+  parsedOrderCode         String?   @map("parsed_order_code")
+  parsedCustomerName      String?   @map("parsed_customer_name")
+  
+  // Reconciliation engine results (2-tier: Hard Rules + Scoring)
+  reconciliationStatus    String?   @map("reconciliation_status")
+  reconciliationScore     Int?      @map("reconciliation_score")
+  reconciliationReasons   Json      @default("[]") @map("reconciliation_reasons")
+  
   confidenceScore         Int       @default(0) @map("confidence_score")
   scoringDetails          Json      @default("{}") @map("scoring_details")
   
