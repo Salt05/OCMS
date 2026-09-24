@@ -6,7 +6,9 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { routerClient } from '../../shared/services/router-client.js';
+import { odooService } from '../odoo/odoo-service.js';
 import type { ParseResult } from './sms-parser.js';
+import { getOrderCodeSearchVariants } from './mb-sms-parser.js';
 
 export interface ScoringOutput {
   confidenceScore: number;
@@ -89,10 +91,7 @@ export async function evaluateAndMatchTransaction(
       const foundHistory = await prisma.orderHistory.findFirst({
         where: {
           orgId,
-          OR: [
-            { orderCode: { equals: code, mode: 'insensitive' } },
-            { orderCode: { contains: code, mode: 'insensitive' } },
-          ],
+          OR: getOrderCodeSearchVariants(code).map((variant) => ({ orderCode: { equals: variant, mode: 'insensitive' as const } })),
         },
         include: { customerProfile: true },
         orderBy: { createdAt: 'desc' },
@@ -112,10 +111,7 @@ export async function evaluateAndMatchTransaction(
       const foundOrder = await prisma.order.findFirst({
         where: {
           orgId,
-          OR: [
-            { orderCode: { equals: code, mode: 'insensitive' } },
-            { orderCode: { contains: code, mode: 'insensitive' } },
-          ],
+          OR: getOrderCodeSearchVariants(code).map((variant) => ({ orderCode: { equals: variant, mode: 'insensitive' as const } })),
         },
         include: { contact: true },
         orderBy: { createdAt: 'desc' },
@@ -305,6 +301,7 @@ export async function executeOrderApproval(
   let finalOrderCode = '';
   let contactForZalo: any = null;
   let odooOrderIdToSync: number | null = null;
+  let isOrderFullyPaid = false;
 
   // 1. Cập nhật OrderHistory (nếu là đơn Odoo/History)
   if (orderHistoryId) {
@@ -334,10 +331,22 @@ export async function executeOrderApproval(
     });
     const totalPaid = sumAgg._sum.amount || transaction.amount;
 
+    const currentOrder = await prisma.orderHistory.findUnique({
+      where: { id: orderHistoryId },
+      select: { amountTotal: true, state: true, invoiceStatus: true },
+    });
+
+    const isFullyPaid = totalPaid >= (currentOrder?.amountTotal || 0) && (currentOrder?.amountTotal || 0) > 0;
+    isOrderFullyPaid = isFullyPaid;
+    const nextState = isFullyPaid ? 'sale' : (currentOrder?.state || 'draft');
+    const nextInvoiceStatus = isFullyPaid ? 'invoiced' : (currentOrder?.invoiceStatus || 'no');
+
     const updatedHistory = await prisma.orderHistory.update({
       where: { id: orderHistoryId },
       data: {
         paidAmount: totalPaid,
+        state: nextState,
+        invoiceStatus: nextInvoiceStatus,
         note: transaction.notes
           ? `${transaction.notes}\n[Đã thanh toán qua MB Bank ${transaction.accountNumber}]`
           : `[Đã thanh toán qua MB Bank ${transaction.accountNumber}]`,
@@ -448,13 +457,27 @@ export async function executeOrderApproval(
     }
   }
 
-  // 5. Đồng bộ trạng thái thanh toán sang ERP Odoo (nếu có odooOrderId)
-  if (odooOrderIdToSync) {
+  // 5. Đồng bộ trạng thái thanh toán và tạo hóa đơn sang ERP Odoo (nếu có odooOrderId)
+  if (odooOrderIdToSync && isOrderFullyPaid) {
     try {
-      // Có thể ghi nhận activity hoặc thanh toán qua routerClient
-      logger.info(`[payment-scoring] Đã ghi nhận thanh toán cho đơn Odoo #${odooOrderIdToSync}`);
+      logger.info(`[payment-scoring] ⚡ Đơn #${finalOrderCode} (Odoo #${odooOrderIdToSync}) đã thanh toán đủ 100%. Đang tự động tạo hóa đơn trên Odoo...`);
+      const odooRes = await odooService.createInvoiceForOrder(odooOrderIdToSync);
+      if (odooRes.success) {
+        logger.info(`[payment-scoring] ✅ Đã đồng bộ Odoo thành công! Trạng thái Odoo: state=${odooRes.state}, invoice_status=${odooRes.invoiceStatus}`);
+        if (orderHistoryId) {
+          await prisma.orderHistory.update({
+            where: { id: orderHistoryId },
+            data: {
+              state: odooRes.state || 'sale',
+              invoiceStatus: odooRes.invoiceStatus || 'invoiced',
+            },
+          });
+        }
+      } else {
+        logger.warn(`[payment-scoring] Odoo không thể tự động tạo hóa đơn: ${odooRes.error}`);
+      }
     } catch (odooErr: any) {
-      logger.warn(`[payment-scoring] Lỗi đồng bộ Odoo Payment: ${odooErr.message}`);
+      logger.warn(`[payment-scoring] Lỗi đồng bộ Odoo Invoice: ${odooErr.message}`);
     }
   }
 
@@ -486,7 +509,8 @@ export async function executeOrderApproval(
     });
     zaloPool.getIO()?.emit('order:updated', {
       orderCode: finalOrderCode,
-      state: 'paid',
+      state: isOrderFullyPaid ? 'sale' : 'paid',
+      invoiceStatus: isOrderFullyPaid ? 'invoiced' : undefined,
     });
   } catch (socketErr: any) {
     // Non-blocking

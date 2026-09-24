@@ -5,6 +5,7 @@
 import { config } from '../../config/index.js';
 import { logger } from '../../shared/utils/logger.js';
 import { integrationSettingsService } from '../settings/integration-settings-service.js';
+import { routerClient } from '../../shared/services/router-client.js';
 
 export interface OdooCustomer {
   id: number;
@@ -800,6 +801,131 @@ class OdooService {
       logger.warn(`[odoo] Failed to confirm order ${odooOrderId}: ${err.message}`);
       return false;
     }
+  }
+
+  /**
+   * Tự động xác nhận đơn (Báo giá -> Đơn bán) và xuất hóa đơn trên Odoo
+   * Chuyển trạng thái sang "Đơn bán hàng" (state: 'sale') và "Đã xuất hoá đơn hết" (invoice_status: 'invoiced')
+   */
+  async createInvoiceForOrder(
+    odooOrderId: number | number[],
+    overrideConfig?: { url: string; db: string; user: string; apiKey: string }
+  ): Promise<{ success: boolean; invoiceStatus: string; state: string; invoiceIds?: number[]; error?: string }> {
+    const id = Array.isArray(odooOrderId) ? Number(odooOrderId[0]) : Number(odooOrderId);
+    if (!id || isNaN(id)) {
+      return { success: false, invoiceStatus: 'no', state: 'draft', error: 'Mã odooOrderId không hợp lệ' };
+    }
+
+    const configsToTry: any[] = [];
+    if (overrideConfig) {
+      configsToTry.push(overrideConfig);
+    }
+    try {
+      const active = await routerClient.getActiveOdooConfig();
+      if (active && (!overrideConfig || active.url !== overrideConfig.url)) {
+        configsToTry.push(active);
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const dynamicConfig = await integrationSettingsService.getOdooConfig();
+      if (dynamicConfig.url && dynamicConfig.db && dynamicConfig.user && dynamicConfig.apiKey) {
+        if (!configsToTry.some((c) => c.url === dynamicConfig.url && c.user === dynamicConfig.user)) {
+          configsToTry.push(dynamicConfig);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    let lastError = '';
+    for (const cfg of configsToTry) {
+      try {
+        // 1. Kiểm tra đơn hàng trên Odoo
+        const orders = await this.executeKw<any[]>(
+          'sale.order',
+          'search_read',
+          [[['id', '=', id]]],
+          { fields: ['id', 'name', 'state', 'invoice_status', 'invoice_ids'] },
+          cfg
+        );
+
+        if (!orders || orders.length === 0) {
+          continue; // thử server khác
+        }
+
+        const currentOrder = orders[0];
+
+        // 2. Nếu đơn còn ở Báo giá (draft / sent) -> Xác nhận đơn (action_confirm)
+        if (currentOrder.state === 'draft' || currentOrder.state === 'sent') {
+          try {
+            await this.executeKw('sale.order', 'action_confirm', [[id]], {}, cfg);
+            logger.info(`[odoo] Đã xác nhận đơn #${id} (${currentOrder.name}) thành Đơn bán hàng (sale)`);
+          } catch (confirmErr: any) {
+            logger.warn(`[odoo] Không thể action_confirm đơn #${id}: ${confirmErr.message}`);
+          }
+        }
+
+        // 3. Nếu đơn chưa có hóa đơn hoặc chưa xuất hết -> Tạo hóa đơn qua wizard sale.advance.payment.inv
+        if (currentOrder.invoice_status !== 'invoiced') {
+          const context = {
+            active_ids: [id],
+            active_id: id,
+            active_model: 'sale.order',
+          };
+
+          const wizardId = await this.executeKw<number>(
+            'sale.advance.payment.inv',
+            'create',
+            [{ advance_payment_method: 'delivered' }],
+            { context },
+            cfg
+          );
+
+          await this.executeKw(
+            'sale.advance.payment.inv',
+            'create_invoices',
+            [[wizardId]],
+            { context },
+            cfg
+          );
+        }
+
+        // 4. Đọc lại trạng thái mới nhất từ Odoo
+        const updated = await this.executeKw<any[]>(
+          'sale.order',
+          'read',
+          [[id], ['name', 'state', 'invoice_status', 'invoice_ids']],
+          {},
+          cfg
+        );
+
+        const newStatus = updated?.[0]?.invoice_status || 'invoiced';
+        const newState = updated?.[0]?.state || 'sale';
+        const invoiceIds = updated?.[0]?.invoice_ids || [];
+
+        logger.info(`[odoo] ✅ Đơn #${id} (${currentOrder.name}) đã tạo hóa đơn thành công! Trạng thái Odoo: state=${newState}, invoice_status=${newStatus}`);
+
+        return {
+          success: true,
+          invoiceStatus: newStatus,
+          state: newState,
+          invoiceIds,
+        };
+      } catch (err: any) {
+        lastError = err.message || String(err);
+        logger.warn(`[odoo] Lỗi khi tạo hóa đơn cho đơn #${id} trên Odoo: ${lastError}`);
+      }
+    }
+
+    return {
+      success: false,
+      invoiceStatus: 'invoiced',
+      state: 'sale',
+      error: lastError,
+    };
   }
 
   async cancelOrder(odooOrderId: number, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<boolean> {

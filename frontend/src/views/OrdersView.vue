@@ -82,7 +82,7 @@
             </v-col>
 
             <!-- State Filter -->
-            <v-col cols="6" sm="6" md="2">
+            <v-col cols="6" sm="4" md="2">
               <v-select
                 v-model="filters.state"
                 :items="ODOO_ORDER_STATES"
@@ -96,8 +96,23 @@
               />
             </v-col>
 
+            <!-- Invoice Status Filter -->
+            <v-col cols="6" sm="4" md="2">
+              <v-select
+                v-model="filters.invoiceStatus"
+                :items="ODOO_INVOICE_STATUSES"
+                item-title="text"
+                item-value="value"
+                density="compact"
+                variant="outlined"
+                hide-details
+                placeholder="Hóa đơn (Odoo)"
+                @update:model-value="onFilterChange"
+              />
+            </v-col>
+
             <!-- Salesperson Filter -->
-            <v-col cols="6" sm="6" md="2">
+            <v-col cols="6" sm="4" md="2">
               <v-select
                 v-model="filters.salesperson"
                 :items="salespersonOptions"
@@ -113,7 +128,7 @@
             </v-col>
 
             <!-- Delivery Status Filter -->
-            <v-col cols="6" sm="6" md="2">
+            <v-col cols="6" sm="4" md="1">
               <v-select
                 v-model="filters.deliveryStatus"
                 :items="ODOO_DELIVERY_STATUSES"
@@ -128,7 +143,7 @@
             </v-col>
 
             <!-- Quick Date Filter -->
-            <v-col cols="6" sm="6" md="2">
+            <v-col cols="6" sm="4" md="2">
               <v-select
                 v-model="quickDate"
                 :items="quickDateOptions"
@@ -143,7 +158,7 @@
             </v-col>
 
             <!-- Reset Filter (Only shown when active filters exist) -->
-            <v-col v-if="hasActiveFilters" cols="12" sm="6" md="1" class="d-flex align-center justify-end">
+            <v-col v-if="hasActiveFilters" cols="12" sm="4" md="1" class="d-flex align-center justify-end">
               <v-btn icon size="small" variant="text" color="error" title="Xóa bộ lọc" @click="resetFilters">
                 <v-icon size="18">lucide-filter-x</v-icon>
               </v-btn>
@@ -165,13 +180,14 @@
                 <th v-if="!isMobile" class="text-left" style="width: 145px;">Hoạt động (odoo)</th>
                 <th class="text-right" :style="isMobile ? 'width: 17%;' : 'width: 110px;'">Tổng tiền</th>
                 <th class="text-right" :style="isMobile ? 'width: 17%;' : 'width: 120px;'">Đã thanh toán</th>
-                <th class="text-center" :style="isMobile ? 'width: 16%;' : 'width: 95px;'">Trạng thái</th>
+                <th class="text-center" :style="isMobile ? 'width: 16%;' : 'width: 105px;'">Trạng thái</th>
+                <th v-if="!isMobile" class="text-center" style="width: 140px;">Hóa đơn (odoo)</th>
                 <th v-if="!isMobile" class="text-center" style="width: 90px;">Giao hàng</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!loading && orders.length === 0">
-                <td :colspan="isMobile ? 6 : 9" class="text-center text-medium-emphasis py-12">
+                <td :colspan="isMobile ? 6 : 10" class="text-center text-medium-emphasis py-12">
                   <v-icon icon="lucide-inbox" size="48" color="grey" class="mb-2" />
                   <div class="text-body-1 font-weight-medium">Không tìm thấy đơn hàng nào</div>
                   <div class="text-caption text-grey">Thử thay đổi bộ lọc hoặc bấm "Đồng bộ Odoo"</div>
@@ -254,6 +270,21 @@
                   <v-chip size="x-small" :color="stateColor(o.state)" variant="flat" class="font-weight-medium px-2" style="white-space: nowrap;">
                     {{ stateLabel(o.state) }}
                   </v-chip>
+                </td>
+
+                <!-- Invoice Status (Odoo) -->
+                <td v-if="!isMobile" class="text-center">
+                  <v-chip
+                    v-if="o.invoiceStatus"
+                    size="x-small"
+                    :color="invoiceStatusColor(o.invoiceStatus)"
+                    variant="tonal"
+                    class="font-weight-medium px-2"
+                    style="white-space: nowrap;"
+                  >
+                    {{ invoiceStatusLabel(o.invoiceStatus) }}
+                  </v-chip>
+                  <span v-else class="text-caption text-medium-emphasis">—</span>
                 </td>
 
                 <!-- Delivery Status -->
@@ -687,7 +718,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDisplay } from 'vuetify';
 import { io, Socket } from 'socket.io-client';
-import { useOrders, ODOO_ORDER_STATES, ODOO_DELIVERY_STATUSES, type OrderItem } from '@/composables/use-orders';
+import { useOrders, ODOO_ORDER_STATES, ODOO_DELIVERY_STATUSES, ODOO_INVOICE_STATUSES, type OrderItem } from '@/composables/use-orders';
 import { useAppBadges } from '@/composables/use-app-badges';
 import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
 import OrderStaffTable from '@/components/orders/OrderStaffTable.vue';
@@ -753,6 +784,8 @@ const {
   stateLabel,
   deliveryStatusColor,
   deliveryStatusLabel,
+  invoiceStatusColor,
+  invoiceStatusLabel,
 } = useOrders();
 
 const { fetchAllBadges } = useAppBadges();
@@ -829,6 +862,7 @@ const snackbar = reactive({
 const filters = reactive({
   search: '',
   state: '',
+  invoiceStatus: '',
   salesperson: '',
   deliveryStatus: '',
   from: '',
@@ -897,6 +931,7 @@ const hasActiveFilters = computed(() => {
   return !!(
     (filters.search && filters.search.trim()) ||
     filters.state ||
+    filters.invoiceStatus ||
     filters.salesperson ||
     filters.deliveryStatus ||
     quickDate.value
@@ -910,6 +945,7 @@ function buildParams() {
   };
   if (filters.search) p.search = filters.search.trim();
   if (filters.state) p.state = filters.state;
+  if (filters.invoiceStatus) p.invoiceStatus = filters.invoiceStatus;
   if (filters.salesperson) p.salesperson = filters.salesperson;
   if (filters.deliveryStatus) p.deliveryStatus = filters.deliveryStatus;
   if (filters.from) p.from = filters.from;
@@ -951,6 +987,7 @@ function onQuickDateChange(val: string) {
 function resetFilters() {
   filters.search = '';
   filters.state = '';
+  filters.invoiceStatus = '';
   filters.salesperson = '';
   filters.deliveryStatus = '';
   filters.from = '';

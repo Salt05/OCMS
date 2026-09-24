@@ -52,8 +52,8 @@ export function extractCandidateOrderCodes(text: string): string[] {
     }
   }
 
-  // 2. Khớp mã S0XXXX Odoo (format phổ biến nhất): S02312, S02300, S12345
-  const s0Matches = normalized.match(/\bS0\d{4,6}\b/g);
+  // 2. Khớp mã số Odoo có thể có tiền tố S: S02312, 02312
+  const s0Matches = normalized.match(/(?<!\d)S?0\d{4,6}(?!\d)/g);
   if (s0Matches) {
     for (const m of s0Matches) {
       codes.add(m);
@@ -129,6 +129,18 @@ export interface ParsedTransferContent {
   customerName: string | null;
 }
 
+/** Tạo các dạng mã tương đương để mã số có/không có tiền tố S đều được nhận diện. */
+export function getOrderCodeSearchVariants(code: string): string[] {
+  const normalized = code.replace(/[-_ ]/g, '').toUpperCase();
+  const numericCode = normalized.replace(/^S(?=0\d{4,6}$)/, '');
+
+  if (/^0\d{4,6}$/.test(numericCode)) {
+    return Array.from(new Set([normalized, numericCode, `S${numericCode}`]));
+  }
+
+  return [normalized];
+}
+
 /**
  * Bóc tách thông tin từ nội dung chuyển khoản (ND field):
  * - Order Code (S02312, ORD-..., SO...)
@@ -152,7 +164,7 @@ export function extractTransferContent(description: string): ParsedTransferConte
   // 1. Tìm order code trong nội dung
   // Ưu tiên S0XXXX (Odoo), sau đó ORD-..., SO...
   const orderCodePatterns: RegExp[] = [
-    /\bS0\d{4,6}\b/i,                           // S02312, S02300
+    /(?<!\d)S?0\d{4,6}(?!\d)/i,                 // S02312, 02312, aaaS02312bbb
     /\bORD[-_ ]?[0-9]{8}[-_ ]?[0-9]{2,4}\b/i,   // ORD-20260920-001
     /\bSO[-_ ]?[0-9]{3,7}\b/i,                   // SO12345
     /\b(?:SO-)?AI-[A-Z0-9]{6,12}\b/i,            // AI-A1B2C3D4
@@ -184,11 +196,25 @@ export function extractTransferContent(description: string): ParsedTransferConte
   } else {
     // Không tìm thấy order code — thử tìm tên người gửi từ các pattern đặc biệt
     // Dạng: "NGUYEN VAN A chuyen tien" hoặc "NGUYEN VAN A TT ..."
-    const nameBeforeKeyword = upper.match(/^([A-Z\s]{4,30})\s+(?:CHUYEN|CK|THANH TOAN|TT|CHUYENKHOAN|CHUYEN KHOAN)/i);
+    const nameBeforeKeyword = upper.match(/^([A-Z0-9À-Ỹ\s]{4,40})\s+(?:CHUYEN|CK|THANH TOAN|TT|CHUYENKHOAN|CHUYEN KHOAN)/i);
     if (nameBeforeKeyword && nameBeforeKeyword[1]) {
       const name = nameBeforeKeyword[1].trim();
       if (name.length >= 4 && !/\d/.test(name)) {
         result.customerName = name;
+      }
+    } else {
+      // Một số SMS chỉ gửi tên khách hàng trong ND, ví dụ: "68 PET SHOP".
+      // Loại bỏ các trường hợp văn bản chung chung / nội dung chuyển tiền không phải tên người hoặc shop
+      const nameOnly = text.replace(/\s+/g, ' ').trim();
+      const genericKeywords = [
+        'CHUYEN TIEN', 'CHUYEN TIEN CHO', 'CK', 'THANH TOAN', 'TIEN AN', 'TIEN NHA', 'TIEN HOC',
+        'HOC PHI', 'CHUC MUNG', 'SINH NHAT', 'TRA NO', 'VAY TIEN', 'LIXI', 'LI XI', 'MUA HANG',
+        'RANDOM', 'TEST', 'ORDER INFO', 'WITHOUT ORDER',
+      ];
+      const isGeneric = genericKeywords.some((kw) => nameOnly.toUpperCase().includes(kw));
+
+      if (!isGeneric && nameOnly.length >= 4 && nameOnly.length <= 40 && /^[A-Za-zÀ-ỹ0-9][A-Za-zÀ-ỹ0-9\s.'-]*$/.test(nameOnly)) {
+        result.customerName = nameOnly.toUpperCase();
       }
     }
   }
@@ -282,7 +308,7 @@ export function parseMbBankSms(smsContent: string, simAccountNumberFallback?: st
   }
 
   // ── 5. Bóc tách Nội dung chuyển khoản (ND: ...) ──
-  const ndMatch = cleanContent.match(/(?:ND|Noi dung|Noi dung chuyen khoan)[:\s]*(.*)$/i);
+  const ndMatch = cleanContent.match(/\b(?:ND|Noi dung chuyen khoan|Noi dung)[:\s]*(.*)$/i);
   if (ndMatch) {
     result.description = ndMatch[1].trim();
   } else {

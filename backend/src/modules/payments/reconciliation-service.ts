@@ -7,6 +7,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import type { ParseResult } from './sms-parser.js';
 import { cleanSenderName } from './payment-scoring-service.js';
+import { getOrderCodeSearchVariants } from './mb-sms-parser.js';
 
 // ── Reconciliation Status Constants ─────────────────────────────────────────────
 export const RECON_STATUS = {
@@ -84,10 +85,30 @@ function normalizeName(name: string | null | undefined): string {
   return name
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Za-z\s]/g, '')
+    .replace(/[^A-Za-z0-9\s]/g, '')
     .toUpperCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function compactName(name: string): string {
+  return name.replace(/[^A-Z0-9]/g, '');
+}
+
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = left[leftIndex - 1] === right[rightIndex - 1]
+        ? previous[rightIndex - 1]
+        : Math.min(previous[rightIndex - 1], previous[rightIndex], current[rightIndex - 1]) + 1;
+    }
+    for (let index = 0; index <= right.length; index += 1) previous[index] = current[index];
+  }
+
+  return previous[right.length];
 }
 
 /**
@@ -98,8 +119,21 @@ function isNameMatch(parsedName: string | null, orderName: string | null): boole
   const a = normalizeName(parsedName);
   const b = normalizeName(orderName);
   if (!a || !b) return false;
-  // Khớp chính xác hoặc chứa lẫn nhau
-  return a === b || a.includes(b) || b.includes(a);
+
+  const compactParsed = compactName(a);
+  const compactOrder = compactName(b);
+  if (compactParsed === compactOrder) return true;
+
+  // Cho phép nội dung bị lặp một phần, ví dụ: "68 pet68 pet shop".
+  if (compactParsed.includes(compactOrder) || compactOrder.includes(compactParsed)) return true;
+
+  // Chỉ cho phép lỗi gõ tối đa một ký tự khi phần số nhận diện khách hàng trùng.
+  const parsedNumbers = a.match(/\d+/g)?.join('') || '';
+  const orderNumbers = b.match(/\d+/g)?.join('') || '';
+  return parsedNumbers !== ''
+    && parsedNumbers === orderNumbers
+    && Math.abs(compactParsed.length - compactOrder.length) <= 1
+    && editDistance(compactParsed, compactOrder) <= 1;
 }
 
 /**
@@ -151,13 +185,11 @@ export async function reconcileTransaction(
 
   for (const code of codesToSearch) {
     // Tìm trong OrderHistory (Odoo)
+    const codeVariants = getOrderCodeSearchVariants(code);
     const foundHistory = await prisma.orderHistory.findFirst({
       where: {
         orgId,
-        OR: [
-          { orderCode: { equals: code, mode: 'insensitive' } },
-          { orderCode: { contains: code, mode: 'insensitive' } },
-        ],
+        OR: codeVariants.map((variant) => ({ orderCode: { equals: variant, mode: 'insensitive' as const } })),
       },
       include: { customerProfile: true },
       orderBy: { createdAt: 'desc' },
@@ -176,10 +208,7 @@ export async function reconcileTransaction(
     const foundOrder = await prisma.order.findFirst({
       where: {
         orgId,
-        OR: [
-          { orderCode: { equals: code, mode: 'insensitive' } },
-          { orderCode: { contains: code, mode: 'insensitive' } },
-        ],
+        OR: codeVariants.map((variant) => ({ orderCode: { equals: variant, mode: 'insensitive' as const } })),
       },
       include: { contact: true },
       orderBy: { createdAt: 'desc' },
@@ -199,7 +228,7 @@ export async function reconcileTransaction(
   if (codesToSearch.length > 0 && !targetOrderHistory && !targetOrder) {
     result.status = RECON_STATUS.ORDER_NOT_FOUND;
     result.reasons.push(RECON_REASON.ORDER_NOT_FOUND);
-    result.matchedOrderCode = orderCode || codesToSearch[0] || null;
+    result.matchedOrderCode = null;
     result.legacyScoringStatus = 'MANUAL_REVIEW';
     logger.info(`[reconciliation] Order code '${orderCode || codesToSearch[0]}' → ORDER_NOT_FOUND`);
     return result;
@@ -355,18 +384,17 @@ export async function reconcileTransaction(
     customerName: string | null;
     amount: number;
     createdAt: Date;
+    isQuotation: boolean;
   }> = [];
 
-  // Tìm trong OrderHistory (72h gần nhất)
+  // Tìm trong toàn bộ lịch sử đơn còn hiệu lực để không bỏ sót báo giá cũ.
   const recentHistories = await prisma.orderHistory.findMany({
     where: {
       orgId,
       state: { in: ['draft', 'sent', 'sale'] },
-      dateOrder: { gte: new Date(Date.now() - 72 * 3600 * 1000) },
     },
     include: { customerProfile: true },
-    orderBy: { dateOrder: 'desc' },
-    take: 50,
+    orderBy: { dateOrder: 'asc' },
   });
 
   for (const h of recentHistories) {
@@ -374,7 +402,8 @@ export async function reconcileTransaction(
     const customerName = h.partnerName || h.customerProfile?.name || null;
 
     // Name match
-    if (isNameMatch(parsedName, customerName)) {
+    const nameMatched = isNameMatch(parsedName, customerName);
+    if (nameMatched) {
       candidateScore += SCORING_WEIGHTS.CUSTOMER_NAME_MATCH;
     }
 
@@ -393,7 +422,7 @@ export async function reconcileTransaction(
       }
     }
 
-    if (candidateScore > 0) {
+    if (nameMatched && candidateScore > 0) {
       candidates.push({
         id: h.id,
         orderCode: h.orderCode,
@@ -402,20 +431,19 @@ export async function reconcileTransaction(
         customerName,
         amount: h.amountTotal,
         createdAt: h.dateOrder || h.createdAt,
+        isQuotation: h.state === 'draft',
       });
     }
   }
 
-  // Tìm trong Order CRM (72h gần nhất)
+  // Tìm trong các đơn CRM chưa hoàn tất.
   const recentOrders = await prisma.order.findMany({
     where: {
       orgId,
       status: { notIn: ['paid', 'completed', 'cancelled', 'canceled'] },
-      createdAt: { gte: new Date(Date.now() - 72 * 3600 * 1000) },
     },
     include: { contact: true },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
+    orderBy: { createdAt: 'asc' },
   });
 
   for (const o of recentOrders) {
@@ -423,7 +451,8 @@ export async function reconcileTransaction(
     const customerName = o.contact?.fullName || null;
 
     // Name match
-    if (isNameMatch(parsedName, customerName)) {
+    const nameMatched = isNameMatch(parsedName, customerName);
+    if (nameMatched) {
       candidateScore += SCORING_WEIGHTS.CUSTOMER_NAME_MATCH;
     }
 
@@ -442,7 +471,7 @@ export async function reconcileTransaction(
       }
     }
 
-    if (candidateScore > 0) {
+    if (nameMatched && candidateScore > 0) {
       candidates.push({
         id: o.id,
         orderCode: o.orderCode,
@@ -451,12 +480,17 @@ export async function reconcileTransaction(
         customerName,
         amount: o.totalAmount,
         createdAt: o.createdAt,
+        isQuotation: false,
       });
     }
   }
 
-  // Sắp xếp theo điểm giảm dần
-  candidates.sort((a, b) => b.score - a.score);
+  // Ưu tiên báo giá trước; nếu có nhiều báo giá của cùng khách, lấy đơn đầu tiên.
+  candidates.sort((a, b) => {
+    if (a.isQuotation !== b.isQuotation) return a.isQuotation ? -1 : 1;
+    if (a.isQuotation && b.isQuotation) return a.createdAt.getTime() - b.createdAt.getTime();
+    return b.score - a.score || a.createdAt.getTime() - b.createdAt.getTime();
+  });
 
   if (candidates.length > 0) {
     const best = candidates[0];

@@ -626,13 +626,37 @@ export async function orderRoutes(app: FastifyInstance) {
     });
     const newPaidAmount = sumAgg._sum.amount || 0;
 
+    const isFullyPaid = newPaidAmount >= order.amountTotal && order.amountTotal > 0;
+    const nextState = isFullyPaid ? 'sale' : order.state;
+    const nextInvoiceStatus = isFullyPaid ? 'invoiced' : (order.invoiceStatus || 'no');
+
     const updatedOrder = await prisma.orderHistory.update({
       where: { id: order.id },
       data: {
         paidAmount: newPaidAmount,
+        state: nextState,
+        invoiceStatus: nextInvoiceStatus,
         updatedAt: new Date(),
       },
     });
+
+    if (isFullyPaid && order.odooOrderId) {
+      try {
+        odooService.createInvoiceForOrder(order.odooOrderId).then((odooRes) => {
+          if (odooRes.success) {
+            prisma.orderHistory.update({
+              where: { id: order.id },
+              data: {
+                state: odooRes.state || 'sale',
+                invoiceStatus: odooRes.invoiceStatus || 'invoiced',
+              },
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch (err: any) {
+        logger.warn(`[order-payments] Lỗi gọi createInvoiceForOrder: ${err.message}`);
+      }
+    }
 
     logger.info(`[order-payments] Đã ghi nhận thanh toán ${amount.toLocaleString('vi-VN')} đ (${body.paymentMethod || 'CASH'}) cho đơn ${order.orderCode} bởi user ${user.email}`);
 
@@ -796,13 +820,37 @@ export async function orderRoutes(app: FastifyInstance) {
     const oldPaid = order.paidAmount || 0;
     const diff = newPaid - oldPaid;
 
+    const isFullyPaid = newPaid >= order.amountTotal && order.amountTotal > 0;
+    const nextState = isFullyPaid ? 'sale' : order.state;
+    const nextInvoiceStatus = isFullyPaid ? 'invoiced' : (order.invoiceStatus || 'no');
+
     const updated = await prisma.orderHistory.update({
       where: { id: order.id },
       data: {
         paidAmount: newPaid,
+        state: nextState,
+        invoiceStatus: nextInvoiceStatus,
         updatedAt: new Date(),
       },
     });
+
+    if (isFullyPaid && order.odooOrderId) {
+      try {
+        odooService.createInvoiceForOrder(order.odooOrderId).then((odooRes) => {
+          if (odooRes.success) {
+            prisma.orderHistory.update({
+              where: { id: order.id },
+              data: {
+                state: odooRes.state || 'sale',
+                invoiceStatus: odooRes.invoiceStatus || 'invoiced',
+              },
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch (err: any) {
+        logger.warn(`[order-payments] Lỗi gọi createInvoiceForOrder: ${err.message}`);
+      }
+    }
 
     if (diff !== 0) {
       await prisma.orderPayment.create({

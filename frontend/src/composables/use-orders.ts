@@ -272,7 +272,7 @@ export function useOrders() {
     switch (state) {
       case 'draft': return 'Báo giá';
       case 'sent': return 'Đã gửi BG';
-      case 'sale': return 'Đơn hàng';
+      case 'sale': return 'Đơn bán hàng';
       case 'done': return 'Hoàn thành';
       case 'cancel': return 'Đã hủy';
       default: return state || '—';
@@ -302,15 +302,17 @@ export function useOrders() {
       case 'to invoice': return 'warning';
       case 'invoiced': return 'success';
       case 'no': return 'grey';
+      case 'upselling': return 'info';
       default: return 'grey';
     }
   }
 
   function invoiceStatusLabel(status: string | null) {
     switch (status) {
-      case 'to invoice': return 'Cần xuất HĐ';
-      case 'invoiced': return 'Đã xuất HĐ';
-      case 'no': return 'Không';
+      case 'to invoice': return 'Cần xuất hóa đơn';
+      case 'invoiced': return 'Đã xuất hoá đơn hết';
+      case 'no': return 'Chưa có';
+      case 'upselling': return 'Cơ hội gia tăng';
       default: return status || '—';
     }
   }

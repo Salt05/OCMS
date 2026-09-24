@@ -50,7 +50,7 @@
 
             <!-- Edit Mode Toggle Button -->
             <v-btn
-              v-if="!isEditing && order"
+              v-if="!isEditing && order && !readOnly"
               size="small"
               color="primary"
               variant="tonal"
@@ -494,51 +494,16 @@
                   <template v-if="!isEditing && order">
                     <v-divider class="my-2" />
 
-                    <!-- Dòng: Số tiền nhận (Cho phép sửa trực tiếp) -->
+                    <!-- Dòng: Số tiền đã nhận, chỉ hiển thị -->
                     <div class="d-flex justify-space-between align-center py-1">
                       <div class="d-flex align-center gap-1.5">
                         <v-icon size="16" :class="modalPaidStatusClass">lucide-wallet</v-icon>
-                        <span class="font-weight-medium text-body-2">Số tiền nhận:</span>
+                        <span class="font-weight-medium text-body-2">Số tiền đã nhận:</span>
                       </div>
 
-                      <div class="d-flex align-center gap-1.5">
-                        <!-- Input cho phép sửa trực tiếp số tiền nhận -->
-                        <div
-                          class="direct-paid-input-wrap d-flex align-center rounded-lg px-2 py-1 bg-surface border"
-                          :class="{ 'is-focused': isPaidFocused, 'border-primary': isPaidFocused, 'is-modified': isPaidModified }"
-                        >
-                          <input
-                            ref="paidInputRef"
-                            type="text"
-                            :value="displayPaidAmount"
-                            @input="onPaidInputChange"
-                            @focus="onPaidFieldFocus"
-                            @blur="onPaidFieldBlur"
-                            @keydown.enter.prevent="saveDirectPaidAmount"
-                            class="font-weight-bold font-monospace text-right direct-paid-input"
-                            :class="modalPaidStatusClass"
-                            placeholder="0"
-                            title="Bấm vào để tự động điền số tiền cần thanh toán, có thể gõ sửa và bấm Enter hoặc Lưu"
-                            style="width: 120px; outline: none; border: none; font-size: 0.95rem; background: transparent;"
-                          />
-                          <span class="text-caption font-weight-bold ml-1" :class="modalPaidStatusClass">₫</span>
-                        </div>
-
-                        <!-- Nút Lưu khi đã sửa -->
-                        <v-btn
-                          v-if="isPaidModified"
-                          size="small"
-                          color="primary"
-                          variant="flat"
-                          density="comfortable"
-                          class="text-none font-weight-bold px-2 rounded-lg"
-                          :loading="savingPaidAmount"
-                          title="Lưu số tiền nhận (Enter)"
-                          @click="saveDirectPaidAmount"
-                        >
-                          Lưu
-                        </v-btn>
-                      </div>
+                      <span class="font-weight-bold font-monospace" :class="modalPaidStatusClass">
+                        {{ formatVND(numericPaidAmount) }}
+                      </span>
                     </div>
 
                     <!-- Dòng Trạng thái: Còn thiếu (COD) hoặc Đã thu đủ hoặc Tiền thừa (dư) -->
@@ -554,30 +519,6 @@
                       </span>
                     </div>
 
-                    <!-- Nút Ghi nhận thu tiền / Điền đủ -->
-                    <div class="pt-2 d-flex justify-end align-center gap-2">
-                      <v-btn
-                        v-if="Math.round(Number(order.paidAmount || 0)) !== Math.round(Number(order.amountTotal || 0))"
-                        size="x-small"
-                        color="primary"
-                        variant="text"
-                        class="text-none font-weight-medium"
-                        prepend-icon="lucide-sparkles"
-                        @click="fillFullPayment"
-                      >
-                        Điền đủ ({{ formatVND(order.amountTotal) }})
-                      </v-btn>
-                      <v-btn
-                        size="small"
-                        color="teal"
-                        variant="tonal"
-                        prepend-icon="lucide-hand-coins"
-                        class="text-none font-weight-bold"
-                        @click="openPaymentDialog"
-                      >
-                        Ghi nhận thanh toán
-                      </v-btn>
-                    </div>
                   </template>
                 </div>
               </v-card>
@@ -626,6 +567,7 @@
                     </td>
                     <td class="text-center">
                       <v-btn
+                        v-if="authStore.isAdmin"
                         icon
                         size="24"
                         variant="text"
@@ -676,6 +618,17 @@
         <!-- Read Only Mode Actions -->
         <template v-else>
           <div class="d-flex align-center gap-2">
+            <v-btn
+              v-if="authStore.isAdmin"
+              color="teal"
+              variant="tonal"
+              prepend-icon="lucide-hand-coins"
+              class="text-none font-weight-bold"
+              @click="openPaymentDialog"
+            >
+              Ghi nhận thanh toán
+            </v-btn>
+
             <!-- Nút Xác nhận đơn (chuyển Báo giá thành Đơn hàng) -->
             <v-btn
               v-if="canConfirmQuotation"
@@ -826,7 +779,6 @@
             step="10000"
             variant="outlined"
             density="compact"
-            prepend-inner-icon="lucide-dollar-sign"
             class="mb-3"
             :hint="formatVND(paymentForm.amount)"
             persistent-hint
@@ -906,7 +858,10 @@ const props = defineProps<{
   modelValue: boolean;
   order: OrderItem | null;
   loading?: boolean;
+  readOnly?: boolean;
 }>();
+
+const readOnly = computed(() => props.readOnly === true);
 
 const emit = defineEmits<{
   (e: 'update:modelValue', val: boolean): void;
@@ -1018,13 +973,7 @@ const remainingAmount = computed(() => {
   return Math.max(0, total - paid);
 });
 
-// ── Trực tiếp sửa số tiền nhận ──────────────────────────────────────────────
-const paidInputRef = ref<HTMLInputElement | null>(null);
 const numericPaidAmount = ref<number>(0);
-const displayPaidAmount = ref<string>('0');
-const isPaidFocused = ref(false);
-const isPaidModified = ref(false);
-const savingPaidAmount = ref(false);
 
 // Đồng bộ số tiền khi props.order hoặc props.modelValue thay đổi
 watch(
@@ -1032,8 +981,6 @@ watch(
   () => {
     const num = Math.round(Number(props.order?.paidAmount || 0));
     numericPaidAmount.value = num;
-    displayPaidAmount.value = num > 0 ? formatThousand(num) : '0';
-    isPaidModified.value = false;
   },
   { immediate: true }
 );
@@ -1068,91 +1015,6 @@ const modalPaidDifferenceText = computed(() => {
   if (paid > total) return `+${formatVND(paid - total)}`;
   return formatVND(total - paid);
 });
-
-// Khi trỏ vào trường: tự động điền số tiền cần thanh toán (có thể sửa)
-function onPaidFieldFocus(e: FocusEvent) {
-  isPaidFocused.value = true;
-  if (!props.order) return;
-  const total = Math.round(Number(props.order.amountTotal || 0));
-  const currentSaved = Math.round(Number(props.order.paidAmount || 0));
-
-  // Nếu số tiền đang là 0 hoặc chưa thu đủ, tự động điền số tiền cần thanh toán
-  if (numericPaidAmount.value === 0 || numericPaidAmount.value < total) {
-    numericPaidAmount.value = total;
-    displayPaidAmount.value = formatThousand(total);
-    isPaidModified.value = total !== currentSaved;
-  }
-
-  // Tự động bôi đen toàn bộ số để người dùng có thể gõ đè sửa ngay
-  const target = e.target as HTMLInputElement;
-  if (target) {
-    setTimeout(() => {
-      target.select();
-    }, 50);
-  }
-}
-
-function onPaidFieldBlur() {
-  isPaidFocused.value = false;
-  if (numericPaidAmount.value > 0) {
-    displayPaidAmount.value = formatThousand(numericPaidAmount.value);
-  } else {
-    displayPaidAmount.value = '0';
-  }
-}
-
-function onPaidInputChange(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const raw = input.value.replace(/\D/g, '');
-  const num = raw ? parseInt(raw, 10) : 0;
-  numericPaidAmount.value = num;
-  displayPaidAmount.value = raw ? formatThousand(num) : '';
-  const currentSaved = Math.round(Number(props.order?.paidAmount || 0));
-  isPaidModified.value = num !== currentSaved;
-}
-
-function fillFullPayment() {
-  if (!props.order) return;
-  const total = Math.round(Number(props.order.amountTotal || 0));
-  numericPaidAmount.value = total;
-  displayPaidAmount.value = formatThousand(total);
-  isPaidModified.value = total !== Math.round(Number(props.order.paidAmount || 0));
-  paidInputRef.value?.focus();
-}
-
-async function saveDirectPaidAmount() {
-  if (!props.order) return;
-  const newAmount = numericPaidAmount.value;
-  if (isNaN(newAmount) || newAmount < 0) return;
-
-  savingPaidAmount.value = true;
-  try {
-    const res = await api.put(`/orders/${props.order.id}/paid-amount`, {
-      paidAmount: newAmount,
-    });
-    if (res.data?.success) {
-      props.order.paidAmount = res.data.paidAmount;
-      if (res.data.payments) {
-        (props.order as any).payments = res.data.payments;
-      }
-      isPaidModified.value = false;
-      snackbar.value = {
-        show: true,
-        text: `Đã cập nhật số tiền nhận thành ${formatVND(newAmount)}!`,
-        color: 'success',
-      };
-      emit('saved', props.order);
-    }
-  } catch (err: any) {
-    snackbar.value = {
-      show: true,
-      text: err.response?.data?.error || err.message || 'Lỗi khi cập nhật số tiền nhận',
-      color: 'error',
-    };
-  } finally {
-    savingPaidAmount.value = false;
-  }
-}
 
 function onPaymentDialogFocus(e: FocusEvent) {
   const target = e.target as HTMLInputElement;

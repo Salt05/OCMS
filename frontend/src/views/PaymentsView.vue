@@ -7,9 +7,6 @@
           <v-icon color="primary" class="page-icon">lucide-credit-card</v-icon>
           Đối soát & Tự động Kiểm tra Thanh toán
         </h1>
-        <div class="text-caption text-medium-emphasis">
-          Quản lý biến động số dư 2 tài khoản MB Bank, chấm điểm tin cậy và tự động khớp đơn hàng
-        </div>
       </div>
 
       <div class="d-flex align-center flex-wrap ga-2" style="gap: 12px;">
@@ -24,13 +21,16 @@
         </v-btn>
 
         <v-btn
-          color="secondary"
-          variant="outlined"
-          prepend-icon="lucide-qr-code"
-          class="text-none font-weight-medium"
-          @click="showQrModal = true"
+          v-if="isAdmin"
+          icon
+          size="small"
+          color="primary"
+          variant="tonal"
+          title="Cấu hình tài khoản ngân hàng"
+          aria-label="Cấu hình tài khoản ngân hàng"
+          @click="showBankAccountsDialog = true"
         >
-          Kết nối Điện thoại (Test QR)
+          <v-icon size="18">lucide-settings</v-icon>
         </v-btn>
 
         <v-btn
@@ -45,210 +45,68 @@
       </div>
     </div>
 
-    <!-- Metric Cards -->
-    <v-row class="mb-4" dense>
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="outlined" class="pa-3 rounded-lg border bg-surface">
-          <div class="d-flex align-center justify-space-between mb-1">
-            <span class="text-caption text-medium-emphasis">Thu hôm nay (2 TK MB)</span>
-            <v-icon color="success" size="18">lucide-arrow-down-left</v-icon>
-          </div>
-          <div class="text-h6 font-weight-bold font-monospace text-success">
-            {{ formatVND(stats.todayTotalAmount) }}
-          </div>
-          <div class="text-caption text-medium-emphasis">{{ stats.todayTxCount }} giao dịch phát sinh</div>
-        </v-card>
-      </v-col>
-
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="outlined" class="pa-3 rounded-lg border bg-surface">
-          <div class="d-flex align-center justify-space-between mb-1">
-            <span class="text-caption text-medium-emphasis">Đã khớp hôm nay</span>
-            <v-icon color="primary" size="18">lucide-check-circle</v-icon>
-          </div>
-          <div class="text-h6 font-weight-bold font-monospace text-primary">
-            {{ stats.todayMatchedCount }}
-          </div>
-          <div class="text-caption text-medium-emphasis">Đơn hàng đã được xác nhận tiền</div>
-        </v-card>
-      </v-col>
-
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="outlined" class="pa-3 rounded-lg border bg-surface">
-          <div class="d-flex align-center justify-space-between mb-1">
-            <span class="text-caption text-medium-emphasis">Cần kế toán duyệt</span>
-            <v-chip v-if="stats.pendingReviewCount > 0" size="x-small" color="warning" variant="flat" class="font-weight-bold">
-              CẦN XỬ LÝ
-            </v-chip>
-          </div>
-          <div class="text-h6 font-weight-bold font-monospace" :class="stats.pendingReviewCount > 0 ? 'text-warning' : 'text-medium-emphasis'">
-            {{ stats.pendingReviewCount }}
-          </div>
-          <div class="text-caption text-medium-emphasis">Gợi ý 1-click hoặc duyệt thủ công</div>
-        </v-card>
-      </v-col>
-
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="outlined" class="pa-3 rounded-lg border bg-surface">
-          <div class="d-flex align-center justify-space-between mb-1">
-            <span class="text-caption text-medium-emphasis">Tài khoản kết nối</span>
-            <v-icon color="info" size="18">lucide-landmark</v-icon>
-          </div>
-          <div class="text-h6 font-weight-bold font-monospace text-high-emphasis">
-            {{ accounts.length }} Tài khoản
-          </div>
-          <div class="text-caption text-success font-weight-medium">🟢 Đang sẵn sàng nhận tin</div>
-        </v-card>
-      </v-col>
-    </v-row>
-
     <!-- Navigation Tabs -->
-    <v-tabs v-model="activeTab" color="primary" class="border-b mb-4">
-      <v-tab value="transactions" class="text-none font-weight-medium">
-        <v-icon start size="18">lucide-list</v-icon>
-        Biến động số dư & Đối soát
-        <v-chip v-if="stats.pendingReviewCount > 0" size="x-small" color="warning" variant="flat" class="ml-2 font-weight-bold">
-          {{ stats.pendingReviewCount }}
-        </v-chip>
+    <v-tabs v-model="reviewSubTab" color="primary" class="border-b mb-4" @update:model-value="onReviewTabChange">
+      <v-tab value="pending" class="text-none font-weight-medium">
+        <v-icon start size="18" color="warning">lucide-clock</v-icon>
+        CHƯA DUYỆT
+        <v-chip size="x-small" color="warning" variant="flat" class="ml-2 font-weight-bold">{{ pendingCount }}</v-chip>
       </v-tab>
-      <v-tab value="senders" class="text-none font-weight-medium">
-        <v-icon start size="18">lucide-user-check</v-icon>
-        Khách quen & Điểm uy tín
+      <v-tab value="ignored" class="text-none font-weight-medium">
+        <v-icon start size="18" color="grey">lucide-archive</v-icon>
+        ĐÃ BỎ QUA
+        <v-chip size="x-small" color="grey" variant="flat" class="ml-2 font-weight-bold">{{ ignoredCount }}</v-chip>
       </v-tab>
-      <v-tab value="accounts" class="text-none font-weight-medium">
-        <v-icon start size="18">lucide-settings</v-icon>
-        Cấu hình Tài khoản Ngân hàng
+      <v-tab value="approved" class="text-none font-weight-medium">
+        <v-icon start size="18" color="success">lucide-check-check</v-icon>
+        ĐÃ DUYỆT
+        <v-chip size="x-small" color="success" variant="flat" class="ml-2 font-weight-bold">{{ approvedCount }}</v-chip>
       </v-tab>
     </v-tabs>
 
-    <!-- Tab Contents -->
-    <v-window v-model="activeTab">
-      <!-- TAB 1: TRANSACTIONS -->
-      <v-window-item value="transactions">
-        <!-- Sub-Tabs: CHƯA DUYỆT vs ĐÃ DUYỆT -->
-        <div class="d-flex align-center justify-space-between flex-wrap ga-3 mb-4">
-          <v-btn-toggle
-            v-model="reviewSubTab"
-            mandatory
-            color="primary"
-            variant="outlined"
-            density="comfortable"
-            class="rounded-lg bg-surface border elevation-1"
-            @update:model-value="onSubTabChange"
-          >
-            <v-btn value="pending" class="text-none font-weight-bold px-4 py-2">
-              <v-icon start size="18" color="warning">lucide-clock</v-icon>
-              CHƯA DUYỆT
-              <v-chip
-                size="x-small"
-                color="warning"
-                variant="flat"
-                class="ml-2 font-weight-bold"
-              >
-                {{ pendingCount }}
-              </v-chip>
-            </v-btn>
-
-            <v-btn value="approved" class="text-none font-weight-bold px-4 py-2">
-              <v-icon start size="18" color="success">lucide-check-check</v-icon>
-              ĐÃ DUYỆT
-              <v-chip
-                size="x-small"
-                color="success"
-                variant="flat"
-                class="ml-2 font-weight-bold"
-              >
-                {{ approvedCount }}
-              </v-chip>
-            </v-btn>
-          </v-btn-toggle>
-
+    <!-- Transactions -->
+    <div>
           <div class="text-caption text-medium-emphasis d-none d-md-block">
             <span v-if="reviewSubTab === 'pending'" class="d-flex align-center ga-1">
               <v-icon size="14" color="warning">lucide-alert-circle</v-icon>
               Giao dịch mới nhận được giữ ở trạng thái <strong>Chờ duyệt</strong>. Bấm <strong>Xác nhận thanh toán</strong> để cập nhật đơn sang <strong>PAID</strong>.
             </span>
-            <span v-else class="d-flex align-center ga-1">
+            <span v-else-if="reviewSubTab === 'approved'" class="d-flex align-center ga-1">
               <v-icon size="14" color="success">lucide-shield-check</v-icon>
               Lịch sử các giao dịch đã được nhân viên/kế toán xác nhận thanh toán thành công.
             </span>
+            <span v-else class="d-flex align-center ga-1">
+              <v-icon size="14" color="grey">lucide-archive</v-icon>
+              Các giao dịch đã bỏ qua vẫn có thể mở đơn hoặc xác nhận lại.
+            </span>
           </div>
-        </div>
 
-        <!-- Filters -->
-        <v-card variant="outlined" class="rounded-lg mb-4 pa-3">
-          <v-row dense align="center">
-            <v-col cols="12" sm="6" md="4">
-              <v-text-field
-                v-model="filters.search"
-                density="compact"
-                variant="outlined"
-                hide-details
-                placeholder="Tìm nội dung SMS, mã đơn, người gửi, STK..."
-                prepend-inner-icon="lucide-search"
-                clearable
-                @update:model-value="fetchTransactions"
-              />
-            </v-col>
-
-            <v-col v-if="reviewSubTab === 'pending'" cols="6" sm="6" md="3">
-              <v-select
-                v-model="filters.status"
-                :items="pendingStatusOptions"
-                item-title="text"
-                item-value="value"
-                density="compact"
-                variant="outlined"
-                hide-details
-                placeholder="Lọc trạng thái chưa duyệt"
-                @update:model-value="fetchTransactions"
-              />
-            </v-col>
-
-            <v-col :cols="reviewSubTab === 'pending' ? '6' : '12'" sm="6" :md="reviewSubTab === 'pending' ? '3' : '6'">
-              <v-select
-                v-model="filters.bankAccountId"
-                :items="accountFilterOptions"
-                item-title="text"
-                item-value="value"
-                density="compact"
-                variant="outlined"
-                hide-details
-                placeholder="Tài khoản MB"
-                @update:model-value="fetchTransactions"
-              />
-            </v-col>
-
-            <v-col cols="12" sm="6" md="2" class="d-flex justify-end">
-              <v-btn
-                variant="tonal"
-                size="small"
-                color="secondary"
-                prepend-icon="lucide-rotate-ccw"
-                class="text-none"
-                @click="resetFilters"
-              >
-                Đặt lại
-              </v-btn>
-            </v-col>
-          </v-row>
-        </v-card>
-
-        <!-- Transactions Table -->
         <v-card variant="outlined" class="rounded-lg mb-4 overflow-hidden shadow-sm">
           <v-progress-linear v-if="loading" indeterminate color="primary" />
 
           <!-- TAB 1 CONTENT: CHƯA DUYỆT -->
-          <v-table v-if="reviewSubTab === 'pending'" density="compact" hover class="payments-table">
+          <v-table v-if="reviewSubTab !== 'approved'" density="compact" hover class="payments-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th style="width: 120px;" class="text-left">Thời gian</th>
-                <th style="width: 110px;" class="text-left">TK nhận</th>
-                <th style="width: 130px;" class="text-right">Số tiền nhận</th>
-                <th style="width: 220px;" class="text-left">Người gửi & ND tin nhắn</th>
-                <th style="width: 210px;" class="text-left">Đơn hàng đề xuất</th>
-                <th style="width: 200px;" class="text-left">Trạng thái & Cảnh báo</th>
-                <th style="width: 190px;" class="text-center">Thao tác</th>
+                <th style="width: 125px;" class="text-left sort-header" @click="sortTransactions('time')">
+                  Thời gian <v-icon v-if="sortKey === 'time'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 110px;" class="text-left sort-header" @click="sortTransactions('account')">
+                  TK nhận <v-icon v-if="sortKey === 'account'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th class="text-left sort-header" @click="sortTransactions('message')">
+                  Nội dung tin nhắn <v-icon v-if="sortKey === 'message'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 180px;" class="text-left sort-header" @click="sortTransactions('order')">
+                  Đề xuất <v-icon v-if="sortKey === 'order'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 150px;" class="text-right sort-header" @click="sortTransactions('remaining')">
+                  Cần thanh toán <v-icon v-if="sortKey === 'remaining'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 140px;" class="text-right sort-header" @click="sortTransactions('amount')">
+                  Số tiền nhận <v-icon v-if="sortKey === 'amount'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 150px;" class="text-center">Thao tác</th>
               </tr>
             </thead>
             <tbody>
@@ -262,35 +120,22 @@
                 </td>
               </tr>
 
-              <tr v-for="tx in transactions" :key="tx.id">
+              <tr v-for="tx in sortedTransactions" :key="tx.id">
                 <!-- Time -->
                 <td class="text-caption text-medium-emphasis">
                   {{ formatDateTime(tx.transactionTime) }}
                 </td>
 
                 <!-- Account -->
-                <td>
+                <td class="order-code-column">
                   <v-chip size="x-small" color="primary" variant="tonal" class="font-monospace font-weight-bold">
                     MB *{{ tx.accountNumber ? tx.accountNumber.slice(-4) : '...' }}
                   </v-chip>
                 </td>
 
-                <!-- Amount -->
-                <td class="text-right">
-                  <span class="font-weight-bold font-monospace text-subtitle-2" :class="tx.type === 'IN' ? 'text-success' : 'text-error'">
-                    {{ tx.type === 'IN' ? '+' : '-' }}{{ formatVND(tx.amount) }}
-                  </span>
-                </td>
-
-                <!-- Sender & SMS Description -->
-                <td style="max-width: 220px;">
-                  <div class="font-weight-medium text-caption text-high-emphasis text-truncate" :title="tx.senderNameRaw || ''">
-                    <v-icon size="12" color="medium-emphasis" class="mr-1">lucide-user</v-icon>
-                    <span>{{ tx.senderNameRaw || 'Khách vãng lai' }}</span>
-                  </div>
-                  <div class="text-xs text-medium-emphasis text-truncate font-monospace" :title="tx.description">
-                    {{ tx.description }}
-                  </div>
+                <!-- Message content -->
+                <td class="message-content-cell">
+                  <span class="text-caption text-high-emphasis" :title="tx.description">{{ tx.description || '—' }}</span>
                 </td>
 
                 <!-- Suggested Order -->
@@ -309,54 +154,35 @@
                         {{ tx.suggestedOrder?.orderCode || tx.matchedOrderCode }}
                       </v-chip>
                     </div>
-                    <div v-if="tx.suggestedOrder?.customerName" class="text-xs text-medium-emphasis text-truncate mt-1" :title="tx.suggestedOrder.customerName">
-                      {{ tx.suggestedOrder.customerName }}
-                    </div>
-                    <div v-if="tx.suggestedOrder?.amountTotal" class="text-xs font-monospace font-weight-medium text-high-emphasis">
-                      Cần thu: {{ formatVND(tx.suggestedOrder.amountTotal) }}
-                    </div>
                   </div>
-                  <!-- Chưa có đơn -->
-                  <div v-else class="text-caption text-disabled d-flex align-center ga-1">
-                    <v-icon size="14" color="grey">lucide-help-circle</v-icon>
-                    <span>Chưa nhận diện được đơn</span>
-                  </div>
+                  <span v-else class="text-caption text-medium-emphasis">Chưa có</span>
                 </td>
 
-                <!-- Status & Warning Reasons -->
-                <td style="max-width: 200px;">
-                  <div class="d-flex flex-column ga-1 align-start">
-                    <v-chip
-                      size="x-small"
-                      :color="getTransactionWarning(tx).color"
-                      variant="flat"
-                      class="font-weight-bold"
-                    >
-                      <v-icon start size="12" v-if="getTransactionWarning(tx).icon">{{ getTransactionWarning(tx).icon }}</v-icon>
-                      {{ getTransactionWarning(tx).title }}
-                    </v-chip>
-                    <div v-if="getTransactionWarning(tx).subtitle" class="text-xs font-weight-medium" :class="`text-${getTransactionWarning(tx).color}`">
-                      {{ getTransactionWarning(tx).subtitle }}
-                    </div>
-                  </div>
+                <!-- Remaining amount -->
+                <td class="text-right font-monospace font-weight-bold">
+                  {{ getRemainingAmount(tx) }}
+                </td>
+
+                <!-- Received amount -->
+                <td class="text-right font-monospace font-weight-bold text-success">
+                  +{{ formatVND(tx.amount) }}
                 </td>
 
                 <!-- Actions -->
                 <td class="text-center">
                   <div class="d-flex align-center justify-center ga-1" style="gap: 6px;">
                     <!-- Nút Xác nhận thanh toán (Khi đã có đơn đề xuất) -->
-                    <template v-if="tx.suggestedOrderHistoryId || tx.suggestedOrderId || tx.matchedOrderCode">
+                    <template v-if="isAdmin && (tx.suggestedOrderHistoryId || tx.suggestedOrderId || tx.matchedOrderCode)">
                       <v-btn
+                        icon
+                        size="30"
                         color="success"
-                        size="small"
-                        variant="elevated"
-                        class="text-none font-weight-bold shadow-sm"
+                        variant="tonal"
                         :loading="approvingId === tx.id"
                         title="Xác nhận thanh toán và cập nhật đơn hàng thành PAID"
                         @click="approveTransaction(tx.id)"
                       >
-                        <v-icon start size="15">lucide-check</v-icon>
-                        Xác nhận thanh toán
+                        <v-icon size="17">lucide-check</v-icon>
                       </v-btn>
 
                       <!-- Nút đổi sang đơn khác -->
@@ -373,18 +199,21 @@
                     </template>
 
                     <!-- Nút Chọn đơn (Khi chưa có đơn đề xuất) -->
-                    <template v-else>
+                    <template v-else-if="isAdmin">
                       <v-btn
+                        icon
+                        size="30"
                         color="primary"
-                        size="small"
-                        variant="outlined"
-                        class="text-none font-weight-bold"
+                        variant="tonal"
+                        title="Chọn đơn hàng"
                         @click="openManualMatch(tx)"
                       >
-                        <v-icon start size="15">lucide-search</v-icon>
-                        Chọn đơn
+                        <v-icon size="17">lucide-search</v-icon>
                       </v-btn>
                     </template>
+                    <v-btn v-if="isAdmin" icon size="30" color="grey" variant="tonal" title="Bỏ qua giao dịch" @click="ignoreTransaction(tx.id)">
+                      <v-icon size="17">lucide-archive</v-icon>
+                    </v-btn>
                   </div>
                 </td>
               </tr>
@@ -395,60 +224,56 @@
           <v-table v-else density="compact" hover class="payments-table">
             <thead>
               <tr class="bg-surface-variant">
-                <th style="width: 120px;" class="text-left">Thời gian GD</th>
-                <th style="width: 110px;" class="text-left">TK nhận</th>
-                <th style="width: 130px;" class="text-right">Số tiền</th>
-                <th style="width: 220px;" class="text-left">Người chuyển & ND SMS</th>
-                <th style="width: 180px;" class="text-left">Đơn hàng đã khớp</th>
-                <th style="width: 130px;" class="text-center">Trạng thái</th>
-                <th style="width: 200px;" class="text-left">Người duyệt & Thời gian</th>
-                <th style="width: 110px;" class="text-center">Thao tác</th>
+                <th style="width: 125px;" class="text-left sort-header" @click="sortTransactions('time')">
+                  Thời gian <v-icon v-if="sortKey === 'time'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 110px;" class="text-left sort-header" @click="sortTransactions('account')">
+                  TK nhận <v-icon v-if="sortKey === 'account'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th class="text-left sort-header" @click="sortTransactions('message')">
+                  Nội dung tin nhắn <v-icon v-if="sortKey === 'message'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 180px;" class="text-left sort-header" @click="sortTransactions('order')">
+                  Mã đơn <v-icon v-if="sortKey === 'order'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 170px;" class="text-left sort-header" @click="sortTransactions('approver')">
+                  Người duyệt <v-icon v-if="sortKey === 'approver'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
+                <th style="width: 150px;" class="text-left sort-header" @click="sortTransactions('approvedAt')">
+                  Thời gian duyệt <v-icon v-if="sortKey === 'approvedAt'" size="14">{{ sortDirection === 'asc' ? 'lucide-chevron-up' : 'lucide-chevron-down' }}</v-icon>
+                </th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!loading && transactions.length === 0">
-                <td colspan="8" class="text-center text-medium-emphasis py-8">
+                <td colspan="6" class="text-center text-medium-emphasis py-8">
                   <v-icon icon="lucide-inbox" size="36" color="grey" class="mb-2" />
                   <div class="text-subtitle-2 font-weight-medium">Chưa có giao dịch nào trong danh sách đã duyệt</div>
                   <div class="text-caption text-grey">Khi kế toán xác nhận thanh toán ở tab "Chưa duyệt", giao dịch sẽ hiển thị tại đây.</div>
                 </td>
               </tr>
 
-              <tr v-for="tx in transactions" :key="tx.id">
+              <tr v-for="tx in sortedTransactions" :key="tx.id" class="clickable-row" @click="openOrderDetailByCode(tx.matchedOrderCode)">
                 <!-- Time -->
                 <td class="text-caption text-medium-emphasis">
                   {{ formatDateTime(tx.transactionTime) }}
                 </td>
 
                 <!-- Account -->
-                <td>
+                <td class="customer-column">
                   <v-chip size="x-small" color="primary" variant="tonal" class="font-monospace font-weight-bold">
                     MB *{{ tx.accountNumber ? tx.accountNumber.slice(-4) : '...' }}
                   </v-chip>
                 </td>
 
-                <!-- Amount -->
-                <td class="text-right">
-                  <span class="font-weight-bold font-monospace text-subtitle-2 text-success">
-                    +{{ formatVND(tx.amount) }}
-                  </span>
-                </td>
-
-                <!-- Sender Name & SMS -->
-                <td style="max-width: 220px;">
-                  <div class="text-caption font-weight-medium text-high-emphasis text-truncate" :title="tx.senderNameRaw || ''">
-                    {{ tx.senderNameRaw || 'Khách vãng lai' }}
-                  </div>
-                  <div class="text-xs text-medium-emphasis text-truncate font-monospace" :title="tx.description">
-                    {{ tx.description }}
-                  </div>
+                <!-- Message content -->
+                <td class="message-content-cell">
+                  <span class="text-caption text-high-emphasis" :title="tx.description">{{ tx.description || '—' }}</span>
                 </td>
 
                 <!-- Matched Order -->
                 <td>
-                  <div class="d-flex align-center ga-1">
-                    <v-icon size="14" color="success">lucide-check-circle-2</v-icon>
-                    <v-chip
+                  <v-chip
                       size="x-small"
                       color="success"
                       variant="flat"
@@ -457,117 +282,28 @@
                       @click="openOrderDetailByCode(tx.matchedOrderCode)"
                     >
                       {{ tx.matchedOrderCode }}
-                    </v-chip>
-                  </div>
-                  <div v-if="tx.matchedOrderHistory?.partnerName || tx.matchedOrder?.contact?.fullName" class="text-xs text-medium-emphasis text-truncate mt-1">
-                    {{ tx.matchedOrderHistory?.partnerName || tx.matchedOrder?.contact?.fullName }}
-                  </div>
-                </td>
-
-                <!-- Status -->
-                <td class="text-center">
-                  <v-chip size="x-small" color="success" variant="flat" class="font-weight-bold">
-                    ✓ Đã duyệt
                   </v-chip>
                 </td>
 
-                <!-- Approver & Approval Time -->
                 <td>
                   <div class="d-flex align-center ga-1 text-caption font-weight-medium text-high-emphasis">
                     <v-icon size="13" color="primary">lucide-user-check</v-icon>
                     <span>{{ tx.matchedUser?.fullName || (tx.matchedBy === 'MANUAL_STAFF' ? 'Kế toán duyệt' : (tx.matchedBy || 'Nhân viên')) }}</span>
                   </div>
-                  <div class="text-xs text-medium-emphasis font-monospace">
-                    {{ formatDateTime(tx.matchedAt || tx.updatedAt) }}
-                  </div>
                 </td>
 
-                <!-- Actions: View Order -->
-                <td class="text-center">
-                  <v-btn
-                    color="primary"
-                    size="x-small"
-                    variant="tonal"
-                    class="text-none font-weight-medium"
-                    @click="openOrderDetailByCode(tx.matchedOrderCode)"
-                  >
-                    Xem đơn
-                  </v-btn>
+                <td class="text-caption text-medium-emphasis font-monospace">
+                  {{ formatDateTime(tx.matchedAt || tx.updatedAt) }}
                 </td>
               </tr>
             </tbody>
           </v-table>
         </v-card>
-      </v-window-item>
+    </div>
 
-      <!-- TAB 2: SENDER IDENTITIES (WHITELIST) -->
-      <v-window-item value="senders">
-        <v-card variant="outlined" class="rounded-lg pa-4">
-          <div class="d-flex align-center justify-space-between mb-3">
-            <div>
-              <div class="text-subtitle-1 font-weight-bold">Danh sách Khách Quen & Hồ sơ Người Chuyển Khoản</div>
-              <div class="text-caption text-medium-emphasis">
-                Hệ thống tự động ghi nhớ sau mỗi lần duyệt. Những khách hàng tin cậy cao được bật "Tự động duyệt" sẽ không cần người duyệt ở các lần sau.
-              </div>
-            </div>
-          </div>
-
-          <v-table density="compact" hover>
-            <thead>
-              <tr class="bg-surface-variant">
-                <th class="text-left">Tên người chuyển (Bóc từ SMS)</th>
-                <th class="text-left">Khách hàng liên kết trong CRM</th>
-                <th class="text-center">Số lần khớp thành công</th>
-                <th class="text-center">Cấp độ uy tín</th>
-                <th class="text-center">Tự động duyệt</th>
-                <th class="text-left">Giao dịch gần nhất</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="senders.length === 0">
-                <td colspan="6" class="text-center py-6 text-medium-emphasis">
-                  Chưa có dữ liệu danh tính người chuyển. Khi kế toán duyệt khớp các giao dịch đầu tiên, hệ thống sẽ tự động học và lưu vào đây.
-                </td>
-              </tr>
-              <tr v-for="s in senders" :key="s.id">
-                <td>
-                  <strong class="text-high-emphasis font-monospace">{{ s.senderNameClean }}</strong>
-                </td>
-                <td>
-                  <span v-if="s.contact?.fullName" class="text-primary font-weight-medium">
-                    {{ s.contact.fullName }} ({{ s.contact.phone || 'Không SĐT' }})
-                  </span>
-                  <span v-else class="text-medium-emphasis">—</span>
-                </td>
-                <td class="text-center font-weight-bold">
-                  {{ s.successMatchCount }} lần
-                </td>
-                <td class="text-center">
-                  <v-chip size="x-small" :color="s.trustLevel === 'TRUSTED' ? 'success' : 'primary'" variant="tonal">
-                    {{ s.trustLevel }}
-                  </v-chip>
-                </td>
-                <td class="text-center">
-                  <v-switch
-                    :model-value="s.isAutoApproved"
-                    color="success"
-                    density="compact"
-                    hide-details
-                    class="d-inline-flex"
-                    @update:model-value="(val) => toggleAutoApprove(s.id, val)"
-                  />
-                </td>
-                <td class="text-caption text-medium-emphasis">
-                  {{ formatDateTime(s.lastMatchedAt) }}
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card>
-      </v-window-item>
-
-      <!-- TAB 3: BANK ACCOUNTS CONFIG (CRUD) -->
-      <v-window-item value="accounts">
+    <!-- Bank account configuration -->
+    <v-dialog v-model="showBankAccountsDialog" max-width="1100" scrollable>
+      <v-card>
         <v-card variant="outlined" class="rounded-lg pa-4">
           <div class="d-flex flex-wrap align-center justify-space-between gap-3 mb-4">
             <div>
@@ -577,6 +313,7 @@
               </div>
             </div>
             <v-btn
+              v-if="isAdmin"
               color="primary"
               variant="flat"
               prepend-icon="lucide-plus"
@@ -586,6 +323,79 @@
               Thêm tài khoản mới
             </v-btn>
           </div>
+
+          <!-- LAN Server IP & Webhook Status Banner -->
+          <v-alert
+            color="primary"
+            variant="tonal"
+            class="rounded-xl mb-4 py-3"
+            density="compact"
+          >
+            <div class="d-flex flex-wrap align-center justify-space-between gap-3">
+              <div class="d-flex align-center gap-3">
+                <v-avatar color="primary" variant="flat" size="36">
+                  <v-icon color="white" size="20">lucide-wifi</v-icon>
+                </v-avatar>
+                <div>
+                  <div class="text-subtitle-2 font-weight-bold text-high-emphasis d-flex align-center gap-2 flex-wrap">
+                    <span>IP Máy chủ mạng LAN:</span>
+                    <v-chip size="small" color="primary" variant="flat" class="font-monospace font-weight-bold">
+                      {{ selectedServerIp || 'Đang nhận diện...' }}
+                    </v-chip>
+                    <span v-if="serverNetworkInfo?.port" class="text-caption text-medium-emphasis font-monospace">
+                      (Cổng: {{ serverNetworkInfo.port }})
+                    </span>
+                  </div>
+                  <div class="text-caption text-medium-emphasis mt-0.5">
+                    💡 Hệ thống tự động phát hiện IP card mạng (tương tự ipconfig). Điện thoại Android cần kết nối chung mạng Wi-Fi/LAN này để gửi tin nhắn SMS.
+                  </div>
+                </div>
+              </div>
+
+              <div class="d-flex align-center gap-2">
+                <!-- Dropdown chọn card mạng nếu có nhiều card -->
+                <v-menu v-if="availableInterfaces.length > 1" offset-y>
+                  <template #activator="{ props }">
+                    <v-btn
+                      v-bind="props"
+                      variant="outlined"
+                      size="small"
+                      color="primary"
+                      class="text-none rounded-lg"
+                      prepend-icon="lucide-network"
+                      append-icon="lucide-chevron-down"
+                    >
+                      Đổi card mạng ({{ availableInterfaces.length }})
+                    </v-btn>
+                  </template>
+                  <v-list density="compact" class="rounded-lg elevation-3">
+                    <v-list-subheader>Danh sách card mạng máy tính</v-list-subheader>
+                    <v-list-item
+                      v-for="item in availableInterfaces"
+                      :key="item.ip"
+                      :value="item.ip"
+                      :active="selectedServerIp === item.ip"
+                      @click="selectInterfaceIp(item.ip)"
+                    >
+                      <template #prepend>
+                        <v-icon size="16" :color="item.isRecommended ? 'success' : 'medium-emphasis'">
+                          {{ item.type === 'wifi' ? 'lucide-wifi' : (item.type === 'ethernet' ? 'lucide-network' : 'lucide-server') }}
+                        </v-icon>
+                      </template>
+                      <v-list-item-title class="font-monospace text-caption">
+                        {{ item.name }}: <strong>{{ item.ip }}</strong>
+                      </v-list-item-title>
+                      <template #append>
+                        <v-chip v-if="item.isRecommended" size="x-small" color="success" variant="tonal" class="ml-2 font-weight-bold">
+                          Khuyên dùng
+                        </v-chip>
+                      </template>
+                    </v-list-item>
+                  </v-list>
+                </v-menu>
+              </div>
+            </div>
+          </v-alert>
 
           <v-row v-if="accounts.length > 0">
             <v-col v-for="acc in accounts" :key="acc.id" cols="12" md="6">
@@ -615,7 +425,7 @@
                   <span class="text-medium-emphasis">Chủ tài khoản:</span>
                   <strong class="ml-2 text-high-emphasis">{{ acc.accountHolder }}</strong>
                 </div>
-                <div class="text-caption mb-2 d-flex align-center">
+                <div class="text-caption mb-2 d-flex align-center flex-wrap">
                   <span class="text-medium-emphasis">Webhook Secret:</span>
                   <code class="ml-2 font-monospace text-primary bg-surface-variant px-2 py-0.5 rounded text-truncate" style="max-width: 220px;">
                     {{ acc.webhookSecret }}
@@ -631,35 +441,45 @@
                   >
                     <v-icon size="14">lucide-copy</v-icon>
                   </v-btn>
-                </div>
-
-                <div class="text-caption mb-2">
-                  <span class="text-medium-emphasis">Tự động duyệt:</span>
-                  <v-chip size="x-small" :color="acc.autoApprove ? 'primary' : 'default'" variant="tonal" class="ml-2 font-weight-bold">
-                    {{ acc.autoApprove ? `BẬT (Điểm >= ${acc.minTrustScore})` : 'TẮT' }}
-                  </v-chip>
+                  <span class="text-caption text-disabled ml-2">(Mã xác thực trên App)</span>
                 </div>
 
                 <v-divider class="my-3" />
 
-                <div class="text-caption text-medium-emphasis mb-1">Webhook URL gửi SMS (trên App):</div>
-                <div class="d-flex align-center justify-space-between bg-surface-variant pa-2 rounded mb-3">
-                  <span class="text-caption font-monospace text-truncate mr-2">{{ webhookEndpointUrl }}</span>
+                <div class="d-flex align-center justify-space-between mb-1">
+                  <div class="text-caption text-medium-emphasis">Webhook URL gửi SMS (trên App):</div>
                   <v-btn
-                    icon
-                    size="x-small"
                     variant="text"
-                    color="medium-emphasis"
-                    title="Sao chép URL"
-                    @click="copyText(webhookEndpointUrl, 'Đã sao chép Webhook URL!')"
+                    size="x-small"
+                    color="primary"
+                    class="text-none px-1"
+                    prepend-icon="lucide-refresh-cw"
+                    :loading="detectingIp"
+                    @click="fetchNetworkInfo(true)"
                   >
-                    <v-icon size="14">lucide-copy</v-icon>
+                    Reset IP
                   </v-btn>
+                </div>
+                <div class="d-flex align-center justify-space-between bg-surface-variant pa-2 rounded mb-3">
+                  <span class="text-caption font-monospace text-truncate mr-2 font-weight-medium text-high-emphasis">{{ webhookEndpointUrl }}</span>
+                  <div class="d-flex align-center">
+                    <v-btn
+                      icon
+                      size="x-small"
+                      variant="text"
+                      color="medium-emphasis"
+                      title="Sao chép URL"
+                      @click="copyText(webhookEndpointUrl, 'Đã sao chép Webhook URL!')"
+                    >
+                      <v-icon size="14">lucide-copy</v-icon>
+                    </v-btn>
+                  </div>
                 </div>
 
                 <!-- Card Actions: Edit & Delete -->
                 <div class="d-flex align-center justify-end gap-2">
                   <v-btn
+                    v-if="isAdmin"
                     size="small"
                     variant="tonal"
                     color="primary"
@@ -670,6 +490,7 @@
                     Chỉnh sửa
                   </v-btn>
                   <v-btn
+                    v-if="isAdmin"
                     size="small"
                     variant="tonal"
                     color="error"
@@ -694,6 +515,7 @@
               Hãy thêm ít nhất một tài khoản ngân hàng để tiếp nhận SMS đối soát thanh toán.
             </div>
             <v-btn
+              v-if="isAdmin"
               color="primary"
               variant="flat"
               prepend-icon="lucide-plus"
@@ -704,8 +526,8 @@
             </v-btn>
           </div>
         </v-card>
-      </v-window-item>
-    </v-window>
+      </v-card>
+    </v-dialog>
 
     <!-- Dialog: Thêm / Chỉnh sửa Tài khoản Ngân hàng -->
     <v-dialog v-model="showAccountDialog" max-width="580" persistent>
@@ -807,41 +629,6 @@
               </div>
             </v-col>
 
-            <!-- Cấu hình tự động duyệt -->
-            <v-col cols="12" class="mt-2">
-              <v-card variant="tonal" color="surface-variant" class="pa-3 rounded-lg">
-                <div class="d-flex align-center justify-space-between">
-                  <div>
-                    <div class="text-subtitle-2 font-weight-bold">Tự động duyệt đơn khi khớp tiền</div>
-                    <div class="text-caption text-medium-emphasis">
-                      Hệ thống tự động chuyển trạng thái đơn hàng sang ĐÃ THANH TOÁN
-                    </div>
-                  </div>
-                  <v-switch
-                    v-model="accountForm.autoApprove"
-                    color="primary"
-                    hide-details
-                    density="compact"
-                  />
-                </div>
-
-                <div v-if="accountForm.autoApprove" class="mt-3">
-                  <div class="d-flex justify-space-between text-caption mb-1">
-                    <span>Điểm tin cậy tối thiểu để tự duyệt:</span>
-                    <strong>{{ accountForm.minTrustScore }} / 100</strong>
-                  </div>
-                  <v-slider
-                    v-model="accountForm.minTrustScore"
-                    min="50"
-                    max="100"
-                    step="5"
-                    color="primary"
-                    hide-details
-                  />
-                </div>
-              </v-card>
-            </v-col>
-
             <!-- Kích hoạt -->
             <v-col cols="12" class="mt-2">
               <v-switch
@@ -916,48 +703,9 @@
       {{ snackbarText }}
     </v-snackbar>
 
-    <!-- Dialog: Test QR Code Connection -->
-    <v-dialog v-model="showQrModal" max-width="480">
-      <v-card class="rounded-xl pa-4 text-center">
-        <div class="d-flex align-center justify-space-between mb-3">
-          <div class="font-weight-bold text-subtitle-1">Kết nối Điện thoại Test</div>
-          <v-btn icon size="small" variant="text" @click="showQrModal = false">
-            <v-icon size="18">lucide-x</v-icon>
-          </v-btn>
-        </div>
-
-        <div class="text-caption text-medium-emphasis mb-3">
-          Mở camera điện thoại hoặc trình duyệt quét mã QR này để truy cập ngay màn hình <strong>Mobile Gateway Test</strong>:
-        </div>
-
-        <div class="d-flex justify-center my-3">
-          <v-img
-            :src="mobileGatewayQrUrl"
-            width="220"
-            height="220"
-            class="elevation-2 rounded-lg border bg-white pa-2"
-          />
-        </div>
-
-        <div class="text-caption font-monospace bg-surface-variant pa-2 rounded text-truncate mb-3">
-          {{ mobileGatewayDirectUrl }}
-        </div>
-
-        <v-btn
-          color="primary"
-          variant="flat"
-          block
-          class="text-none font-weight-bold"
-          @click="openMobileTestInNewTab"
-        >
-          Mở thử trên Tab mới trình duyệt máy tính
-        </v-btn>
-      </v-card>
-    </v-dialog>
-
     <!-- Dialog: Chọn Đơn Hàng Để Khớp Thanh Toán (Manual Match Order Picker) -->
-    <v-dialog v-model="showOrderMatchDialog" max-width="900" scrollable>
-      <v-card class="rounded-xl overflow-hidden">
+    <v-dialog v-model="showOrderMatchDialog" class="order-match-dialog" max-width="900" scrollable>
+      <v-card class="rounded-xl overflow-hidden order-match-card">
         <!-- Dialog Header -->
         <v-card-title class="pa-4 bg-surface border-b d-flex align-center justify-space-between">
           <div class="d-flex align-center gap-2" style="gap: 10px;">
@@ -977,7 +725,7 @@
         </v-card-title>
 
         <!-- Transaction Context Bar -->
-        <div v-if="selectedTxForMatch" class="pa-3 bg-surface-variant border-b">
+        <div v-if="selectedTxForMatch" class="pa-4 bg-surface-variant border-b order-match-context">
           <!-- Row 1: Thông tin tiền, tài khoản, thời gian, người gửi -->
           <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-2">
             <div class="d-flex align-center flex-wrap ga-2">
@@ -1017,7 +765,7 @@
           </div>
 
           <!-- Row 2: Khung hiển thị đầy đủ Nội dung thanh toán (Full Payment Content) -->
-          <div class="pa-2.5 rounded-lg border bg-surface d-flex flex-column ga-1">
+          <div class="pa-3 rounded-lg border bg-surface d-flex flex-column ga-2 payment-content-box">
             <div class="d-flex align-center justify-space-between ga-2">
               <div class="text-caption font-weight-bold text-primary d-flex align-center ga-1">
                 <v-icon size="14">lucide-message-square</v-icon>
@@ -1039,8 +787,7 @@
 
             <!-- Nội dung thanh toán đầy đủ 100%, không bị cắt xén, tự xuống dòng -->
             <div
-              class="font-monospace text-body-2 text-high-emphasis user-select-text"
-              style="word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.5;"
+              class="font-monospace text-body-2 text-high-emphasis user-select-text payment-description"
             >
               {{ selectedTxForMatch.description || selectedTxForMatch.rawSms || '— Không có nội dung thanh toán —' }}
             </div>
@@ -1048,66 +795,30 @@
             <!-- SMS gốc đầy đủ nếu khác với description -->
             <div
               v-if="selectedTxForMatch.rawSms && selectedTxForMatch.description && selectedTxForMatch.rawSms.trim() !== selectedTxForMatch.description.trim()"
-              class="text-xs text-medium-emphasis pt-1 mt-1 border-t font-monospace user-select-text"
-              style="word-break: break-word; overflow-wrap: anywhere; line-height: 1.4;"
+              class="text-xs text-medium-emphasis pt-2 mt-1 border-t font-monospace user-select-text payment-raw-sms"
             >
               <span class="text-disabled font-weight-medium">SMS gốc:</span> {{ selectedTxForMatch.rawSms }}
             </div>
           </div>
         </div>
 
-        <!-- Search & Filter Controls -->
-        <div class="pa-3 border-b bg-surface">
-          <v-row dense align="center">
-            <!-- Search field -->
-            <v-col cols="12" sm="7">
-              <v-text-field
-                v-model="orderSearchQuery"
-                placeholder="Tìm kiếm theo mã đơn (ORD-..., SO...) hoặc tên khách hàng..."
-                variant="outlined"
-                density="compact"
-                hide-details
-                prepend-inner-icon="lucide-search"
-                clearable
-                @update:model-value="fetchOrdersForLookup"
-                @keydown.enter="fetchOrdersForLookup"
-              />
-            </v-col>
-
-            <!-- Status filter dropdown -->
-            <v-col cols="12" sm="4">
-              <v-select
-                v-model="orderStatusFilter"
-                :items="orderStatusFilterOptions"
-                item-title="text"
-                item-value="value"
-                variant="outlined"
-                density="compact"
-                hide-details
-                prepend-inner-icon="lucide-filter"
-                @update:model-value="fetchOrdersForLookup"
-              />
-            </v-col>
-
-            <!-- Refresh button -->
-            <v-col cols="12" sm="1" class="text-right">
-              <v-btn
-                icon
-                variant="tonal"
-                color="primary"
-                size="small"
-                :loading="orderLookupLoading"
-                title="Tải lại danh sách đơn"
-                @click="fetchOrdersForLookup"
-              >
-                <v-icon size="16">lucide-refresh-cw</v-icon>
-              </v-btn>
-            </v-col>
-          </v-row>
+        <!-- Search -->
+        <div class="pa-3 border-b bg-surface order-match-search">
+          <v-text-field
+            v-model="orderSearchQuery"
+            placeholder="Tìm kiếm theo mã đơn (ORD-..., SO...) hoặc tên khách hàng..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            prepend-inner-icon="lucide-search"
+            clearable
+            @update:model-value="scheduleOrdersLookup"
+            @keydown.enter="fetchOrdersForLookup"
+          />
         </div>
 
         <!-- Order List Body -->
-        <v-card-text class="pa-0" style="max-height: 480px; overflow-y: auto;">
+        <v-card-text class="pa-0 order-match-list">
           <!-- Loading State -->
           <div v-if="orderLookupLoading" class="text-center py-8 text-medium-emphasis">
             <v-progress-circular indeterminate color="primary" size="32" class="mb-2" />
@@ -1115,7 +826,7 @@
           </div>
 
           <!-- Empty State -->
-          <div v-else-if="availableOrders.length === 0" class="text-center py-8 text-medium-emphasis">
+          <div v-else-if="sortedLookupOrders.length === 0" class="text-center py-8 text-medium-emphasis">
             <v-icon size="42" class="mb-2 opacity-50">lucide-search-x</v-icon>
             <div class="text-subtitle-2 font-weight-medium">Không tìm thấy đơn hàng nào</div>
             <div class="text-caption mt-1">
@@ -1127,24 +838,25 @@
           <v-table v-else density="compact" class="orders-lookup-table">
             <thead>
               <tr class="bg-surface-variant text-caption">
-                <th class="font-weight-bold">MÃ ĐƠN</th>
-                <th class="font-weight-bold">TÊN KHÁCH HÀNG</th>
-                <th class="font-weight-bold">THỜI GIAN ĐẶT</th>
-                <th class="font-weight-bold text-center">TRẠNG THÁI</th>
-                <th class="font-weight-bold text-right">SỐ TIỀN</th>
+                <th class="font-weight-bold order-code-column" @click="sortLookupOrders('code')">MÃ ĐƠN <v-icon size="14">{{ lookupSortIcon('code') }}</v-icon></th>
+                <th class="font-weight-bold customer-column" @click="sortLookupOrders('customer')">TÊN KHÁCH HÀNG <v-icon size="14">{{ lookupSortIcon('customer') }}</v-icon></th>
+                <th class="font-weight-bold order-date-column" @click="sortLookupOrders('date')">THỜI GIAN ĐẶT <v-icon size="14">{{ lookupSortIcon('date') }}</v-icon></th>
+                <th class="font-weight-bold order-status-column text-center" @click="sortLookupOrders('status')">TRẠNG THÁI <v-icon size="14">{{ lookupSortIcon('status') }}</v-icon></th>
+                <th class="font-weight-bold amount-column text-right" @click="sortLookupOrders('amount')">SỐ TIỀN <v-icon size="14">{{ lookupSortIcon('amount') }}</v-icon></th>
+                <th class="font-weight-bold paid-column text-right" @click="sortLookupOrders('paid')">ĐÃ THANH TOÁN <v-icon size="14">{{ lookupSortIcon('paid') }}</v-icon></th>
                 <th class="font-weight-bold text-center" style="width: 100px;">THAO TÁC</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="order in availableOrders"
+                v-for="order in sortedLookupOrders"
                 :key="order.id"
                 class="hover-row"
               >
                 <!-- Mã đơn -->
-                <td>
+                <td class="order-code-column">
                   <div class="d-flex align-center gap-1" style="gap: 6px;">
-                    <span class="font-monospace font-weight-bold text-primary">#{{ order.orderCode }}</span>
+                    <span class="font-monospace font-weight-bold text-primary">#{{ truncateOrderCode(order.orderCode) }}</span>
                     <v-chip v-if="isExactAmountMatch(order)" size="x-small" color="success" variant="flat" class="font-weight-bold">
                       Khớp 100% tiền
                     </v-chip>
@@ -1153,9 +865,9 @@
                 </td>
 
                 <!-- Tên khách hàng -->
-                <td>
+                <td class="customer-column">
                   <div class="font-weight-medium text-high-emphasis text-truncate" style="max-width: 200px;">
-                    {{ order.customerName }}
+                    {{ truncateCustomerName(order.customerName) }}
                   </div>
                   <div v-if="order.customerPhone" class="text-xs text-medium-emphasis font-monospace">
                     {{ order.customerPhone }}
@@ -1163,20 +875,25 @@
                 </td>
 
                 <!-- Thời gian đặt -->
-                <td class="text-caption font-monospace text-medium-emphasis">
+                <td class="order-date-column text-caption font-monospace text-medium-emphasis">
                   {{ formatDate(order.orderDate) }}
                 </td>
 
                 <!-- Trạng thái đơn -->
-                <td class="text-center">
+                <td class="order-status-column text-center">
                   <v-chip size="x-small" :color="getOrderStatusColor(order.status)" variant="tonal" class="font-weight-medium">
                     {{ getOrderStatusText(order.status) }}
                   </v-chip>
                 </td>
 
                 <!-- Số tiền -->
-                <td class="text-right font-monospace font-weight-bold" :class="isExactAmountMatch(order) ? 'text-success' : 'text-high-emphasis'">
+                <td class="amount-column text-right font-monospace font-weight-bold" :class="isExactAmountMatch(order) ? 'text-success' : 'text-high-emphasis'">
                   {{ formatVND(order.amountTotal) }}
+                </td>
+
+                <!-- Đã thanh toán -->
+                <td class="paid-column text-right font-monospace font-weight-medium text-success">
+                  {{ formatVND(order.paidAmount) }}
                 </td>
 
                 <!-- Thao tác chọn -->
@@ -1198,11 +915,19 @@
         </v-card-text>
 
         <!-- Dialog Footer -->
-        <v-card-actions class="pa-3 border-t bg-surface justify-space-between text-caption text-medium-emphasis">
-          <div>Hiển thị <strong>{{ availableOrders.length }}</strong> đơn hàng</div>
-          <v-btn variant="text" size="small" class="text-none" @click="showOrderMatchDialog = false">
-            Đóng
-          </v-btn>
+        <v-card-actions class="pa-3 border-t bg-surface justify-space-between text-caption text-medium-emphasis order-match-footer">
+          <div>Trang <strong>{{ currentLookupPage }}</strong> · Hiển thị <strong>{{ availableOrders.length }}</strong> đơn hàng</div>
+          <div class="d-flex align-center ga-2">
+            <v-btn icon size="small" variant="tonal" :disabled="currentLookupPage === 1 || orderLookupLoading" title="Trang trước" aria-label="Trang trước" @click="changeLookupPage(-1)">
+              <v-icon size="18">lucide-chevron-left</v-icon>
+            </v-btn>
+            <v-btn icon size="small" variant="tonal" :disabled="!lookupHasMore || orderLookupLoading" title="Trang sau" aria-label="Trang sau" @click="changeLookupPage(1)">
+              <v-icon size="18">lucide-chevron-right</v-icon>
+            </v-btn>
+            <v-btn variant="text" size="small" class="text-none" @click="showOrderMatchDialog = false">
+              Đóng
+            </v-btn>
+          </div>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1212,6 +937,7 @@
       v-model="showOrderDetail"
       :order="orderDetailData"
       :loading="orderDetailLoading"
+      :read-only="!isAdmin"
       @saved="onOrderDetailSaved"
     />
   </div>
@@ -1222,10 +948,11 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { api } from '@/api';
 import { io, Socket } from 'socket.io-client';
 import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
+import { useAuthStore } from '@/stores/auth';
 
-const activeTab = ref('transactions');
+const authStore = useAuthStore();
+const isAdmin = computed(() => authStore.isAdmin);
 const loading = ref(false);
-const showQrModal = ref(false);
 const approvingId = ref<string | null>(null);
 
 // Order detail popup state
@@ -1235,6 +962,7 @@ const orderDetailLoading = ref(false);
 
 // Account CRUD State
 const showAccountDialog = ref(false);
+const showBankAccountsDialog = ref(false);
 const isEditingAccount = ref(false);
 const savingAccount = ref(false);
 const showDeleteDialog = ref(false);
@@ -1249,18 +977,18 @@ const snackbarColor = ref('success');
 const showOrderMatchDialog = ref(false);
 const selectedTxForMatch = ref<any>(null);
 const orderLookupLoading = ref(false);
+let orderLookupDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let orderLookupRequestId = 0;
 const matchingOrderLoading = ref(false);
 const targetMatchingOrderId = ref<string | null>(null);
 const orderSearchQuery = ref('');
-const orderStatusFilter = ref('all');
 const availableOrders = ref<any[]>([]);
+const currentLookupPage = ref(1);
+const lookupHasMore = ref(false);
 
-const orderStatusFilterOptions = [
-  { text: 'Tất cả trạng thái', value: 'all' },
-  { text: 'Chờ thanh toán / Đang xử lý', value: 'pending' },
-  { text: 'Đã thanh toán / Hoàn tất', value: 'done' },
-  { text: 'Đã hủy', value: 'cancel' },
-];
+type LookupSortKey = 'code' | 'customer' | 'date' | 'status' | 'amount' | 'paid';
+const lookupSortKey = ref<LookupSortKey>('date');
+const lookupSortDirection = ref<'asc' | 'desc'>('desc');
 
 const bankPresets = [
   { name: 'MB Bank (Quân Đội)', code: 'MB' },
@@ -1284,8 +1012,6 @@ const accountForm = reactive({
   accountHolder: '',
   branch: '',
   webhookSecret: '',
-  autoApprove: true,
-  minTrustScore: 85,
   isActive: true,
 });
 
@@ -1304,45 +1030,157 @@ const filters = reactive({
 });
 
 const transactions = ref<any[]>([]);
-const senders = ref<any[]>([]);
 const accounts = ref<any[]>([]);
 
-const reviewSubTab = ref<'pending' | 'approved'>('pending');
+const reviewSubTab = ref<'pending' | 'ignored' | 'approved'>('pending');
 const pendingCount = ref(0);
 const approvedCount = ref(0);
+const ignoredCount = ref(0);
+type TransactionSortKey = 'time' | 'account' | 'message' | 'order' | 'remaining' | 'amount' | 'approver' | 'approvedAt';
+const sortKey = ref<TransactionSortKey>('time');
+const sortDirection = ref<'asc' | 'desc'>('desc');
 
-const pendingStatusOptions = [
-  { text: 'Tất cả trạng thái chưa duyệt', value: '' },
-  { text: 'Khớp đề xuất / Chờ duyệt', value: 'SUGGESTED' },
-  { text: 'Chuyển thiếu tiền', value: 'PARTIAL' },
-  { text: 'Chuyển thừa tiền', value: 'OVERPAID' },
-  { text: 'Cần chọn đơn / Kiểm tra', value: 'MANUAL_REVIEW' },
-];
+const sortedLookupOrders = computed(() => {
+  const orders = [...availableOrders.value];
+  orders.sort((first, second) => {
+    const firstValue = getLookupSortValue(first, lookupSortKey.value);
+    const secondValue = getLookupSortValue(second, lookupSortKey.value);
+    const comparison = typeof firstValue === 'number' && typeof secondValue === 'number'
+      ? firstValue - secondValue
+      : String(firstValue).localeCompare(String(secondValue), 'vi');
+    return lookupSortDirection.value === 'asc' ? comparison : -comparison;
+  });
+  return orders;
+});
 
-function onSubTabChange() {
+function getLookupSortValue(order: any, key: LookupSortKey): number | string {
+  switch (key) {
+    case 'code': return order.orderCode || '';
+    case 'customer': return order.customerName || '';
+    case 'date': return new Date(order.orderDate || 0).getTime();
+    case 'status': return getOrderStatusText(order.status);
+    case 'amount': return Number(order.amountTotal || 0);
+    case 'paid': return Number(order.paidAmount || 0);
+  }
+}
+
+function sortLookupOrders(key: LookupSortKey) {
+  if (lookupSortKey.value === key) {
+    lookupSortDirection.value = lookupSortDirection.value === 'asc' ? 'desc' : 'asc';
+    return;
+  }
+  lookupSortKey.value = key;
+  lookupSortDirection.value = key === 'date' ? 'desc' : 'asc';
+}
+
+function lookupSortIcon(key: LookupSortKey): string {
+  if (lookupSortKey.value !== key) return 'lucide-arrow-up-down';
+  return lookupSortDirection.value === 'asc' ? 'lucide-arrow-up' : 'lucide-arrow-down';
+}
+
+function onReviewTabChange() {
   filters.status = '';
   fetchTransactions();
 }
 
-const accountFilterOptions = computed(() => [
-  { text: 'Tất cả tài khoản', value: '' },
-  ...accounts.value.map(a => ({
-    text: `${a.bankName} - *${a.accountNumber.slice(-4)} (${a.accountHolder})`,
-    value: a.id,
-  })),
-]);
+// Network & LAN IP Auto-detection State
+interface NetworkInterfaceDetail {
+  name: string;
+  ip: string;
+  family: string;
+  type: 'wifi' | 'ethernet' | 'virtual' | 'other';
+  isRecommended: boolean;
+  label: string;
+}
+
+interface ServerNetworkInfo {
+  success: boolean;
+  primaryIp: string;
+  port: number;
+  webhookUrl: string;
+  healthUrl: string;
+  interfaces: NetworkInterfaceDetail[];
+}
+
+const serverNetworkInfo = ref<ServerNetworkInfo | null>(null);
+const selectedServerIp = ref<string>('');
+const detectingIp = ref(false);
+
+const availableInterfaces = computed(() => {
+  return serverNetworkInfo.value?.interfaces || [];
+});
 
 const webhookEndpointUrl = computed(() => {
-  return `${window.location.origin}/api/v1/payments/sms-webhook`;
+  let ip = selectedServerIp.value || serverNetworkInfo.value?.primaryIp;
+  // Nếu là IP ảo của Docker (172.x) hoặc loopback, ưu tiên hostname thực tế trên trình duyệt
+  if (!ip || ip.startsWith('172.') || ip === '127.0.0.1' || ip === 'localhost') {
+    if (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && !window.location.hostname.startsWith('172.')) {
+      ip = window.location.hostname;
+    } else {
+      ip = serverNetworkInfo.value?.primaryIp || (typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1');
+    }
+  }
+  const port = window.location.port || serverNetworkInfo.value?.port || 3080;
+  return `http://${ip}:${port}/api/v1/payments/sms-webhook`;
 });
 
-const mobileGatewayDirectUrl = computed(() => {
-  return `${window.location.origin}/mobile-gateway`;
-});
+function selectInterfaceIp(ip: string) {
+  selectedServerIp.value = ip;
+  try {
+    localStorage.setItem('ocms_preferred_lan_ip', ip);
+  } catch {}
+  notify(`Đã chuyển Webhook URL sang card mạng: ${ip}`, 'info');
+}
 
-const mobileGatewayQrUrl = computed(() => {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(mobileGatewayDirectUrl.value)}`;
-});
+async function fetchNetworkInfo(forceRefresh = false) {
+  detectingIp.value = true;
+  try {
+    const res = await api.get('/payments/network-info');
+    if (res.data?.success) {
+      serverNetworkInfo.value = res.data;
+
+      const savedIp = typeof localStorage !== 'undefined' ? localStorage.getItem('ocms_preferred_lan_ip') : null;
+      let targetIp = res.data.primaryIp;
+
+      // Nếu targetIp là IP ảo Docker (172.x) hoặc 127.0.0.1, fallback về hostname của browser nếu có
+      if (!targetIp || res.data.isDocker || targetIp.startsWith('172.') || targetIp === '127.0.0.1') {
+        if (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && !window.location.hostname.startsWith('172.')) {
+          targetIp = window.location.hostname;
+        } else {
+          targetIp = res.data.primaryIp || window.location.hostname;
+        }
+      }
+
+      // Xóa cache cũ nếu là IP nội bộ Docker 172.x hoặc localhost
+      if (savedIp && (savedIp.startsWith('172.') || savedIp === '127.0.0.1' || savedIp === 'localhost')) {
+        try { localStorage.removeItem('ocms_preferred_lan_ip'); } catch {}
+      }
+
+      if (forceRefresh || !savedIp || savedIp.startsWith('172.') || savedIp === '127.0.0.1' || savedIp === 'localhost') {
+        selectedServerIp.value = targetIp;
+        try {
+          localStorage.setItem('ocms_preferred_lan_ip', targetIp);
+        } catch {}
+      } else {
+        selectedServerIp.value = savedIp;
+      }
+
+      if (forceRefresh) {
+        notify(`Đã làm mới IP máy chủ thành công: ${selectedServerIp.value} (Port: ${res.data.port || 3080})`, 'success');
+      }
+    }
+  } catch (err: any) {
+    console.error('Lỗi nhận diện IP máy chủ:', err);
+    if (!selectedServerIp.value || selectedServerIp.value.startsWith('172.')) {
+      selectedServerIp.value = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
+    }
+    if (forceRefresh) {
+      notify(`Không thể lấy IP máy chủ tự động, đang dùng: ${selectedServerIp.value}`, 'info');
+    }
+  } finally {
+    detectingIp.value = false;
+  }
+}
 
 function formatVND(n?: number | null): string {
   if (!n) return '0 ₫';
@@ -1351,7 +1189,17 @@ function formatVND(n?: number | null): string {
 
 function formatDateTime(d?: string | Date | null): string {
   if (!d) return '—';
-  return new Date(d).toLocaleString('vi-VN', {
+  const date = new Date(d);
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const dateKey = date.toLocaleDateString('en-CA');
+  const todayKey = now.toLocaleDateString('en-CA');
+  const yesterdayKey = yesterday.toLocaleDateString('en-CA');
+  const time = date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (dateKey === todayKey) return `Hôm nay ${time}`;
+  if (dateKey === yesterdayKey) return `Hôm qua ${time}`;
+  return date.toLocaleString('vi-VN', {
     hour: '2-digit',
     minute: '2-digit',
     day: '2-digit',
@@ -1359,94 +1207,55 @@ function formatDateTime(d?: string | Date | null): string {
   });
 }
 
+function getRemainingAmount(tx: any): string {
+  const order = tx.suggestedOrder;
+  if (!order) return '—';
+  return formatVND(Math.max(0, Number(order.amountTotal || 0) - Number(order.paidAmount || 0)));
+}
 
-function getTransactionWarning(tx: any): { type: string; title: string; subtitle?: string; color: string; icon?: string } {
-  const reasons: string[] = Array.isArray(tx.reconciliationReasons)
-    ? tx.reconciliationReasons
-    : (typeof tx.reconciliationReasons === 'string' ? JSON.parse(tx.reconciliationReasons || '[]') : []);
-
-  // 1. Thiếu tiền
-  if (tx.status === 'PARTIAL' || reasons.includes('AMOUNT_PARTIAL')) {
-    const orderAmt = tx.suggestedOrder?.amountTotal || 0;
-    const diff = orderAmt > tx.amount ? orderAmt - tx.amount : 0;
-    return {
-      type: 'partial',
-      title: 'Thiếu tiền',
-      subtitle: diff > 0 ? `Thiếu ${formatVND(diff)}` : undefined,
-      color: 'amber-darken-3',
-      icon: 'lucide-alert-triangle',
+const sortedTransactions = computed(() => {
+  const sorted = [...transactions.value];
+  sorted.sort((a, b) => {
+    const getValue = (tx: any): number | string => {
+      switch (sortKey.value) {
+        case 'time':
+          return new Date(tx.transactionTime || 0).getTime();
+        case 'account':
+          return tx.accountNumber || '';
+        case 'message':
+          return tx.description || '';
+        case 'order':
+          return tx.suggestedOrder?.orderCode || tx.matchedOrderCode || '';
+        case 'remaining':
+          return tx.suggestedOrder
+            ? Math.max(0, Number(tx.suggestedOrder.amountTotal || 0) - Number(tx.suggestedOrder.paidAmount || 0))
+            : -1;
+        case 'amount':
+          return Number(tx.amount || 0);
+        case 'approver':
+          return tx.matchedUser?.fullName || tx.matchedBy || '';
+        case 'approvedAt':
+          return new Date(tx.matchedAt || tx.updatedAt || 0).getTime();
+      }
     };
-  }
 
-  // 2. Thừa tiền
-  if (tx.status === 'OVERPAID' || reasons.includes('AMOUNT_OVER')) {
-    const orderAmt = tx.suggestedOrder?.amountTotal || 0;
-    const diff = tx.amount > orderAmt ? tx.amount - orderAmt : 0;
-    return {
-      type: 'overpaid',
-      title: 'Thừa tiền',
-      subtitle: diff > 0 ? `Thừa +${formatVND(diff)}` : undefined,
-      color: 'info',
-      icon: 'lucide-info',
-    };
-  }
+    const valueA = getValue(a);
+    const valueB = getValue(b);
+    const comparison = typeof valueA === 'number' && typeof valueB === 'number'
+      ? valueA - valueB
+      : String(valueA).localeCompare(String(valueB), 'vi');
+    return sortDirection.value === 'asc' ? comparison : -comparison;
+  });
+  return sorted;
+});
 
-  // 3. Đơn đã thanh toán trước đó
-  if (tx.reconciliationStatus === 'PAYMENT_AFTER_PAID' || reasons.includes('ORDER_ALREADY_PAID')) {
-    return {
-      type: 'already_paid',
-      title: 'Đơn đã thanh toán',
-      subtitle: 'Đã thu đủ trước đó (tránh thu trùng)',
-      color: 'warning',
-      icon: 'lucide-alert-circle',
-    };
+function sortTransactions(key: TransactionSortKey) {
+  if (sortKey.value === key) {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc';
+    return;
   }
-
-  // 4. Đơn đã hủy
-  if (tx.reconciliationStatus === 'ORDER_CANCELLED' || reasons.includes('ORDER_CANCELLED')) {
-    return {
-      type: 'cancelled',
-      title: 'Đơn đã hủy',
-      subtitle: 'Đơn trên hệ thống đã bị hủy',
-      color: 'error',
-      icon: 'lucide-x-circle',
-    };
-  }
-
-  // 5. Không tìm thấy đơn
-  if (
-    tx.reconciliationStatus === 'ORDER_NOT_FOUND' ||
-    reasons.includes('ORDER_NOT_FOUND') ||
-    (!tx.matchedOrderCode && !tx.suggestedOrder && !tx.suggestedOrderHistoryId && !tx.suggestedOrderId)
-  ) {
-    return {
-      type: 'not_found',
-      title: 'Không tìm thấy đơn',
-      subtitle: 'Mã trong SMS không khớp đơn nào',
-      color: 'error',
-      icon: 'lucide-help-circle',
-    };
-  }
-
-  // 6. Điểm tin cậy thấp
-  if ((tx.confidenceScore || 0) < 60 || reasons.includes('NO_ORDER_CODE')) {
-    return {
-      type: 'low_score',
-      title: 'Điểm tin cậy thấp',
-      subtitle: `Độ tin cậy: ${tx.confidenceScore || 0}/100`,
-      color: 'error',
-      icon: 'lucide-shield-alert',
-    };
-  }
-
-  // 7. Khớp đề xuất / Chờ duyệt
-  return {
-    type: 'suggested',
-    title: 'Khớp đề xuất / Chờ duyệt',
-    subtitle: `Độ tin cậy: ${tx.confidenceScore || 90}/100`,
-    color: 'warning',
-    icon: 'lucide-sparkles',
-  };
+  sortKey.value = key;
+  sortDirection.value = key === 'time' || key === 'approvedAt' ? 'desc' : 'asc';
 }
 
 async function fetchData() {
@@ -1460,7 +1269,7 @@ async function fetchData() {
     Object.assign(stats, statsRes.data);
     accounts.value = accountsRes.data.accounts || [];
 
-    await Promise.all([fetchTransactions(), fetchSenders()]);
+    await fetchTransactions();
   } catch (err) {
     console.error('Lỗi tải dữ liệu thanh toán:', err);
   } finally {
@@ -1501,8 +1310,6 @@ function openAddAccountDialog() {
   accountForm.accountHolder = '';
   accountForm.branch = '';
   generateRandomSecret();
-  accountForm.autoApprove = true;
-  accountForm.minTrustScore = 85;
   accountForm.isActive = true;
   showAccountDialog.value = true;
 }
@@ -1516,8 +1323,6 @@ function openEditAccountDialog(acc: any) {
   accountForm.accountHolder = acc.accountHolder || '';
   accountForm.branch = acc.branch || '';
   accountForm.webhookSecret = acc.webhookSecret || '';
-  accountForm.autoApprove = acc.autoApprove ?? false;
-  accountForm.minTrustScore = acc.minTrustScore ?? 85;
   accountForm.isActive = acc.isActive ?? true;
   showAccountDialog.value = true;
 }
@@ -1548,8 +1353,6 @@ async function saveAccount() {
       accountHolder: accountForm.accountHolder.trim().toUpperCase(),
       branch: accountForm.branch.trim() || null,
       webhookSecret: accountForm.webhookSecret.trim(),
-      autoApprove: accountForm.autoApprove,
-      minTrustScore: accountForm.minTrustScore,
       isActive: accountForm.isActive,
     };
     if (isEditingAccount.value && accountForm.id) {
@@ -1617,25 +1420,10 @@ async function fetchTransactions() {
     transactions.value = res.data.transactions || [];
     pendingCount.value = res.data.pendingCount || 0;
     approvedCount.value = res.data.approvedCount || 0;
+    ignoredCount.value = res.data.ignoredCount || 0;
   } catch (err) {
     console.error('Lỗi lấy giao dịch:', err);
   }
-}
-
-async function fetchSenders() {
-  try {
-    const res = await api.get('/payments/senders');
-    senders.value = res.data.senders || [];
-  } catch (err) {
-    console.error('Lỗi lấy danh tính người chuyển:', err);
-  }
-}
-
-function resetFilters() {
-  filters.search = '';
-  filters.status = '';
-  filters.bankAccountId = '';
-  fetchTransactions();
 }
 
 async function approveTransaction(id: string) {
@@ -1651,10 +1439,20 @@ async function approveTransaction(id: string) {
   }
 }
 
+async function ignoreTransaction(id: string) {
+  try {
+    await api.post(`/payments/transactions/${id}/ignore`);
+    notify('Đã bỏ qua giao dịch.', 'success');
+    await fetchData();
+  } catch (err: any) {
+    alert(err.response?.data?.error || 'Lỗi khi bỏ qua giao dịch');
+  }
+}
+
 async function openManualMatch(tx: any) {
   selectedTxForMatch.value = tx;
   orderSearchQuery.value = tx.matchedOrderCode || tx.parsedOrderCode || tx.suggestedOrder?.orderCode || '';
-  orderStatusFilter.value = 'all';
+  currentLookupPage.value = 1;
   showOrderMatchDialog.value = true;
   await fetchOrdersForLookup();
 }
@@ -1662,26 +1460,52 @@ async function openManualMatch(tx: any) {
 function searchByParsedCode(code: string) {
   if (!code) return;
   orderSearchQuery.value = code;
+  currentLookupPage.value = 1;
   fetchOrdersForLookup();
 }
 
 async function fetchOrdersForLookup() {
+  const requestId = ++orderLookupRequestId;
   orderLookupLoading.value = true;
   try {
     const res = await api.get('/payments/orders-lookup', {
       params: {
-        search: orderSearchQuery.value.trim(),
-        status: orderStatusFilter.value,
+        search: String(orderSearchQuery.value || '').trim(),
+        status: 'all',
         limit: 50,
+        page: currentLookupPage.value,
       },
     });
+    // Typing quickly can leave older requests in flight. Only the latest query may win.
+    if (requestId !== orderLookupRequestId) return;
     availableOrders.value = res.data.orders || [];
+    lookupHasMore.value = Boolean(res.data.hasMore);
   } catch (err: any) {
+    if (requestId !== orderLookupRequestId) return;
     console.error('Lỗi tra cứu đơn hàng:', err);
     availableOrders.value = [];
+    lookupHasMore.value = false;
   } finally {
-    orderLookupLoading.value = false;
+    if (requestId === orderLookupRequestId) {
+      orderLookupLoading.value = false;
+    }
   }
+}
+
+function scheduleOrdersLookup() {
+  currentLookupPage.value = 1;
+  if (orderLookupDebounceTimer) clearTimeout(orderLookupDebounceTimer);
+  orderLookupDebounceTimer = setTimeout(() => {
+    orderLookupDebounceTimer = null;
+    fetchOrdersForLookup();
+  }, 250);
+}
+
+function changeLookupPage(delta: number) {
+  const nextPage = currentLookupPage.value + delta;
+  if (nextPage < 1 || (delta > 0 && !lookupHasMore.value)) return;
+  currentLookupPage.value = nextPage;
+  fetchOrdersForLookup();
 }
 
 async function selectOrderToMatch(order: any) {
@@ -1745,7 +1569,7 @@ function getOrderStatusColor(status?: string): string {
 function getOrderStatusText(status?: string): string {
   switch ((status || '').toLowerCase()) {
     case 'sale':
-      return 'Đã xác nhận (Sale)';
+      return 'Đã xác nhận';
     case 'confirmed':
       return 'Đã xác nhận';
     case 'done':
@@ -1755,7 +1579,7 @@ function getOrderStatusText(status?: string): string {
     case 'completed':
       return 'Hoàn thành';
     case 'draft':
-      return 'Báo giá / Nháp';
+      return 'Báo giá';
     case 'new':
       return 'Đơn mới';
     case 'pending':
@@ -1770,25 +1594,20 @@ function getOrderStatusText(status?: string): string {
   }
 }
 
+function truncateOrderCode(orderCode?: string | null): string {
+  const code = String(orderCode || '');
+  return code.length > 10 ? `${code.slice(0, 10)}...` : code;
+}
+
+function truncateCustomerName(customerName?: string | null): string {
+  const name = String(customerName || '');
+  return name.length > 20 ? `${name.slice(0, 20)}...` : name;
+}
+
 function notify(text: string, color = 'success') {
   snackbarText.value = text;
   snackbarColor.value = color;
   showSnackbar.value = true;
-}
-
-async function toggleAutoApprove(senderId: string, value: boolean) {
-  try {
-    await api.patch(`/payments/senders/${senderId}`, {
-      isAutoApproved: value,
-    });
-    await fetchSenders();
-  } catch (err) {
-    console.error('Lỗi cập nhật auto approve:', err);
-  }
-}
-
-function openMobileTestInNewTab() {
-  window.open(mobileGatewayDirectUrl.value, '_blank');
 }
 
 async function openOrderDetailByCode(code: string) {
@@ -1822,6 +1641,7 @@ let socket: Socket | null = null;
 
 onMounted(() => {
   fetchData();
+  fetchNetworkInfo();
   try {
     socket = io({ transports: ['websocket', 'polling'] });
     socket.on('payment:new_transaction', () => fetchData());
@@ -1834,6 +1654,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (orderLookupDebounceTimer) clearTimeout(orderLookupDebounceTimer);
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -1848,6 +1669,13 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
+.payments-table th.sort-header {
+  cursor: pointer;
+  user-select: none;
+}
+.payments-table th.sort-header:hover {
+  color: rgb(var(--v-theme-primary));
+}
 .payments-table td {
   height: 48px;
 }
@@ -1859,5 +1687,128 @@ onUnmounted(() => {
 .order-code-chip:hover {
   transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(var(--v-theme-success), 0.35);
+}
+
+:deep(.order-match-dialog .v-overlay__content) {
+  width: 900px;
+  max-width: calc(100vw - 32px);
+  height: 700px;
+  max-height: calc(100vh - 32px);
+}
+
+:deep(.order-match-card) {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  height: 700px !important;
+  min-height: 700px;
+  max-height: 700px;
+}
+
+.order-match-context {
+  flex: 0 0 auto;
+}
+
+.payment-content-box {
+  padding: 14px 16px !important;
+}
+
+.payment-description,
+.payment-raw-sms {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.payment-description {
+  line-height: 1.6;
+}
+
+.payment-raw-sms {
+  line-height: 1.5;
+}
+
+.order-match-footer {
+  flex: 0 0 auto;
+}
+
+:deep(.orders-lookup-table th) {
+  cursor: pointer;
+  user-select: none;
+}
+
+:deep(.orders-lookup-table th:hover) {
+  color: rgb(var(--v-theme-primary));
+}
+
+.order-match-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+:deep(.orders-lookup-table) {
+  width: 100%;
+  table-layout: auto;
+}
+
+:deep(.orders-lookup-table th),
+:deep(.orders-lookup-table td) {
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+
+:deep(.orders-lookup-table .order-code-column),
+:deep(.orders-lookup-table .order-date-column),
+:deep(.orders-lookup-table .order-status-column),
+:deep(.orders-lookup-table .amount-column),
+:deep(.orders-lookup-table .paid-column),
+:deep(.orders-lookup-table th:last-child),
+:deep(.orders-lookup-table td:last-child) {
+  white-space: nowrap !important;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+:deep(.orders-lookup-table .order-code-column) {
+  width: 1%;
+}
+
+:deep(.orders-lookup-table .customer-column) {
+  width: auto;
+}
+
+:deep(.orders-lookup-table .order-date-column) {
+  width: 1%;
+}
+
+:deep(.orders-lookup-table .order-status-column) {
+  width: 1%;
+}
+
+:deep(.orders-lookup-table .amount-column),
+:deep(.orders-lookup-table .paid-column) {
+  width: 1%;
+}
+
+:deep(.orders-lookup-table th:last-child),
+:deep(.orders-lookup-table td:last-child) {
+  width: 1%;
+}
+
+@media (max-width: 700px) {
+  :deep(.order-match-dialog .v-overlay__content) {
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  :deep(.order-match-card) {
+    height: calc(100vh - 16px) !important;
+    min-height: calc(100vh - 16px);
+    max-height: calc(100vh - 16px);
+  }
 }
 </style>
