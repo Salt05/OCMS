@@ -684,7 +684,7 @@
                 </v-icon>
                 <div class="flex-grow-1 min-w-0 pr-2">
                   <div class="text-body-2 font-weight-medium text-truncate" :title="getFileInfo(msg)!.name">
-                    {{ getFileInfo(msg)!.name }}
+                    {{ truncateFileName(getFileInfo(msg)!.name, 26) }}
                   </div>
                   <div class="text-caption text-grey-darken-1 d-flex align-center gap-1" style="font-size: 11px;">
                     <span>{{ getFileInfo(msg)!.size }}</span>
@@ -3416,6 +3416,20 @@ function getFileColor(name: string = '') {
   return 'primary';
 }
 
+/** Rút gọn tên file nếu quá dài và giữ lại phần mở rộng (...ext) */
+function truncateFileName(name: string = '', maxLen: number = 26): string {
+  if (!name || name.length <= maxLen) return name;
+  const lastDot = name.lastIndexOf('.');
+  if (lastDot > 0 && lastDot > name.length - 8) {
+    const ext = name.slice(lastDot);
+    const baseLen = maxLen - ext.length - 3;
+    if (baseLen >= 3) {
+      return `${name.slice(0, baseLen)}...${ext}`;
+    }
+  }
+  return `${name.slice(0, Math.max(3, maxLen - 3))}...`;
+}
+
 interface BankCardData {
   bankName: string;
   bankNum: string;
@@ -3955,6 +3969,9 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   background: var(--color-soft-stone);
   border: 1px solid var(--color-chalk);
   transition: all 0.2s ease;
+  max-width: 340px;
+  min-width: 240px;
+  box-sizing: border-box;
 }
 .file-card-clickable {
   cursor: pointer;
