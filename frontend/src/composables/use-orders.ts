@@ -176,8 +176,10 @@ export function useOrders() {
   const staffStats = ref<StaffStat[]>([]);
   const salespersons = ref<string[]>([]);
 
-  async function fetchOrders(params: Record<string, string | number> = {}) {
-    loading.value = true;
+  async function fetchOrders(params: Record<string, string | number> = {}, options?: { silent?: boolean }) {
+    if (!options?.silent) {
+      loading.value = true;
+    }
     try {
       const res = await api.get('/orders', { params });
       orders.value = res.data.orders || [];
@@ -186,7 +188,9 @@ export function useOrders() {
     } catch (err) {
       console.error('[useOrders] fetchOrders error:', err);
     } finally {
-      loading.value = false;
+      if (!options?.silent) {
+        loading.value = false;
+      }
     }
   }
 
@@ -325,8 +329,10 @@ export function useOrders() {
   const processedAiTotal = ref(0);
   const processedAiLoading = ref(false);
 
-  async function fetchPendingOrders() {
-    pendingLoading.value = true;
+  async function fetchPendingOrders(options?: { silent?: boolean }) {
+    if (!options?.silent) {
+      pendingLoading.value = true;
+    }
     try {
       const res = await api.get('/orders/pending-ai');
       pendingOrders.value = res.data.orders || [];
@@ -334,7 +340,9 @@ export function useOrders() {
     } catch (err) {
       console.error('[useOrders] fetchPendingOrders error:', err);
     } finally {
-      pendingLoading.value = false;
+      if (!options?.silent) {
+        pendingLoading.value = false;
+      }
     }
   }
 

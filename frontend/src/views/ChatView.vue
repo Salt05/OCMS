@@ -350,7 +350,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, onActivated, watch } from 'vue';
+
+defineOptions({
+  name: 'ChatView',
+});
 import { useRoute, useRouter } from 'vue-router';
 import { useDisplay } from 'vuetify';
 import ConversationList from '@/components/chat/ConversationList.vue';
@@ -372,7 +376,7 @@ const {
   conversations, selectedConvId, selectedConv, messages,
   loadingConvs, loadingMsgs, loadingMoreMsgs, sendingMsg, hasMoreMessages,
   searchQuery, accountFilter,
-  fetchConversations, selectConversation, sendMessage, retrySendMessage, sendAttachment, retrySendAttachment, removeOptimisticMessage,
+  fetchConversations, selectConversation, fetchMessages, sendMessage, retrySendMessage, sendAttachment, retrySendAttachment, removeOptimisticMessage,
   sendReaction, undoMessage, getFriendStatus, sendFriendRequest, acceptFriendRequest, undoFriendRequest,
   loadMoreMessages,
   pauseAi, resumeAi, toggleAi,
@@ -672,6 +676,15 @@ onMounted(() => {
   initSocket();
   loadBulkSession();
 });
+
+onActivated(() => {
+  // Silent background revalidation when returning to Chat tab
+  fetchConversations({ silent: true });
+  if (selectedConvId.value && selectedConvId.value !== 'bulk_session') {
+    fetchMessages(selectedConvId.value, undefined, { silent: true });
+  }
+});
+
 onUnmounted(() => { destroySocket(); });
 
 let searchTimeout: ReturnType<typeof setTimeout>;

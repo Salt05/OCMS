@@ -88,7 +88,7 @@ export function useContacts() {
 
   const pagination = reactive({ page: 1, limit: 20 });
 
-  async function fetchContacts(options?: { page?: number; itemsPerPage?: number }) {
+  async function fetchContacts(options?: { page?: number; itemsPerPage?: number; silent?: boolean }) {
     if (options && typeof options === 'object') {
       if (typeof options.page === 'number' && options.page > 0) pagination.page = options.page;
       if (typeof options.itemsPerPage === 'number') {
@@ -99,7 +99,9 @@ export function useContacts() {
         }
       }
     }
-    loading.value = true;
+    if (!options?.silent) {
+      loading.value = true;
+    }
     try {
       const res = await api.get('/contacts', {
         params: {
@@ -119,7 +121,9 @@ export function useContacts() {
     } catch (err) {
       console.error('Failed to fetch contacts:', err);
     } finally {
-      loading.value = false;
+      if (!options?.silent) {
+        loading.value = false;
+      }
     }
   }
 

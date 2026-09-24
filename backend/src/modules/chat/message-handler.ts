@@ -773,39 +773,29 @@ export async function handleMessageReaction(
 
     const isRemove = !reaction.icon || reaction.icon === '' || reaction.rType === -1;
 
-    if (isRemove) {
-      // Remove all reactions of this sender UID / self
-      existingReactions = existingReactions.filter(
-        (r) => r.uid !== reaction.senderUid && (!reaction.isSelf || !r.isSelf),
-      );
-    } else {
-      const emoji = getEmojiFromReactionIcon(reaction.icon);
-      
-      // Find if this user already reacted with this SPECIFIC icon or emoji
-      const reactionIndex = existingReactions.findIndex(
-        (r) =>
-          (r.uid === reaction.senderUid || (reaction.isSelf && r.isSelf)) &&
-          (r.icon === reaction.icon || r.emoji === emoji),
-      );
+    // Helper to identify if a reaction belongs to the current reacting user
+    const isUserReaction = (r: MessageReactionItem) => {
+      if (reaction.isSelf && r.isSelf) return true;
+      if (reaction.senderUid && r.uid && r.uid === reaction.senderUid) return true;
+      return false;
+    };
 
-      if (reactionIndex >= 0) {
-        existingReactions[reactionIndex].count = (existingReactions[reactionIndex].count || 1) + 1;
-        existingReactions[reactionIndex].updatedAt = new Date().toISOString();
-        if (reaction.senderName) existingReactions[reactionIndex].userName = reaction.senderName;
-        if (reaction.avatarUrl) existingReactions[reactionIndex].avatarUrl = reaction.avatarUrl;
-      } else {
-        existingReactions.push({
-          icon: reaction.icon,
-          emoji,
-          rType: reaction.rType,
-          uid: reaction.senderUid,
-          userName: reaction.senderName || (reaction.isSelf ? 'Bạn' : 'Người dùng'),
-          avatarUrl: reaction.avatarUrl,
-          isSelf: reaction.isSelf,
-          count: 1,
-          updatedAt: new Date().toISOString(),
-        });
-      }
+    // Remove any existing reaction from this user (each user has at most 1 reaction on a message)
+    existingReactions = existingReactions.filter((r) => !isUserReaction(r));
+
+    if (!isRemove) {
+      const emoji = getEmojiFromReactionIcon(reaction.icon);
+      existingReactions.push({
+        icon: reaction.icon,
+        emoji,
+        rType: reaction.rType,
+        uid: reaction.senderUid,
+        userName: reaction.senderName || (reaction.isSelf ? 'Bạn' : 'Người dùng'),
+        avatarUrl: reaction.avatarUrl,
+        isSelf: reaction.isSelf,
+        count: 1,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     await prisma.message.update({

@@ -2313,12 +2313,18 @@ const activeReactionTab = ref('all');
 function getDistinctReactions(msg: Message | null): { emoji: string; icon: string; count: number }[] {
   if (!msg?.reactions || msg.reactions.length === 0) return [];
   const map: Record<string, { emoji: string; icon: string; count: number }> = {};
+  const seenUsers = new Set<string>();
+
   for (const r of msg.reactions) {
+    const userKey = r.isSelf ? 'self' : (r.uid || r.userName || 'unknown');
+    if (seenUsers.has(userKey)) continue;
+    seenUsers.add(userKey);
+
     const e = r.emoji || '❤️';
     if (!map[e]) {
       map[e] = { emoji: e, icon: r.icon, count: 0 };
     }
-    map[e].count += (r.count || 1);
+    map[e].count += 1;
   }
   return Object.values(map);
 }
@@ -2331,7 +2337,12 @@ const modalDistinctReactions = computed(() => {
 
 function getTotalReactionsCount(msg: Message | null): number {
   if (!msg?.reactions || msg.reactions.length === 0) return 0;
-  return msg.reactions.reduce((sum, r) => sum + (r.count || 1), 0);
+  const seenUsers = new Set<string>();
+  for (const r of msg.reactions) {
+    const userKey = r.isSelf ? 'self' : (r.uid || r.userName || 'unknown');
+    seenUsers.add(userKey);
+  }
+  return seenUsers.size;
 }
 
 function getUserReaction(msg: Message): MessageReactionItem | undefined {
@@ -2363,51 +2374,28 @@ const groupedReactionUsers = computed(() => {
   const usersMap: Record<string, GroupedUserReaction> = {};
 
   for (const r of selectedReactionMsg.value.reactions) {
-    const key = r.uid || (r.isSelf ? 'self' : 'unknown');
-    if (!usersMap[key]) {
-      const fallbackAvatar = r.isSelf ? props.conversation?.zaloAccount?.avatarUrl : props.conversation?.contact?.avatarUrl;
-      const fallbackName = r.isSelf ? (props.conversation?.zaloAccount?.displayName || 'Bạn') : getContactDisplayName(props.conversation);
-      usersMap[key] = {
-        uid: r.uid || key,
-        userName: r.userName || fallbackName,
-        avatarUrl: r.avatarUrl || fallbackAvatar || undefined,
-        isSelf: r.isSelf,
-        totalCount: 0,
-        reactions: [],
-        displayCount: 0,
-      };
-    }
-    const count = r.count || 1;
-    usersMap[key].totalCount += count;
-    
-    const existingEmoji = usersMap[key].reactions.find(e => e.emoji === r.emoji);
-    if (existingEmoji) {
-      existingEmoji.count += count;
-    } else {
-      usersMap[key].reactions.push({ emoji: r.emoji, count });
-    }
+    const key = r.isSelf ? 'self' : (r.uid || 'unknown');
+    const fallbackAvatar = r.isSelf ? props.conversation?.zaloAccount?.avatarUrl : props.conversation?.contact?.avatarUrl;
+    const fallbackName = r.isSelf ? (props.conversation?.zaloAccount?.displayName || 'Bạn') : getContactDisplayName(props.conversation);
+    usersMap[key] = {
+      uid: r.uid || key,
+      userName: r.userName || fallbackName,
+      avatarUrl: r.avatarUrl || fallbackAvatar || undefined,
+      isSelf: r.isSelf,
+      totalCount: 1,
+      reactions: [{ emoji: r.emoji, count: 1 }],
+      displayCount: 1,
+    };
   }
 
   const allUsers = Object.values(usersMap);
 
   if (activeReactionTab.value === 'all') {
-    return allUsers.map(u => ({
-      ...u,
-      displayCount: u.totalCount,
-    }));
+    return allUsers;
   }
 
-  // Filter users who reacted with the active emoji and set displayCount to this emoji's count
-  return allUsers
-    .filter(u => u.reactions.some(re => re.emoji === activeReactionTab.value))
-    .map(u => {
-      const matched = u.reactions.find(re => re.emoji === activeReactionTab.value);
-      return {
-        ...u,
-        reactions: matched ? [matched] : [],
-        displayCount: matched?.count || 0,
-      };
-    });
+  // Filter users who reacted with the active emoji
+  return allUsers.filter(u => u.reactions.some(re => re.emoji === activeReactionTab.value));
 });
 
 function removeSelfReactionInModal() {

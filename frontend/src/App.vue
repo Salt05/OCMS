@@ -1,6 +1,10 @@
 <template>
   <component :is="layout">
-    <router-view />
+    <router-view v-slot="{ Component }">
+      <keep-alive :include="cachedViews">
+        <component :is="Component" />
+      </keep-alive>
+    </router-view>
   </component>
 </template>
 
@@ -14,4 +18,7 @@ const route = useRoute();
 const layout = computed(() => {
   return route.meta.layout === 'auth' ? AuthLayout : DefaultLayout;
 });
+
+// Cache high-frequency operational views for instantaneous (0ms) tab switching
+const cachedViews = ['ChatView', 'OrdersView', 'ContactsView'];
 </script>

@@ -714,7 +714,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue';
+
+defineOptions({
+  name: 'OrdersView',
+});
 import { useRouter } from 'vue-router';
 import { useDisplay } from 'vuetify';
 import { io, Socket } from 'socket.io-client';
@@ -1002,10 +1006,10 @@ function onPageChange(newPage: number) {
   fetchOrders(buildParams());
 }
 
-async function loadData() {
+async function loadData(options?: { silent?: boolean }) {
   await Promise.all([
-    fetchOrders(buildParams()),
-    fetchPendingOrders(),
+    fetchOrders(buildParams(), options),
+    fetchPendingOrders(options),
   ]);
 }
 
@@ -1183,10 +1187,15 @@ async function handleQuickSync() {
 
 let socket: Socket | null = null;
 
+watch(activeTab, (newTab) => {
+  if (newTab === 'staff' && staffStats.value.length === 0) {
+    fetchStaffStats();
+  }
+});
+
 onMounted(async () => {
   await Promise.all([
     loadData(),
-    fetchStaffStats(),
     fetchSalespersons(),
   ]);
 
@@ -1197,9 +1206,9 @@ onMounted(async () => {
     socket = io({ transports: ['websocket', 'polling'] });
     socket.on('order:updated', async () => {
       await Promise.all([
-        loadData(),
-        fetchStaffStats(),
-        fetchSalespersons(),
+        loadData({ silent: true }),
+        activeTab.value === 'staff' ? fetchStaffStats() : Promise.resolve(),
+        fetchAllBadges(),
       ]);
     });
 
@@ -1223,12 +1232,29 @@ onMounted(async () => {
   }
 });
 
+onActivated(async () => {
+  // Silent background revalidation when returning to Orders tab
+  await loadData({ silent: true });
+  if (activeTab.value === 'staff') {
+    fetchStaffStats();
+  }
+  startCountdown();
+});
+
+onDeactivated(() => {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+});
+
 onUnmounted(() => {
   if (socket) {
     socket.disconnect();
   }
   if (countdownTimer) {
     clearInterval(countdownTimer);
+    countdownTimer = null;
   }
 });
 </script>

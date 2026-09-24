@@ -130,8 +130,10 @@ export function useChat() {
     conversations.value.find(c => c.id === selectedConvId.value) || null,
   );
 
-  async function fetchConversations() {
-    loadingConvs.value = true;
+  async function fetchConversations(options?: { silent?: boolean }) {
+    if (!options?.silent) {
+      loadingConvs.value = true;
+    }
     try {
       const res = await api.get('/conversations', {
         params: { limit: 100, search: searchQuery.value, accountId: accountFilter.value || undefined },
@@ -140,7 +142,9 @@ export function useChat() {
     } catch (err) {
       console.error('Failed to fetch conversations:', err);
     } finally {
-      loadingConvs.value = false;
+      if (!options?.silent) {
+        loadingConvs.value = false;
+      }
     }
   }
 
@@ -203,9 +207,9 @@ export function useChat() {
     }
   }
 
-  async function fetchMessages(convId: string, requestId?: number) {
+  async function fetchMessages(convId: string, requestId?: number, options?: { silent?: boolean }) {
     const hasCache = (messagesCache.get(convId)?.length || 0) > 0;
-    if (!hasCache) {
+    if (!hasCache && !options?.silent) {
       loadingMsgs.value = true;
     }
     try {
@@ -253,7 +257,7 @@ export function useChat() {
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
-      if (requestId === undefined || requestId === activeConvRequestId) {
+      if (!options?.silent && (requestId === undefined || requestId === activeConvRequestId)) {
         loadingMsgs.value = false;
       }
     }

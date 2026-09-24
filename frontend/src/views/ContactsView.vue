@@ -279,7 +279,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onActivated } from 'vue';
+
+defineOptions({
+  name: 'ContactsView',
+});
 import { useRouter } from 'vue-router';
 import { useDisplay } from 'vuetify';
 import ContactFilters from '@/components/contacts/ContactFilters.vue';
@@ -532,6 +536,10 @@ async function confirmBulkDelete() {
 }
 
 
+onActivated(() => {
+  // Silent background revalidation when returning to Contacts tab
+  fetchContacts({ silent: true });
+});
 </script>
 
 <style scoped>
