@@ -66,9 +66,9 @@
       <v-window-item value="orders">
         <!-- Filter Card -->
         <v-card variant="outlined" class="rounded-lg mb-4 pa-3">
-          <v-row dense align="center">
-            <!-- Search -->
-            <v-col cols="12" sm="6" md="3">
+          <div class="d-flex flex-wrap flex-md-nowrap align-center gap-2">
+            <!-- Search (ưu tiên độ rộng co dãn lớn hơn) -->
+            <div class="filter-item-search flex-grow-1" style="min-width: 200px;">
               <v-text-field
                 v-model="filters.search"
                 density="compact"
@@ -79,10 +79,10 @@
                 clearable
                 @update:model-value="onFilterChange"
               />
-            </v-col>
+            </div>
 
             <!-- State Filter -->
-            <v-col cols="6" sm="4" md="2">
+            <div class="filter-item flex-grow-1" style="min-width: 140px;">
               <v-select
                 v-model="filters.state"
                 :items="ODOO_ORDER_STATES"
@@ -94,10 +94,10 @@
                 placeholder="Trạng thái"
                 @update:model-value="onFilterChange"
               />
-            </v-col>
+            </div>
 
             <!-- Invoice Status Filter -->
-            <v-col cols="6" sm="4" md="2">
+            <div class="filter-item flex-grow-1" style="min-width: 135px;">
               <v-select
                 v-model="filters.invoiceStatus"
                 :items="ODOO_INVOICE_STATUSES"
@@ -109,10 +109,10 @@
                 placeholder="Hóa đơn (Odoo)"
                 @update:model-value="onFilterChange"
               />
-            </v-col>
+            </div>
 
             <!-- Salesperson Filter -->
-            <v-col cols="6" sm="4" md="2">
+            <div class="filter-item flex-grow-1" style="min-width: 145px;">
               <v-select
                 v-model="filters.salesperson"
                 :items="salespersonOptions"
@@ -125,10 +125,10 @@
                 clearable
                 @update:model-value="onFilterChange"
               />
-            </v-col>
+            </div>
 
             <!-- Delivery Status Filter -->
-            <v-col cols="6" sm="4" md="1">
+            <div class="filter-item flex-grow-1" style="min-width: 125px;">
               <v-select
                 v-model="filters.deliveryStatus"
                 :items="ODOO_DELIVERY_STATUSES"
@@ -140,10 +140,10 @@
                 placeholder="Vận chuyển"
                 @update:model-value="onFilterChange"
               />
-            </v-col>
+            </div>
 
             <!-- Quick Date Filter -->
-            <v-col cols="6" sm="4" md="2">
+            <div class="filter-item flex-grow-1" style="min-width: 135px;">
               <v-select
                 v-model="quickDate"
                 :items="quickDateOptions"
@@ -155,15 +155,15 @@
                 placeholder="Thời gian"
                 @update:model-value="onQuickDateChange"
               />
-            </v-col>
+            </div>
 
             <!-- Reset Filter (Only shown when active filters exist) -->
-            <v-col v-if="hasActiveFilters" cols="12" sm="4" md="1" class="d-flex align-center justify-end">
+            <div v-if="hasActiveFilters" class="flex-shrink-0 d-flex align-center">
               <v-btn icon size="small" variant="text" color="error" title="Xóa bộ lọc" @click="resetFilters">
                 <v-icon size="18">lucide-filter-x</v-icon>
               </v-btn>
-            </v-col>
-          </v-row>
+            </div>
+          </div>
         </v-card>
 
         <!-- Orders Data Table -->
