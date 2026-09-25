@@ -892,6 +892,11 @@ function formatVND(n?: number) {
 function getPaidStatus(order: any): 'unpaid' | 'full' | 'excess' {
   const total = Math.round(Number(order?.amountTotal || 0));
   const paid = Math.round(Number(order?.paidAmount || 0));
+  const isInvoiced = order?.invoiceStatus === 'invoiced';
+
+  // Đơn 0đ đã xuất hóa đơn hết thì coi là đã thanh toán đủ (100%)
+  if (total === 0 && isInvoiced) return 'full';
+
   if (paid <= 0 || paid < total) return 'unpaid';
   if (paid === total) return 'full';
   return 'excess';

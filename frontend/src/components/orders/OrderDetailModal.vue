@@ -11,8 +11,15 @@
             <div>
               <div class="d-flex align-center gap-2">
                 <span class="text-h6 font-weight-bold font-monospace">{{ order?.orderCode }}</span>
-                <v-btn icon size="x-small" variant="text" color="grey" title="Sao chép mã đơn" @click="copyOrderCode">
-                  <v-icon size="14">lucide-copy</v-icon>
+                <v-btn
+                  icon
+                  size="x-small"
+                  variant="text"
+                  :color="isOrderCodeCopied ? 'success' : 'grey'"
+                  :title="isOrderCodeCopied ? 'Đã sao chép!' : 'Sao chép mã đơn'"
+                  @click="copyOrderCode"
+                >
+                  <v-icon size="14">{{ isOrderCodeCopied ? 'lucide-check' : 'lucide-copy' }}</v-icon>
                 </v-btn>
               </div>
               <!-- Order Metadata: Created at + Last Edited & Modifier -->
@@ -553,7 +560,7 @@
                     <td class="text-caption text-medium-emphasis">{{ formatDateTime(p.paidAt) }}</td>
                     <td>
                       <v-chip size="x-small" :color="p.paymentMethod === 'BANK_TRANSFER' ? 'primary' : (p.paymentMethod === 'COD' ? 'amber-darken-3' : 'teal')" variant="tonal">
-                        {{ p.paymentMethod === 'BANK_TRANSFER' ? 'MB Bank' : (p.paymentMethod === 'COD' ? 'Thu hộ COD' : 'Tiền mặt') }}
+                        {{ p.paymentMethod === 'BANK_TRANSFER' ? 'Chuyển khoản' : (p.paymentMethod === 'COD' ? 'Thu hộ COD' : 'Tiền mặt/shipper giao nộp') }}
                       </v-chip>
                     </td>
                     <td class="text-right font-weight-bold font-monospace text-success">
@@ -772,25 +779,23 @@
           </div>
 
           <v-text-field
-            v-model.number="paymentForm.amount"
+            v-model="formattedPaymentAmount"
             label="Số tiền nhận (VNĐ)"
-            type="number"
-            min="1000"
-            step="10000"
             variant="outlined"
             density="compact"
             class="mb-3"
-            :hint="formatVND(paymentForm.amount)"
-            persistent-hint
+            suffix="đ"
+            hide-details
+            @input="onPaymentAmountInput"
             @focus="onPaymentDialogFocus"
           />
 
           <v-select
             v-model="paymentForm.paymentMethod"
             :items="[
-              { title: 'Tiền mặt tại quầy / Shipper giao nộp', value: 'CASH' },
-              { title: 'Chuyển khoản ngoài', value: 'BANK_TRANSFER' },
-              { title: 'Thu hộ COD', value: 'COD' },
+              { title: 'Tiền mặt/shipper giao nộp', value: 'CASH' },
+              { title: 'chuyển khoản', value: 'BANK_TRANSFER' },
+              { title: 'thu hộ COD', value: 'COD' },
             ]"
             item-title="title"
             item-value="value"
@@ -962,7 +967,7 @@ const showPaymentDialog = ref(false);
 const submittingPayment = ref(false);
 const paymentForm = ref({
   amount: 0,
-  paymentMethod: 'CASH',
+  paymentMethod: 'BANK_TRANSFER',
   notes: '',
 });
 
@@ -990,6 +995,11 @@ const modalPaidStatus = computed<'unpaid' | 'full' | 'excess'>(() => {
   if (!props.order) return 'unpaid';
   const total = Math.round(Number(props.order.amountTotal || 0));
   const paid = Math.round(Number(numericPaidAmount.value || 0));
+  const isInvoiced = props.order.invoiceStatus === 'invoiced';
+
+  // Đơn 0đ đã xuất hóa đơn hết thì coi là đã thanh toán đủ (100%)
+  if (total === 0 && isInvoiced) return 'full';
+
   if (paid <= 0 || paid < total) return 'unpaid';
   if (paid === total) return 'full';
   return 'excess';
@@ -1016,6 +1026,17 @@ const modalPaidDifferenceText = computed(() => {
   return formatVND(total - paid);
 });
 
+const formattedPaymentAmount = ref('');
+
+function onPaymentAmountInput(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const rawDigits = target.value.replace(/\D/g, '');
+  const numericVal = rawDigits ? parseInt(rawDigits, 10) : 0;
+  paymentForm.value.amount = numericVal;
+  formattedPaymentAmount.value = numericVal > 0 ? formatThousand(numericVal) : '';
+  target.value = formattedPaymentAmount.value;
+}
+
 function onPaymentDialogFocus(e: FocusEvent) {
   const target = e.target as HTMLInputElement;
   if (target) {
@@ -1026,11 +1047,13 @@ function onPaymentDialogFocus(e: FocusEvent) {
 }
 
 function openPaymentDialog() {
+  const initialAmount = remainingAmount.value > 0 ? remainingAmount.value : 0;
   paymentForm.value = {
-    amount: remainingAmount.value > 0 ? remainingAmount.value : 0,
-    paymentMethod: 'CASH',
+    amount: initialAmount,
+    paymentMethod: 'BANK_TRANSFER',
     notes: '',
   };
+  formattedPaymentAmount.value = initialAmount > 0 ? formatThousand(initialAmount) : '';
   showPaymentDialog.value = true;
 }
 
@@ -1295,13 +1318,55 @@ function formatDateTime(d?: string | null) {
   return `${dt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${dt.toLocaleDateString('vi-VN')}`;
 }
 
-function copyOrderCode() {
-  if (props.order?.orderCode && navigator.clipboard) {
-    navigator.clipboard.writeText(props.order.orderCode);
+const isOrderCodeCopied = ref(false);
+
+async function copyOrderCode() {
+  const code = props.order?.orderCode;
+  if (!code) return;
+
+  let success = false;
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(code);
+      success = true;
+    } catch {
+      success = false;
+    }
+  }
+
+  if (!success) {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = code;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '-9999px';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      success = document.execCommand('copy');
+      document.body.removeChild(textarea);
+    } catch (err) {
+      console.error('Fallback copy failed:', err);
+    }
+  }
+
+  if (success) {
+    isOrderCodeCopied.value = true;
+    setTimeout(() => {
+      isOrderCodeCopied.value = false;
+    }, 2000);
     snackbar.value = {
       show: true,
-      text: `Đã sao chép mã đơn ${props.order.orderCode}`,
+      text: `Đã sao chép mã đơn ${code}`,
       color: 'success',
+    };
+  } else {
+    snackbar.value = {
+      show: true,
+      text: `Không thể sao chép mã đơn. Mã đơn: ${code}`,
+      color: 'warning',
     };
   }
 }
