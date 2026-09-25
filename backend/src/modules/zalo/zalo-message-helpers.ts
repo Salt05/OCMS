@@ -157,19 +157,45 @@ export function isContactCardContent(msgType: string | undefined, content: any):
   }
 
   if (parsed && typeof parsed === 'object') {
-    if (parsed.action === 'recommened.link' || parsed.action === 'recommended.link') {
+    // 1. Explicitly disqualify web link previews, birthday/friendship profile cards, calls, bankcards
+    if (
+      parsed.action === 'recommened.link' ||
+      parsed.action === 'recommended.link' ||
+      parsed.action === 'show.profile' ||
+      parsed.action === 'msginfo.actionlist' ||
+      parsed.action === 'zinstant.bankcard' ||
+      (typeof parsed.action === 'string' && (parsed.action.includes('bankcard') || parsed.action.includes('call'))) ||
+      parsed.action === 'recommened.calltime' ||
+      parsed.action === 'recommened.misscall'
+    ) {
       return false;
     }
-    if (parsed.action === 'recommened.calltime' || parsed.action?.includes('call')) {
-      return false;
-    }
+
+    // 2. Action indicating contact share
     if (parsed.action === 'recommened.user' || parsed.action === 'recommended.user') {
       return true;
     }
-    if (parsed.qrCodeUrl || (parsed.phone && (parsed.contactUid || parsed.caption))) {
+
+    // 3. Check inner description JSON (standard Zalo contact card structure: description: "{\"phone\":\"...\",\"qrCodeUrl\":\"...\"}")
+    let descObj: any = null;
+    if (typeof parsed.description === 'string' && parsed.description.trim().startsWith('{')) {
+      try {
+        descObj = JSON.parse(parsed.description);
+      } catch {}
+    } else if (typeof parsed.description === 'object' && parsed.description !== null) {
+      descObj = parsed.description;
+    }
+
+    if (descObj?.phone || descObj?.qrCodeUrl || descObj?.gUid || descObj?.uid) {
       return true;
     }
-    if (typeof parsed.description === 'string' && parsed.description.includes('phone')) {
+
+    // 4. Must have phone number and contact-specific attributes (not generic web links)
+    if (parsed.qrCodeUrl && (parsed.phone || parsed.contactUid || parsed.caption || parsed.name || (parsed.title && !parsed.title.startsWith('http')))) {
+      return true;
+    }
+
+    if (parsed.phone && (parsed.contactUid || (parsed.title && !parsed.title.startsWith('http')))) {
       return true;
     }
   }

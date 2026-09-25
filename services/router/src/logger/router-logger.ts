@@ -18,7 +18,7 @@ export interface LogEntry {
 
 class RouterLogger {
   private inMemoryLogs: LogEntry[] = [];
-  private readonly MAX_LOGS = 1000;
+  private readonly MAX_LOGS = 5000;
   private readonly REDIS_KEY = 'router:logs:recent';
   private seeded = false;
 
@@ -74,7 +74,7 @@ class RouterLogger {
     if (this.seeded) return;
     try {
       if (redisConnection && redisConnection.status === 'ready') {
-        const rawLogs = await redisConnection.lrange(this.REDIS_KEY, 0, 200);
+        const rawLogs = await redisConnection.lrange(this.REDIS_KEY, 0, 2000);
         if (rawLogs && rawLogs.length > 0) {
           const parsed: LogEntry[] = [];
           for (const item of rawLogs) {

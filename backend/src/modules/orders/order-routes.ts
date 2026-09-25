@@ -578,6 +578,7 @@ export async function orderRoutes(app: FastifyInstance) {
       paymentMethod?: string;
       notes?: string;
       paidAt?: string;
+      syncActivityToOdoo?: boolean;
     };
 
     const amount = Number(body.amount);
@@ -658,6 +659,30 @@ export async function orderRoutes(app: FastifyInstance) {
       }
     }
 
+    // Nếu người dùng chọn đồng bộ ghi chú thu tiền vào Hoạt động Odoo
+    let updatedActivitySummary: string | null = order.activitySummary;
+    if (body.syncActivityToOdoo && body.notes?.trim() && order.odooOrderId) {
+      const actNote = body.notes.trim();
+      try {
+        await routerClient.manageActivity({
+          odoo_order_id: order.odooOrderId,
+          action: 'update',
+          summary: actNote,
+        });
+        const actUpdate = await prisma.orderHistory.update({
+          where: { id: order.id },
+          data: {
+            activitySummary: actNote,
+            updatedAt: new Date(),
+          },
+        });
+        updatedActivitySummary = actUpdate.activitySummary;
+        logger.info(`[order-payments] Đã cập nhật hoạt động Odoo cho đơn #${order.orderCode} theo ghi chú: "${actNote}"`);
+      } catch (err: any) {
+        logger.warn(`[order-payments] Lỗi cập nhật hoạt động Odoo: ${err.message}`);
+      }
+    }
+
     logger.info(`[order-payments] Đã ghi nhận thanh toán ${amount.toLocaleString('vi-VN')} đ (${body.paymentMethod || 'CASH'}) cho đơn ${order.orderCode} bởi user ${user.email}`);
 
     return {
@@ -666,6 +691,7 @@ export async function orderRoutes(app: FastifyInstance) {
       payment,
       paidAmount: newPaidAmount,
       remainingAmount: Math.max(0, updatedOrder.amountTotal - newPaidAmount),
+      activitySummary: updatedActivitySummary,
     };
   });
 

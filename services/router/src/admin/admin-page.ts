@@ -1686,6 +1686,10 @@ export function getAdminHtml(): string {
                   <option value="OCMS">OCMS</option>
                   <option value="REDIS">REDIS</option>
                 </select>
+                <label style="display:inline-flex; align-items:center; gap:7px; margin-left:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-main); user-select:none; background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25); padding:6px 12px; border-radius:8px; transition:all 0.2s;" title="Hiển thị toàn bộ tất cả log chi tiết biến động hệ thống OCMS, Odoo, Redis, Router">
+                  <input type="checkbox" id="log-filter-detailed" onchange="loadLogsTable(0)" style="cursor:pointer; width:16px; height:16px; accent-color:var(--primary);">
+                  <span>🔍 Log chi tiết (Toàn bộ biến động)</span>
+                </label>
               </div>
               <div id="logs-pagination-info" style="font-size:12px; color:var(--text-muted);">
                 Đang tải...
@@ -2743,16 +2747,19 @@ export function getAdminHtml(): string {
       const search = document.getElementById('log-search-input')?.value || '';
       const level = document.getElementById('log-filter-level')?.value || 'ALL';
       const service = document.getElementById('log-filter-service')?.value || 'ALL';
+      const isDetailed = !!document.getElementById('log-filter-detailed')?.checked;
+      const limit = isDetailed ? 5000 : 50;
 
       try {
-        const res = await fetch(\`/api/v1/logs?search=\${encodeURIComponent(search)}&level=\${level}&service=\${service}&offset=\${offset}&limit=50\`);
+        const res = await fetch(\`/api/v1/logs?search=\${encodeURIComponent(search)}&level=\${level}&service=\${service}&offset=\${offset}&limit=\${limit}\`);
         const json = await res.json();
         if (!json.success) return;
 
         state.logs = json.logs;
         const total = json.total;
 
-        document.getElementById('logs-pagination-info').innerText = \`Hiển thị \${json.logs.length} / \${total} logs\`;
+        const modeBadge = isDetailed ? '<span style="margin-left:8px; padding:2px 8px; border-radius:12px; background:rgba(99,102,241,0.18); color:var(--primary); font-weight:700;">⚡ Chế độ: Toàn bộ log chi tiết</span>' : '';
+        document.getElementById('logs-pagination-info').innerHTML = \`Hiển thị \${json.logs.length} / \${total} logs \${modeBadge}\`;
 
         if (json.logs.length === 0) {
           tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted);">Không có dòng log nào khớp với tiêu chí.</td></tr>';
@@ -2761,16 +2768,30 @@ export function getAdminHtml(): string {
 
         let html = '';
         for (const l of json.logs) {
-          const timeStr = new Date(l.timestamp).toLocaleTimeString('vi-VN');
+          const timeObj = new Date(l.timestamp);
+          const timeStr = isDetailed 
+            ? (timeObj.toLocaleDateString('vi-VN') + ' ' + timeObj.toLocaleTimeString('vi-VN') + '.' + String(timeObj.getMilliseconds()).padStart(3, '0'))
+            : timeObj.toLocaleTimeString('vi-VN');
           const levelColor = l.level === 'SUCCESS' ? 'var(--success)' : (l.level === 'ERROR' ? 'var(--danger)' : (l.level === 'WARN' ? 'var(--warning)' : 'var(--primary)'));
+          const hasDetails = l.details && Object.keys(l.details).length > 0;
+          const detailsJson = hasDetails ? JSON.stringify(l.details, null, 2) : '';
+
           html += \`
-            <tr>
-              <td><span class="code-tag">\${timeStr}</span></td>
+            <tr style="\${isDetailed ? 'border-bottom: 1px solid rgba(255,255,255,0.06);' : ''}">
+              <td style="white-space:nowrap;"><span class="code-tag">\${timeStr}</span></td>
               <td><strong style="color:\${levelColor};">\${l.level}</strong></td>
               <td><span class="code-tag">\${l.service}</span></td>
-              <td>\${l.queue ? \`<span class="code-tag">\${l.queue}</span>\` : '--'}</td>
-              <td>\${l.order_id ? \`<strong>\${l.order_id}</strong>\` : (l.event || '--')}</td>
-              <td style="font-family:'JetBrains Mono',monospace; font-size:11px;">\${l.message}</td>
+              <td>\${l.queue ? \`<span class="code-tag" style="color:var(--primary);">\${l.queue}</span>\` : '<span style="color:var(--text-dim);">--</span>'}</td>
+              <td>\${l.order_id ? \`<strong>\${l.order_id}</strong>\` : (l.event ? \`<code style="color:var(--accent);">\${l.event}</code>\` : '<span style="color:var(--text-dim);">--</span>')}</td>
+              <td style="font-family:'JetBrains Mono',monospace; font-size:11px;">
+                <div>\${l.message}</div>
+                \${isDetailed && hasDetails ? \`
+                  <details style="margin-top:6px; background:rgba(0,0,0,0.25); padding:6px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
+                    <summary style="cursor:pointer; color:var(--text-muted); font-size:10px; outline:none;">🔍 Dữ liệu chi tiết (Payload / Context)</summary>
+                    <pre style="margin-top:4px; margin-bottom:0; font-size:10px; color:#a5b4fc; max-height:180px; overflow:auto; white-space:pre-wrap;">\${detailsJson}</pre>
+                  </details>
+                \` : ''}
+              </td>
             </tr>
           \`;
         }

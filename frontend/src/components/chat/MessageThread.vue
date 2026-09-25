@@ -3480,12 +3480,16 @@ function getContactCardData(msg: Message | any): ContactCardData | null {
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
 
-  // Disqualify web link shares, grab links, or calls
+  // Disqualify web link shares, grab links, calls, profile events (birthday/new friend greetings), bank cards
   if (
     parsed.action === 'recommened.link' ||
     parsed.action === 'recommended.link' ||
+    parsed.action === 'show.profile' ||
+    parsed.action === 'msginfo.actionlist' ||
+    parsed.action === 'zinstant.bankcard' ||
     parsed.action?.includes('call') ||
-    parsed.action === 'recommened.calltime'
+    parsed.action === 'recommened.calltime' ||
+    parsed.action === 'recommened.misscall'
   ) {
     return null;
   }
@@ -3506,7 +3510,7 @@ function getContactCardData(msg: Message | any): ContactCardData | null {
   else if (descObj?.phoneNumber) phone = String(descObj.phoneNumber).trim();
   else if (parsed.phone) phone = String(parsed.phone).trim();
   else if (parsed.phoneNumber) phone = String(parsed.phoneNumber).trim();
-  else if (typeof parsed.description === 'string') {
+  else if (typeof parsed.description === 'string' && !parsed.description.includes('http')) {
     const m = parsed.description.match(/(0\d{9,10}|\+84\d{9,10})/);
     if (m) phone = m[1];
   }
@@ -3527,7 +3531,7 @@ function getContactCardData(msg: Message | any): ContactCardData | null {
 
   // 3. Avatar URL
   let avatarUrl = '';
-  if (parsed.thumb && !parsed.thumb.includes('ecard_newfriend')) {
+  if (parsed.thumb && !parsed.thumb.includes('ecard_newfriend') && !parsed.thumb.includes('ecardsn')) {
     avatarUrl = parsed.thumb;
   } else if (parsed.avatar || parsed.avatarUrl) {
     avatarUrl = parsed.avatar || parsed.avatarUrl;
@@ -3556,9 +3560,9 @@ function getContactCardData(msg: Message | any): ContactCardData | null {
   const isCard =
     parsed.action === 'recommened.user' ||
     parsed.action === 'recommended.user' ||
-    msg.contentType === 'contact_card' ||
-    Boolean(phone) ||
-    Boolean(qrCodeUrl && name);
+    Boolean(descObj?.phone || descObj?.qrCodeUrl) ||
+    Boolean(qrCodeUrl && (phone || name || contactUid)) ||
+    Boolean(phone && (contactUid || (name && !name.startsWith('http'))));
 
   if (!isCard) return null;
 
@@ -3719,9 +3723,9 @@ function parseDisplayContentHtml(content: string | null): string {
       if (p.action === 'zinstant.bankcard' || (typeof p.action === 'string' && p.action.includes('bankcard')) || isBankCardMessage({ content })) {
         return '💳 [Tài khoản ngân hàng]';
       }
-      if (p.qrCodeUrl || (p.phone && (p.contactUid || p.caption)) || isContactCardMessage({ content })) {
+      if (isContactCardMessage({ content })) {
         const d = getContactCardData({ content });
-        return `📇 [Danh thiếp] ${d?.caption || d?.phone || 'Liên hệ'}`;
+        return `📇 [Danh thiếp] ${d?.name || d?.phone || 'Liên hệ'}`;
       }
       if (p.title && p.title !== 'sendBubbleMessage' && p.href) text = `🔗 ${p.title}`;
       else if (p.title && p.title !== 'sendBubbleMessage') text = p.title;

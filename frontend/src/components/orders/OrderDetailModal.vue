@@ -813,7 +813,24 @@
             density="compact"
             placeholder="VD: Khách trả tiền mặt tại quầy, shipper nộp COD..."
             hide-details
+            class="mb-2"
           />
+
+          <!-- Checkbox cập nhật Hoạt động Odoo giống ghi chú thu tiền -->
+          <v-checkbox
+            v-model="paymentForm.syncActivityToOdoo"
+            density="compact"
+            color="amber-darken-3"
+            hide-details
+            class="mt-1"
+          >
+            <template #label>
+              <div class="d-flex align-center gap-1.5 text-caption">
+                <v-icon size="15" color="amber-darken-3">lucide-clipboard-list</v-icon>
+                <span class="font-weight-medium">Cập nhật hoạt động Odoo giống với ghi chú này</span>
+              </div>
+            </template>
+          </v-checkbox>
         </v-card-text>
         <v-card-actions class="px-4 py-3 bg-surface border-t d-flex justify-end gap-2">
           <v-btn variant="text" class="text-none" @click="showPaymentDialog = false">Hủy</v-btn>
@@ -969,6 +986,7 @@ const paymentForm = ref({
   amount: 0,
   paymentMethod: 'BANK_TRANSFER',
   notes: '',
+  syncActivityToOdoo: false,
 });
 
 const remainingAmount = computed(() => {
@@ -1052,6 +1070,7 @@ function openPaymentDialog() {
     amount: initialAmount,
     paymentMethod: 'BANK_TRANSFER',
     notes: '',
+    syncActivityToOdoo: false,
   };
   formattedPaymentAmount.value = initialAmount > 0 ? formatThousand(initialAmount) : '';
   showPaymentDialog.value = true;
@@ -1065,9 +1084,13 @@ async function submitPayment() {
       amount: paymentForm.value.amount,
       paymentMethod: paymentForm.value.paymentMethod,
       notes: paymentForm.value.notes,
+      syncActivityToOdoo: paymentForm.value.syncActivityToOdoo,
     });
     if (res.data?.success) {
       (props.order as any).paidAmount = res.data.paidAmount;
+      if (res.data.activitySummary !== undefined) {
+        props.order.activitySummary = res.data.activitySummary;
+      }
       if (!(props.order as any).payments) {
         (props.order as any).payments = [];
       }

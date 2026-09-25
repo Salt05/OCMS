@@ -1437,27 +1437,56 @@ function lastMessagePreview(conv: Conversation): string {
   if (msg.contentType === 'voice') return 'Tin nhắn thoại';
   if (msg.contentType === 'gif') return 'GIF';
   if (msg.contentType === 'bank_card') return '[Tài khoản ngân hàng]';
+  // Helper to parse contact card snippet
+  const parseContactSnippet = (p: any) => {
+    if (
+      p.action === 'recommened.link' ||
+      p.action === 'recommended.link' ||
+      p.action === 'show.profile' ||
+      p.action === 'msginfo.actionlist' ||
+      p.action === 'zinstant.bankcard' ||
+      (typeof p.action === 'string' && (p.action.includes('bankcard') || p.action.includes('call'))) ||
+      p.action === 'recommened.calltime' ||
+      p.action === 'recommened.misscall'
+    ) {
+      return null;
+    }
+
+    let name = (p.title && !p.title.startsWith('http') && !p.title.startsWith('{')) ? p.title : (p.name || '');
+    let phone = p.phone || '';
+    let hasCardSignal = p.action === 'recommened.user' || p.action === 'recommended.user';
+
+    if (typeof p.description === 'string' && p.description.trim().startsWith('{')) {
+      try {
+        const d = JSON.parse(p.description);
+        if (d.phone) phone = d.phone;
+        if (!name && d.name) name = d.name;
+        if (!name && d.caption && d.caption !== phone) name = d.caption;
+        if (d.phone || d.qrCodeUrl || d.gUid) hasCardSignal = true;
+      } catch {}
+    }
+
+    if (p.qrCodeUrl && (phone || name || p.contactUid)) hasCardSignal = true;
+    if (phone && (p.contactUid || (name && !name.startsWith('http')))) hasCardSignal = true;
+
+    if (!hasCardSignal && msg.contentType !== 'contact_card') return null;
+
+    if (name && phone) return `[Danh thiếp] ${name} - ${phone}`;
+    if (name) return `[Danh thiếp] ${name}`;
+    if (phone) return `[Danh thiếp] ${phone}`;
+    return '[Danh thiếp] Liên hệ';
+  };
+
   if (msg.contentType === 'contact_card') {
     if (msg.content?.startsWith('{')) {
       try {
         const p = JSON.parse(msg.content);
-        let name = (p.title && !p.title.startsWith('http') && !p.title.startsWith('{')) ? p.title : (p.name || p.caption || '');
-        let phone = p.phone || '';
-        if (typeof p.description === 'string' && p.description.trim().startsWith('{')) {
-          try {
-            const d = JSON.parse(p.description);
-            if (d.phone) phone = d.phone;
-            if (!name && d.name) name = d.name;
-            if (!name && d.caption && d.caption !== phone) name = d.caption;
-          } catch {}
-        }
-        if (name && phone) return `[Danh thiếp] ${name} - ${phone}`;
-        if (name) return `[Danh thiếp] ${name}`;
-        if (phone) return `[Danh thiếp] ${phone}`;
-        return '[Danh thiếp] Liên hệ';
+        const snippet = parseContactSnippet(p);
+        if (snippet) return snippet;
       } catch {}
+    } else {
+      return '[Danh thiếp]';
     }
-    return '[Danh thiếp]';
   }
 
   if (msg.content?.startsWith('{')) {
@@ -1479,9 +1508,9 @@ function lastMessagePreview(conv: Conversation): string {
       }
 
       // Danh thiếp Zalo / Contact Card
-      if (p.qrCodeUrl || (p.phone && (p.contactUid || p.caption))) {
-        const title = p.caption || p.name || p.phone || 'Liên hệ';
-        return `[Danh thiếp] ${title}`;
+      const contactSnippet = parseContactSnippet(p);
+      if (contactSnippet) {
+        return contactSnippet;
       }
 
       // Lịch hẹn / Reminder
