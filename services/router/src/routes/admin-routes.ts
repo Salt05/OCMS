@@ -60,6 +60,17 @@ export async function adminRoutes(app: FastifyInstance) {
       });
     }
 
+    // Ghi log thay đổi cấu hình định tuyến
+    const rules = routingRegistry.getRules();
+    const eventName = rules.events[event_id]?.name || event_id;
+    const targetName = rules.events[event_id]?.targets?.find((t: any) => t.id === target_id)?.name || target_id;
+    routerLogger.add({
+      level: 'WARN',
+      service: 'ROUTER',
+      event: 'config.route_toggle',
+      message: `[Cấu hình] Bảng Định Tuyến: Đã ${enabled ? '✅ BẬT' : '🔴 TẮT'} đích [${targetName}] cho sự kiện [${eventName}]`,
+    });
+
     return reply.send({
       success: true,
       message: `Đã ${enabled ? 'BẬT' : 'TẮT'} đích ${target_id} cho sự kiện ${event_id}`,
@@ -255,6 +266,15 @@ export async function adminRoutes(app: FastifyInstance) {
       });
     }
 
+    // Ghi log chuyển đổi môi trường Odoo
+    const isProd = target.toLowerCase().includes('prod');
+    routerLogger.add({
+      level: 'WARN',
+      service: 'ROUTER',
+      event: 'config.odoo_switch',
+      message: `[Cấu hình] Chuyển đổi Odoo ERP: Đang trỏ sang ${isProd ? '🟢 PRODUCTION' : '🧪 TEST'} → [${result.system?.name || target}] (${result.system?.url || ''})`,
+    });
+
     return reply.send({
       success: true,
       message: `Đã chuyển đổi đích đến Odoo thành công: ${result.system?.name || target}`,
@@ -283,6 +303,14 @@ export async function adminRoutes(app: FastifyInstance) {
       });
     }
 
+    // Ghi log cập nhật cấu hình máy chủ
+    routerLogger.add({
+      level: 'WARN',
+      service: 'ROUTER',
+      event: 'config.system_upsert',
+      message: `[Cấu hình] Cập nhật Máy Chủ: Đã lưu cấu hình hệ thống [${system.name}] (ID: ${system.id}, URL: ${system.url})`,
+    });
+
     return reply.send({
       success: true,
       message: `Đã lưu hệ thống [${system.name}] vào danh bạ thành công`,
@@ -303,6 +331,14 @@ export async function adminRoutes(app: FastifyInstance) {
         error: `Không thể xóa hệ thống ${systemId} (hệ thống lõi hoặc không tồn tại)`,
       });
     }
+
+    // Ghi log xóa hệ thống
+    routerLogger.add({
+      level: 'WARN',
+      service: 'ROUTER',
+      event: 'config.system_delete',
+      message: `[Cấu hình] Xóa Máy Chủ: Đã xóa hệ thống [${systemId}] khỏi danh bạ cấu hình`,
+    });
 
     return reply.send({
       success: true,
