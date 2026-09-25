@@ -6,6 +6,7 @@ import { healthRoutes } from './routes/health-routes.js';
 import { adminRoutes } from './routes/admin-routes.js';
 import { mutationRoutes } from './routes/mutation-routes.js';
 import { workerManager } from './workers/worker-manager.js';
+import { routerLogger } from './logger/router-logger.js';
 
 async function bootstrap() {
   const app = Fastify({
@@ -43,6 +44,16 @@ async function bootstrap() {
 
     // Khởi động các Workers bất đồng bộ (Odoo Worker & Zalo Worker)
     await workerManager.init();
+
+    // Khôi phục logs từ Redis sau khi khởi động (để không mất log sau container restart)
+    setTimeout(async () => {
+      try {
+        await routerLogger.initFromRedis();
+        app.log.info(`[RouterLogger] Đã khôi phục logs từ Redis thành công`);
+      } catch (e) {
+        app.log.warn(`[RouterLogger] Không thể khôi phục logs từ Redis`);
+      }
+    }, 2000);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
