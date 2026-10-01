@@ -41,7 +41,11 @@
           </v-avatar>
           <div class="overflow-hidden d-flex flex-column justify-center mr-2">
             <div class="d-flex align-center gap-1 mb-0.5">
-              <span class="text-subtitle-1 font-weight-bold text-truncate" style="font-size: 15px !important; line-height: 1.2;">
+              <span
+                class="text-subtitle-1 font-weight-bold text-truncate"
+                style="font-size: 15px !important; line-height: 1.2;"
+                :title="isBulkMode ? '' : (getContactDisplayName(conversation) + (conversation?.contact?.zaloName && conversation?.contact?.fullName && conversation.contact.zaloName !== conversation.contact.fullName ? ` (Zalo: ${conversation.contact.zaloName})` : ''))"
+              >
                 {{ isBulkMode ? `Gửi tin nhắn nhanh ${bulkRecipientsCount || 0} người` : getContactDisplayName(conversation) }}
               </span>
               <v-chip v-if="isBulkMode" size="x-small" color="primary" variant="flat" class="font-weight-bold ml-1" style="height: 18px; font-size: 10px;">
@@ -673,7 +677,7 @@
 
               <!-- File/PDF/Document -->
               <div
-                v-else-if="getFileInfo(msg)"
+                v-else-if="getFileInfo(msg) && !isLinkMessage(msg)"
                 class="file-card"
                 :class="{ 'file-card-clickable': !!getFileInfo(msg)!.href }"
                 @click="getFileInfo(msg)!.href && downloadFile(getFileInfo(msg)!.href, getFileInfo(msg)!.name)"
@@ -725,6 +729,17 @@
                   @click="openMessageImage(msg)"
                 />
               </div>
+              <!-- Web link -->
+              <a
+                v-else-if="isLinkMessage(msg)"
+                :href="getLinkUrl(msg)!"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="message-link"
+                @click.stop
+              >
+                {{ getLinkUrl(msg) }}
+              </a>
               <!-- Reminder/Calendar -->
               <div v-else-if="isReminderMessage(msg)" class="reminder-card">
                 <div class="d-flex align-center mb-1">
@@ -2050,13 +2065,13 @@ function getContactDisplayName(conv?: Conversation | null): string {
   const isInvalid = (name?: string | null) =>
     !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
 
-  if (!isInvalid(zaloName)) {
-    return zaloName!;
-  }
   if (!isInvalid(fullName)) {
     return fullName!;
   }
-  return zaloName || fullName || 'Khách hàng';
+  if (!isInvalid(zaloName)) {
+    return zaloName!;
+  }
+  return fullName || zaloName || 'Khách hàng';
 }
 
 function isContextStart(msg: Message): boolean {
@@ -2598,6 +2613,55 @@ function isImageUrlPath(url: string): boolean {
   if (!url) return false;
   const clean = url.split('?')[0].toLowerCase();
   return /\.(jpe?g|png|webp|gif|svg|bmp|ico)$/i.test(clean);
+}
+
+function isLinkPreviewMessage(msg: Message): boolean {
+  const parsed = getParsedContent(msg);
+  if (!parsed || typeof parsed.href !== 'string' || !parsed.title) return false;
+  return !isImageUrlPath(parsed.href) && !isVideoMessage(msg);
+}
+
+function normalizeLinkTitle(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (/^https?:\/\//i.test(text)) return text;
+  const encodedUrl = text.match(/^(https?)__(.+?)(_)?$/i);
+  if (!encodedUrl) return null;
+  return `${encodedUrl[1].toLowerCase()}://${encodedUrl[2]}${encodedUrl[3] ? '/' : ''}`;
+}
+
+function getLinkUrl(msg: Message): string | null {
+  const parsed = getParsedContent(msg);
+  const attachments = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
+  const fileInfo = (msg as any).fileInfo;
+  const titleCandidates = [
+    parsed?.title,
+    fileInfo?.name,
+    fileInfo?.fileName,
+    fileInfo?.title,
+    ...attachments.flatMap((item: any) => [item?.name, item?.fileName, item?.title]),
+  ];
+  const titleUrl = titleCandidates.map(normalizeLinkTitle).find(Boolean);
+  if (titleUrl) return titleUrl;
+
+  const candidate = parsed?.href || parsed?.url || (!msg.content?.startsWith('{') ? msg.content?.trim() : '');
+  return typeof candidate === 'string' && /^https?:\/\//i.test(candidate) ? candidate : null;
+}
+
+function isLinkMessage(msg: Message): boolean {
+  const parsed = getParsedContent(msg);
+  const attachments = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
+  const fileInfo = (msg as any).fileInfo;
+  const hasUrlTitle = Boolean([
+    parsed?.title,
+    fileInfo?.name,
+    fileInfo?.fileName,
+    fileInfo?.title,
+    ...attachments.flatMap((item: any) => [item?.name, item?.fileName, item?.title]),
+  ].some((value) => normalizeLinkTitle(value)));
+  const url = getLinkUrl(msg);
+  const isWebUrl = Boolean(url && !isImageUrlPath(url) && !/\.(pdf|docx?|xlsx?|zip|rar)(\?|$)/i.test(url));
+  return Boolean(url && (isLinkPreviewMessage(msg) || hasUrlTitle || !msg.content?.startsWith('{') || (msg.contentType === 'file' && isWebUrl)));
 }
 
 function getQuickMessageAttachments(msg: any): QuickAttachmentItem[] {
@@ -3196,6 +3260,7 @@ async function downloadFile(url: string, filename: string) {
 /** Extract image URL from JSON content */
 function getImageUrl(msg: Message): string | null {
   if (isVideoMessage(msg) || isContactCardMessage(msg)) return null;
+  if (isLinkPreviewMessage(msg)) return null;
 
   // 1. Check attachments array (used by bulk mode & custom attachments)
   if (Array.isArray((msg as any).attachments) && (msg as any).attachments.length > 0) {
@@ -4502,6 +4567,19 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   overflow-wrap: break-word;
   white-space: pre-wrap;
   display: block;
+}
+
+.message-link {
+  color: #0068ff;
+  font-size: 14px;
+  line-height: 1.45;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+}
+
+.message-link:hover {
+  color: #004bb5;
 }
 
 /* ── Inbound Message Bubble (Other members / Contact) ── */

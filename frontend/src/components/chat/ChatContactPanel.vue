@@ -122,11 +122,11 @@
                 class="mb-2"
               />
 
-              <!-- Tên khách hàng (Odoo) -->
+              <!-- Tên khách hàng (Hiển thị OCMS) -->
               <v-text-field
                 v-model="form.fullName"
-                label="Tên khách hàng (Odoo)"
-                placeholder="Tên chính thức..."
+                label="Tên khách hàng"
+                placeholder="Tên hiển thị OCMS / Tên chính thức..."
                 density="compact"
                 variant="outlined"
                 prepend-inner-icon="lucide-user"

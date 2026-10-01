@@ -457,8 +457,8 @@
     </div>
 
     <!-- 3. Zalo Conversation List -->
-    <div class="zalo-conv-items-scroll flex-grow-1 overflow-y-auto pa-0">
-      <v-progress-linear v-if="loading" indeterminate color="primary" />
+    <div class="zalo-conv-items-scroll flex-grow-1 overflow-y-auto pa-0" @scroll="onScroll">
+      <v-progress-linear v-if="loading && !loadingMore" indeterminate color="primary" />
 
       <!-- ZONE TAB VIEW: GROUPED BY ZONE (ACCORDION) -->
       <template v-if="activeTab === 'zone'">
@@ -578,6 +578,7 @@
                     <span
                       class="zalo-conv-title text-truncate"
                       :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
+                      :title="getConversationTooltip(conv)"
                     >
                       {{ getConversationTitle(conv) }}
                     </span>
@@ -702,6 +703,7 @@
                 <span
                   class="zalo-conv-title text-truncate"
                   :class="{ 'font-weight-bold': conv.unreadCount > 0 || conv.id === selectedId }"
+                  :title="getConversationTooltip(conv)"
                 >
                   {{ getConversationTitle(conv) }}
                 </span>
@@ -798,6 +800,11 @@
           Chưa có cuộc trò chuyện nào
         </div>
       </div>
+
+      <!-- Loading More Indicator -->
+      <div v-if="loadingMore" class="d-flex justify-center py-3">
+        <v-progress-circular indeterminate size="24" width="2" color="primary"></v-progress-circular>
+      </div>
     </div>
 
     <!-- Tag Group Create / Edit Dialog -->
@@ -870,6 +877,8 @@ const props = defineProps<{
   conversations: Conversation[];
   selectedId: string | null;
   loading: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
   search: string;
 }>();
 
@@ -878,7 +887,17 @@ const emit = defineEmits<{
   'update:search': [value: string];
   'filter-account': [accountId: string | null];
   'toggle-pin': [payload: { conversationId: string; pinned: boolean }];
+  'load-more': [];
 }>();
+
+function onScroll(e: Event) {
+  const target = e.target as HTMLElement;
+  if (!target) return;
+  const isBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 50;
+  if (isBottom && props.hasMore && !props.loadingMore && !props.loading) {
+    emit('load-more');
+  }
+}
 
 const contextMenuVisible = ref(false);
 const contextMenuTarget = ref<[number, number]>([0, 0]);
@@ -1267,13 +1286,22 @@ function getConversationTitle(conv: Conversation): string {
   const isInvalid = (name?: string | null) =>
     !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
 
-  if (!isInvalid(zaloName)) {
-    return zaloName!;
-  }
   if (!isInvalid(fullName)) {
     return fullName!;
   }
-  return zaloName || fullName || 'Khách hàng';
+  if (!isInvalid(zaloName)) {
+    return zaloName!;
+  }
+  return fullName || zaloName || 'Khách hàng';
+}
+
+function getConversationTooltip(conv: Conversation): string {
+  const title = getConversationTitle(conv);
+  const zaloName = conv.contact?.zaloName?.trim();
+  if (zaloName && conv.contact?.fullName && zaloName !== conv.contact.fullName) {
+    return `${title} (Zalo: ${zaloName})`;
+  }
+  return title;
 }
 
 function getContactTags(conv: Conversation): any[] {
