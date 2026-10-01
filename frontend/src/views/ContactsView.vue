@@ -152,23 +152,39 @@
               <span v-else class="text-caption text-medium-emphasis">—</span>
             </td>
 
-            <!-- Full name -->
+            <!-- Full name / Tên gợi nhớ -->
             <td class="text-left" :style="isMobile ? (isSelectMode ? 'width: 34%;' : 'width: 38%;') : ''">
-              <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="getContactDisplayName(item)">
+              <div v-if="isMobile" class="font-weight-medium text-caption text-truncate" :title="getContactTooltip(item)">
                 <div>
                   <span v-if="item.salutation" class="text-primary font-weight-bold mr-1">[{{ item.salutation }}]</span>
                   {{ formatCustomerName(getContactDisplayName(item)) }}
                 </div>
-                <div v-if="item.zaloAccount || item.conversations?.[0]?.zaloAccount" class="text-caption text-primary d-flex align-center mt-0.5" style="font-size: 11px !important;">
+                <div v-if="item.zaloName && item.zaloName !== getContactDisplayName(item)" class="text-caption text-medium-emphasis d-flex align-center mt-0.5" style="font-size: 10.5px !important;">
+                  <span class="text-truncate">Zalo: {{ item.zaloName }}</span>
+                </div>
+                <div v-else-if="item.zaloAccount || item.conversations?.[0]?.zaloAccount" class="text-caption text-primary d-flex align-center mt-0.5" style="font-size: 11px !important;">
                   <v-icon size="11" class="mr-0.5">lucide-message-circle</v-icon>
                   {{ (item.zaloAccount || item.conversations?.[0]?.zaloAccount)?.displayName || 'Zalo' }}
                 </div>
               </div>
-              <div v-else class="d-flex align-center gap-1.5 flex-nowrap" :title="getContactDisplayName(item)">
-                <span class="font-weight-bold text-caption text-high-emphasis">{{ getContactDisplayName(item) }}</span>
-                <span v-if="item.phone || item.zone || item.address" class="text-caption text-medium-emphasis ml-1 font-weight-regular">
-                  ({{ [item.phone, item.zone || item.address].filter(Boolean).join(' • ') }})
-                </span>
+              <div v-else class="d-flex flex-column py-0.5" :title="getContactTooltip(item)">
+                <div class="d-flex align-center gap-1.5 flex-nowrap">
+                  <span v-if="item.salutation" class="text-primary font-weight-bold text-caption">[{{ item.salutation }}]</span>
+                  <span class="font-weight-bold text-caption text-high-emphasis">{{ getContactDisplayName(item) }}</span>
+                  <span v-if="item.phone || item.zone || item.address" class="text-caption text-medium-emphasis ml-1 font-weight-regular">
+                    ({{ [item.phone, item.zone || item.address].filter(Boolean).join(' • ') }})
+                  </span>
+                </div>
+                <div class="d-flex align-center gap-2 mt-0.5 flex-wrap">
+                  <span v-if="(item as any)?.metadata?.odooName && (item as any).metadata.odooName !== getContactDisplayName(item)" class="text-caption text-medium-emphasis d-flex align-center" style="font-size: 11px !important;" :title="`Tên Odoo: ${(item as any).metadata.odooName}`">
+                    <v-icon size="11" class="mr-0.5 text-primary">lucide-building</v-icon>
+                    Odoo: {{ (item as any).metadata.odooName }}
+                  </span>
+                  <span v-if="item.zaloName && item.zaloName !== getContactDisplayName(item)" class="text-caption text-medium-emphasis d-flex align-center" style="font-size: 11px !important;" :title="`Tên liên lạc Zalo: ${item.zaloName}`">
+                    <v-icon size="11" class="mr-0.5 text-info">lucide-message-circle</v-icon>
+                    Zalo: {{ item.zaloName }}
+                  </span>
+                </div>
               </div>
             </td>
 
@@ -346,13 +362,15 @@ function getContactDisplayName(item?: Partial<Contact> | null): string {
   if (!item) return '—';
   const zaloName = item.zaloName?.trim();
   const fullName = item.fullName?.trim();
+  const odooName = (item as any)?.metadata?.odooName?.trim();
 
   const isInvalid = (name?: string | null) =>
     !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
 
   if (!isInvalid(fullName)) return fullName!;
+  if (!isInvalid(odooName)) return odooName!;
   if (!isInvalid(zaloName)) return zaloName!;
-  return fullName || zaloName || '—';
+  return fullName || odooName || zaloName || '—';
 }
 
 function formatCustomerName(name?: string | null): string {
@@ -362,6 +380,16 @@ function formatCustomerName(name?: string | null): string {
     return trimmed.slice(0, 12) + '...';
   }
   return trimmed;
+}
+
+function getContactTooltip(item?: Partial<Contact> | null): string {
+  if (!item) return '';
+  const lines: string[] = [];
+  if (item.fullName) lines.push(`Tên gợi nhớ: ${item.fullName}`);
+  const odooName = (item as any)?.metadata?.odooName;
+  if (odooName) lines.push(`Tên Odoo: ${odooName}`);
+  if (item.zaloName) lines.push(`Tên liên lạc: ${item.zaloName}`);
+  return lines.length > 0 ? lines.join(' • ') : (getContactDisplayName(item) || '');
 }
 
 function startPress(item: Contact) {

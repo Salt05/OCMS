@@ -25,6 +25,7 @@ export interface Contact {
   salesperson?: string | null;
   notes: string | null;
   tags: string[];
+  metadata?: Record<string, any> | null;
   assignedUserId?: string | null;
   assignedUser?: { id?: string; fullName: string; email?: string } | null;
   zaloAccount?: { id: string; displayName: string | null; avatarUrl?: string | null; phone?: string | null } | null;

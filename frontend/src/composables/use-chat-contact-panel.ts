@@ -32,6 +32,7 @@ export function useChatContactPanel(
   const form = reactive({
     isCompany: false,
     fullName: '',
+    odooName: '',
     salutation: '',
     zaloName: '',
     customerId: '',
@@ -54,9 +55,10 @@ export function useChatContactPanel(
     const isInvalid = (name?: string | null) =>
       !name || name === 'Khách hàng' || name === 'Khách hàng Zalo' || name === 'Unknown';
     form.isCompany = false;
-    form.fullName = !isInvalid(c.fullName) ? (c.fullName ?? '') : (c.zaloName || '');
+    form.fullName = !isInvalid(c.fullName) ? (c.fullName ?? '') : '';
+    form.odooName = (c as any)?.metadata?.odooName || (c as any)?.customer?.customerProfile?.name || '';
     form.salutation = c.salutation ?? '';
-    form.zaloName = c.zaloName || (!isInvalid(c.fullName) ? (c.fullName ?? '') : '');
+    form.zaloName = c.zaloName || '';
     form.customerId = c.customerId ?? '';
     form.contactType = c.contactType ?? 'other';
     form.phone = c.phone ?? '';
@@ -85,6 +87,9 @@ export function useChatContactPanel(
       contactAppointments.value = appRes.data.appointments ?? [];
       if (contactRes?.data?.customer) {
         customerStats.value = contactRes.data.customer;
+        if (contactRes.data.customer.customerProfile?.name && !form.odooName) {
+          form.odooName = contactRes.data.customer.customerProfile.name;
+        }
       }
     } catch (err) {
       console.error('fetchContactExtras error:', err);
@@ -129,6 +134,11 @@ export function useChatContactPanel(
     saveSuccess.value = false;
     saveError.value = false;
 
+    const currentContact = getContact();
+    const existingMetadata = ((currentContact as any)?.metadata && typeof (currentContact as any).metadata === 'object')
+      ? (currentContact as any).metadata
+      : {};
+
     const result = await updateContact(contactId, {
       fullName: form.fullName || null,
       salutation: form.salutation || null,
@@ -148,6 +158,10 @@ export function useChatContactPanel(
         : null,
       tags: form.tags,
       notes: form.notes || null,
+      metadata: {
+        ...existingMetadata,
+        odooName: form.odooName || null,
+      },
     });
 
     saving.value = false;
@@ -174,7 +188,12 @@ export function useChatContactPanel(
   function applyOdooCustomer(c: any): boolean {
     if (!c) return false;
     form.customerId = String(c.id);
-    if (c.name) form.fullName = c.name;
+    if (c.name) {
+      form.odooName = c.name;
+    }
+    if (!form.fullName && c.name) {
+      form.fullName = c.name;
+    }
     if (c.phone) {
       form.phone = c.phone;
     } else if (c.mobile) {

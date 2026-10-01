@@ -285,19 +285,41 @@
                   />
                 </v-col>
 
-                <!-- Tên khách hàng (Customer Name odoo - Hidden in bulk mode) -->
+                <!-- Tên gợi nhớ (Hidden in bulk mode) -->
                 <v-col v-if="!isBulk" cols="12" sm="6">
                   <v-text-field
                     v-model="form.fullName"
-                    label="Tên khách hàng"
-                    placeholder="Tên chính thức Odoo / Họ tên..."
+                    label="Tên gợi nhớ"
+                    placeholder="Tên gợi nhớ trên OCMS (ví dụ: Chị Vân)..."
                     density="compact"
                     variant="outlined"
-                    prepend-inner-icon="lucide-user"
+                    prepend-inner-icon="lucide-bookmark"
                     :rules="[required]"
                     hide-details="auto"
                     class="mb-2"
                   />
+                </v-col>
+
+                <!-- Tên Odoo (Hidden in bulk mode) -->
+                <v-col v-if="!isBulk" cols="12" sm="6">
+                  <v-text-field
+                    :model-value="(contact as any)?.metadata?.odooName || (contact as any)?.customer?.customerProfile?.name || 'Chưa liên kết đối tác Odoo'"
+                    label="Tên Odoo"
+                    placeholder="Chưa liên kết đối tác Odoo"
+                    readonly
+                    density="compact"
+                    variant="outlined"
+                    prepend-inner-icon="lucide-building"
+                    hide-details="auto"
+                    class="mb-2"
+                    :class="{ 'opacity-75': !((contact as any)?.metadata?.odooName || (contact as any)?.customer?.customerProfile?.name) }"
+                  >
+                    <template v-if="form.customerId" #append-inner>
+                      <v-chip size="x-small" color="primary" variant="flat" class="font-weight-bold">
+                        #{{ form.customerId }}
+                      </v-chip>
+                    </template>
+                  </v-text-field>
                 </v-col>
 
                 <!-- Cách gọi khách hàng (Xưng hô) -->

@@ -1289,19 +1289,26 @@ function getConversationTitle(conv: Conversation): string {
   if (!isInvalid(fullName)) {
     return fullName!;
   }
+  const odooName = (conv.contact as any)?.metadata?.odooName?.trim();
+  if (!isInvalid(odooName)) {
+    return odooName!;
+  }
   if (!isInvalid(zaloName)) {
     return zaloName!;
   }
-  return fullName || zaloName || 'Khách hàng';
+  return fullName || odooName || zaloName || 'Khách hàng';
 }
 
 function getConversationTooltip(conv: Conversation): string {
   const title = getConversationTitle(conv);
+  const parts: string[] = [];
+  const odooName = (conv.contact as any)?.metadata?.odooName?.trim();
   const zaloName = conv.contact?.zaloName?.trim();
-  if (zaloName && conv.contact?.fullName && zaloName !== conv.contact.fullName) {
-    return `${title} (Zalo: ${zaloName})`;
-  }
-  return title;
+
+  if (odooName && odooName !== title) parts.push(`Odoo: ${odooName}`);
+  if (zaloName && zaloName !== title) parts.push(`Zalo: ${zaloName}`);
+
+  return parts.length > 0 ? `${title} (${parts.join(' • ')})` : title;
 }
 
 function getContactTags(conv: Conversation): any[] {

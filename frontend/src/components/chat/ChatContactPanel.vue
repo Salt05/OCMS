@@ -13,7 +13,7 @@
           <div class="overflow-hidden">
             <div class="d-flex align-center gap-1.5 flex-wrap">
               <span class="text-subtitle-1 font-weight-bold text-truncate" style="color: rgb(var(--v-theme-on-surface)); line-height: 1.2;">
-                {{ (form.fullName && form.fullName !== 'Khách hàng') ? form.fullName : (form.zaloName || conversation?.contact?.zaloName || conversation?.contact?.fullName || 'Chưa đặt tên') }}
+                {{ (form.fullName && form.fullName !== 'Khách hàng') ? form.fullName : (form.odooName || form.zaloName || conversation?.contact?.zaloName || 'Chưa đặt tên') }}
               </span>
               <v-chip v-if="form.customerId" size="x-small" color="primary" variant="flat" class="font-weight-bold">
                 #{{ form.customerId }}
@@ -122,14 +122,46 @@
                 class="mb-2"
               />
 
-              <!-- Tên khách hàng (Hiển thị OCMS) -->
+              <!-- 1. Tên gợi nhớ -->
               <v-text-field
                 v-model="form.fullName"
-                label="Tên khách hàng"
-                placeholder="Tên hiển thị OCMS / Tên chính thức..."
+                label="Tên gợi nhớ"
+                placeholder="Nhập tên gọi riêng trên OCMS (ví dụ: Chị Vân)..."
                 density="compact"
                 variant="outlined"
-                prepend-inner-icon="lucide-user"
+                prepend-inner-icon="lucide-bookmark"
+                hide-details="auto"
+                class="mb-2"
+              />
+
+              <!-- 2. Tên Odoo -->
+              <v-text-field
+                :model-value="form.odooName || 'Chưa liên kết đối tác Odoo'"
+                label="Tên Odoo"
+                placeholder="Chưa liên kết đối tác Odoo"
+                readonly
+                density="compact"
+                variant="outlined"
+                prepend-inner-icon="lucide-building"
+                hide-details="auto"
+                class="mb-2"
+                :class="{ 'opacity-75': !form.odooName }"
+              >
+                <template v-if="form.customerId" #append-inner>
+                  <v-chip size="x-small" color="primary" variant="flat" class="font-weight-bold">
+                    #{{ form.customerId }}
+                  </v-chip>
+                </template>
+              </v-text-field>
+
+              <!-- 3. Tên liên lạc -->
+              <v-text-field
+                :model-value="form.zaloName || contact?.zaloName || conversation?.contact?.zaloName || 'Khách hàng Zalo'"
+                label="Tên liên lạc"
+                readonly
+                density="compact"
+                variant="outlined"
+                prepend-inner-icon="lucide-message-circle"
                 hide-details="auto"
                 class="mb-2"
               />
@@ -146,18 +178,6 @@
                 hide-details="auto"
                 class="mb-2"
                 clearable
-              />
-
-              <!-- Tên liên lạc (Zalo) -->
-              <v-text-field
-                :model-value="form.zaloName || contact?.zaloName || conversation?.contact?.zaloName || 'Khách hàng Zalo'"
-                label="Tên liên lạc (Zalo)"
-                readonly
-                density="compact"
-                variant="outlined"
-                prepend-inner-icon="lucide-message-circle"
-                hide-details="auto"
-                class="mb-2"
               />
 
               <!-- Số điện thoại -->
@@ -294,7 +314,7 @@
                       density="compact"
                       class="action-icon-btn"
                       title="Hủy liên kết Odoo"
-                      @click.stop="form.customerId = ''; matchedOdooCustomers = []"
+                      @click.stop="form.customerId = ''; form.odooName = ''; matchedOdooCustomers = []"
                     >
                       <v-icon size="15">lucide-unlink</v-icon>
                     </v-btn>

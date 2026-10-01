@@ -2068,10 +2068,14 @@ function getContactDisplayName(conv?: Conversation | null): string {
   if (!isInvalid(fullName)) {
     return fullName!;
   }
+  const odooName = (conv.contact as any)?.metadata?.odooName?.trim();
+  if (!isInvalid(odooName)) {
+    return odooName!;
+  }
   if (!isInvalid(zaloName)) {
     return zaloName!;
   }
-  return fullName || zaloName || 'Khách hàng';
+  return fullName || odooName || zaloName || 'Khách hàng';
 }
 
 function isContextStart(msg: Message): boolean {
