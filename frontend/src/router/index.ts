@@ -73,6 +73,24 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/inventory',
+    name: 'Inventory',
+    component: () => import('@/views/inventory/InventoryDashboardView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/inventory/history',
+    name: 'InventoryHistory',
+    component: () => import('@/views/inventory/InventoryHistoryView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/inventory/purchase',
+    name: 'PurchaseOrders',
+    component: () => import('@/views/inventory/PurchaseOrdersView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/reports',
     name: 'Reports',
     component: () => import('@/views/ReportsView.vue'),

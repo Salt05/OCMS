@@ -169,6 +169,52 @@ export class RouterClient {
   }
 
   /**
+   * Điều phối tạo phiếu nhập hàng (Purchase Order) qua Router Gateway
+   */
+  async createPurchaseOrder(payload: {
+    partner_id: number;
+    partner_ref?: string;
+    picking_type_id?: number;
+    date_order?: string;
+    date_planned?: string;
+    note?: string;
+    order_line: Array<{
+      product_id: number;
+      product_qty: number;
+      price_unit: number;
+    }>;
+  }): Promise<{
+    success: boolean;
+    odooPurchaseId?: number;
+    target?: string;
+    target_name?: string;
+    error?: string;
+  }> {
+    const url = `${this.getRouterBaseUrl()}/api/v1/router/odoo/create-purchase-order`;
+
+    try {
+      logger.info(`[RouterClient] 🚀 Gửi lệnh TẠO PHIẾU NHẬP sang Universal Router Gateway...`);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(40000),
+        body: JSON.stringify(payload),
+      });
+
+      const json = (await res.json()) as any;
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Router trả về lỗi khi tạo phiếu nhập');
+      }
+
+      logger.info(`[RouterClient] ✨ Đã tạo phiếu nhập thành công qua Router: PO #${json.odooPurchaseId} trên [${json.target_name}]`);
+      return json;
+    } catch (err: any) {
+      logger.error(`[RouterClient] Lỗi tạo phiếu nhập qua Router: ${err.message}`);
+      throw err;
+    }
+  }
+
+  /**
    * Điều phối hủy đơn hàng qua Router
    */
   async cancelOrder(payload: { order_code?: string; odoo_order_id?: number; reason?: string }): Promise<{

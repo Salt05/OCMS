@@ -16,9 +16,34 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { directusService } from '../directus/directus-service.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
+import { routerClient } from '../../shared/services/router-client.js';
 import { logger } from '../../shared/utils/logger.js';
+import { orderDomainService } from '../orders/order-service.js';
 
 const DEFAULT_ORG_ID = process.env.DEFAULT_ORG_ID || '';
+
+export function findMissingPurchaseOrderIds(
+  localOdooIds: Array<number | null | undefined>,
+  remoteOdooIds: Array<number | null | undefined>
+): number[] {
+  const localSet = new Set<number>();
+  for (const id of localOdooIds) {
+    const normalized = Number(id);
+    if (Number.isFinite(normalized)) {
+      localSet.add(normalized);
+    }
+  }
+
+  const remoteSet = new Set<number>();
+  for (const id of remoteOdooIds) {
+    const normalized = Number(id);
+    if (Number.isFinite(normalized)) {
+      remoteSet.add(normalized);
+    }
+  }
+
+  return [...localSet].filter((id) => !remoteSet.has(id));
+}
 
 function normalizePhoneNumber(raw?: string | null): string[] {
   if (!raw) return [];
@@ -127,6 +152,7 @@ class OdooSyncService {
         ],
         context: { lang: 'vi_VN' },
         order: 'write_date asc',
+        limit: 5000,
       });
 
       if (!partners || partners.length === 0) {
@@ -299,6 +325,7 @@ class OdooSyncService {
           'order_line', 'activity_summary', 'picking_ids', 'write_date', 'write_uid',
         ],
         order: 'write_date asc',
+        limit: 5000,
       });
 
       if (!orders || orders.length === 0) {
@@ -407,6 +434,8 @@ class OdooSyncService {
           where: { orgId_odooOrderId: { orgId: oid, odooOrderId: order.id } },
           select: {
             id: true,
+            state: true,
+            deliveryStatus: true,
             paidAmount: true,
             payments: { select: { amount: true } },
           },
@@ -450,6 +479,58 @@ class OdooSyncService {
         if (order.order_line && order.order_line.length > 0) {
           const linesToSave = order.order_line.map((lid: number) => lineMap.get(lid)).filter(Boolean);
           await this.saveOrderLines(orderHistory.id, linesToSave);
+
+          // Lấy lại các lines vừa lưu từ DB để có đầy đủ SKU
+          const savedLines = await prisma.orderLineHistory.findMany({
+            where: { orderHistoryId: orderHistory.id },
+            select: { id: true, productSku: true, quantity: true, qtyDelivered: true, reservedQuantity: true }
+          });
+          const formattedLines = savedLines.map(l => ({
+            id: l.id,
+            sku: l.productSku || '',
+            quantity: l.quantity,
+            qtyDelivered: l.qtyDelivered,
+            reservedQuantity: l.reservedQuantity,
+          }));
+
+          const oldState = existing ? existing.state : null;
+          const newState = fullOrderData.state;
+          const isReservedState = (state: string | null) => state === 'draft' || state === 'sent' || state === 'sale' || state === 'done';
+          const needsReservationReconciliation = formattedLines.some(line => line.reservedQuantity < line.quantity);
+          
+          // 1. Reserve Stock (ngay khi tạo đơn báo giá, sale, hoặc done)
+          if (isReservedState(newState) && (!isReservedState(oldState) || needsReservationReconciliation)) {
+            await orderDomainService.handleOrderConfirmed(oid, orderHistory.id, fullOrderData.orderCode, formattedLines).catch(e => {
+              logger.error(`[Sync] reserveStock error: ${e.message}`);
+              throw e;
+            });
+          }
+
+          // 2. Release Stock (if moved to 'cancel' or other unreserved states)
+          if (!isReservedState(newState) && isReservedState(oldState)) {
+            await orderDomainService.handleOrderCancelled(oid, orderHistory.id, formattedLines).catch(e => {
+              logger.error(`[Sync] releaseReservedStock error: ${e.message}`);
+              throw e;
+            });
+          }
+
+          // 3. Ship Stock (dựa vào qty_delivered hoặc deliveryStatus)
+          // Odoo có thể ship nhiều lần, nên gọi shipStock với qtyDelivered, InventoryService đã dùng idempotency theo SKU.
+          // Tuy nhiên, qtyDelivered có thể update từng đợt. 
+          // Cách an toàn nhất là gọi shipStock với những line có qtyDelivered > 0
+          const shippedLines = formattedLines.filter(l => l.qtyDelivered > 0).map(l => ({
+            ...l,
+            quantity: l.qtyDelivered // Ship theo số lượng thực tế đã giao
+          }));
+          if (shippedLines.length > 0) {
+            // InventoryService.shipStock sẽ idempotent dựa trên idempotencyKey và orderLine.shippedQuantity
+            // Do ta dùng OrderLineHistory, InventoryService có thể cần đổi để check qty đã ship. 
+            // Tạm thời gọi shipStock.
+            await orderDomainService.handleOrderShipped(oid, orderHistory.id, fullOrderData.orderCode, shippedLines).catch(e => {
+              logger.error(`[Sync] shipStock error: ${e.message}`);
+              throw e;
+            });
+          }
         }
 
         if (order.write_date && order.write_date > latestWriteDate) {
@@ -821,9 +902,10 @@ class OdooSyncService {
       try {
         const domain: any[] = [['sale_ok', '=', true], ['active', '=', true]];
         odooProducts = await odooService.executeKw<any[]>('product.product', 'search_read', [domain], {
-          fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'uom_id', 'active', 'write_date'],
+          fields: ['id', 'name', 'display_name', 'default_code', 'list_price', 'sales_count', 'uom_id', 'active', 'write_date'],
           context: { lang: 'vi_VN' },
           order: 'write_date asc',
+          limit: 5000,
         }) || [];
       } catch (e: any) {
         logger.warn('[sync] Odoo products fetch failed, continuing with Directus products:', e.message);
@@ -866,6 +948,7 @@ class OdooSyncService {
             listPrice: listPrice > 0 ? listPrice : wholesalePrice,
             wholesalePrice,
             retailPrice,
+            soldQuantity: Number(dp.sold_quantity ?? op.sales_count ?? 0),
             uomName,
             weight: dp.weight || null,
             specification: dp.specification || null,
@@ -892,6 +975,7 @@ class OdooSyncService {
             listPrice,
             wholesalePrice: listPrice,
             retailPrice: 0,
+            soldQuantity: Number(op.sales_count || 0),
             uomName,
             weight: null,
             specification: null,
@@ -925,6 +1009,7 @@ class OdooSyncService {
           listPrice: listPrice > 0 ? listPrice : wholesalePrice,
           wholesalePrice,
           retailPrice,
+          soldQuantity: Number(dp.sold_quantity || 0),
           uomName: dp.uom_name || 'Gói',
           weight: dp.weight || null,
           specification: dp.specification || null,
@@ -972,6 +1057,7 @@ class OdooSyncService {
                 listPrice: item.listPrice,
                 wholesalePrice: item.wholesalePrice,
                 retailPrice: item.retailPrice,
+                soldQuantity: item.soldQuantity,
                 uomName: item.uomName || null,
                 weight: item.weight || null,
                 specification: item.specification || null,
@@ -997,6 +1083,7 @@ class OdooSyncService {
             Math.abs((existing.listPrice || 0) - (item.listPrice || 0)) > 0.01 ||
             Math.abs((existing.wholesalePrice || 0) - (item.wholesalePrice || 0)) > 0.01 ||
             Math.abs((existing.retailPrice || 0) - (item.retailPrice || 0)) > 0.01 ||
+            Math.abs((existing.soldQuantity || 0) - (item.soldQuantity || 0)) > 0.01 ||
             (existing.uomName || '').trim() !== (item.uomName || '').trim() ||
             (existing.weight || '').trim() !== (item.weight || '').trim() ||
             (existing.specification || '').trim() !== (item.specification || '').trim() ||
@@ -1018,6 +1105,7 @@ class OdooSyncService {
                 listPrice: item.listPrice,
                 wholesalePrice: item.wholesalePrice,
                 retailPrice: item.retailPrice,
+                soldQuantity: item.soldQuantity,
                 uomName: item.uomName || existing.uomName,
                 weight: item.weight || existing.weight,
                 specification: item.specification || existing.specification,
@@ -1031,6 +1119,13 @@ class OdooSyncService {
             });
             updatedCount++;
           }
+        }
+
+        if (item.sku) {
+          await prisma.inventoryItem.updateMany({
+            where: { orgId: oid, sku: item.sku },
+            data: { soldQuantity: item.soldQuantity },
+          });
         }
       }
 
@@ -1211,6 +1306,228 @@ class OdooSyncService {
       return {};
     } finally {
       this.isSyncing = false;
+    }
+  }
+
+  async syncPurchaseOrders(orgId?: string): Promise<{ total: number; newCount: number; updatedCount: number; deletedCount: number }> {
+    const oid = orgId || (await this.getOrgId());
+    const modelName = 'purchase.order';
+    logger.info(`[sync] Syncing purchase orders from Odoo for org ${oid}...`);
+
+    await this.updateSyncState(oid, modelName, { status: 'syncing', errorMessage: null });
+
+    const activeOdoo = await routerClient.getActiveOdooConfig();
+
+    try {
+      // 1. Fetch purchase orders from Odoo
+      const odooPOs = await odooService.executeKw<any[]>(
+        'purchase.order',
+        'search_read',
+        [[]],
+        {
+          fields: [
+            'id',
+            'name',
+            'partner_id',
+            'date_order',
+            'date_planned',
+            'amount_untaxed',
+            'amount_total',
+            'state',
+            'notes',
+            'activity_summary',
+            'order_line',
+            'picking_type_id',
+          ],
+          limit: 200,
+          order: 'id desc',
+        },
+        activeOdoo || undefined
+      );
+
+      const remoteOdooIds = (odooPOs || []).map((po) => Number(po?.id)).filter((id) => Number.isFinite(id));
+
+      const localSyncedPOs = await prisma.purchaseOrder.findMany({
+        where: {
+          orgId: oid,
+          odooPurchaseId: { not: null },
+        },
+        select: {
+          id: true,
+          odooPurchaseId: true,
+        },
+      });
+
+      const staleOdooIds = findMissingPurchaseOrderIds(
+        localSyncedPOs.map((po) => po.odooPurchaseId),
+        remoteOdooIds
+      );
+
+      let deletedCount = 0;
+      if (staleOdooIds.length > 0) {
+        await prisma.purchaseOrder.deleteMany({
+          where: {
+            orgId: oid,
+            odooPurchaseId: { in: staleOdooIds },
+          },
+        });
+        deletedCount = staleOdooIds.length;
+      }
+
+      if (!odooPOs || odooPOs.length === 0) {
+        logger.info(`[sync] No purchase orders found on Odoo. Deleted ${deletedCount} stale local purchase orders.`);
+        await this.updateSyncState(oid, modelName, { status: 'idle', recordCount: 0 });
+        return { total: 0, newCount: 0, updatedCount: 0, deletedCount };
+      }
+
+      // 2. Fetch all order lines in batch
+      const allLineIds: number[] = [];
+      odooPOs.forEach((po) => {
+        if (Array.isArray(po.order_line)) {
+          allLineIds.push(...po.order_line);
+        }
+      });
+
+      const lineMap = new Map<number, any>();
+      if (allLineIds.length > 0) {
+        const chunkSize = 200;
+        for (let i = 0; i < allLineIds.length; i += chunkSize) {
+          const chunk = allLineIds.slice(i, i + chunkSize);
+          const lines = await odooService.executeKw<any[]>(
+            'purchase.order.line',
+            'search_read',
+            [[['id', 'in', chunk]]],
+            {
+              fields: ['id', 'order_id', 'product_id', 'name', 'product_qty', 'price_unit', 'price_subtotal'],
+            },
+            activeOdoo || undefined
+          );
+          if (Array.isArray(lines)) {
+            lines.forEach((l) => lineMap.set(l.id, l));
+          }
+        }
+      }
+
+      let newCount = 0;
+      let updatedCount = 0;
+
+      // 3. Upsert into local database
+      for (const po of odooPOs) {
+        const vendorId = Array.isArray(po.partner_id) ? po.partner_id[0] : (Number(po.partner_id) || 0);
+        const vendorName = Array.isArray(po.partner_id) ? po.partner_id[1] : 'Nhà cung cấp';
+        const deliverTo = Array.isArray(po.picking_type_id) ? po.picking_type_id[1] : null;
+
+        const orderLinesData = (po.order_line || [])
+          .map((lineId: number) => {
+            const line = lineMap.get(lineId);
+            if (!line) return null;
+            const productId = Array.isArray(line.product_id) ? line.product_id[0] : (Number(line.product_id) || 0);
+            const rawName = Array.isArray(line.product_id) ? line.product_id[1] : (line.name || 'Sản phẩm');
+            return {
+              id: `po_line_${lineId}`, // Để làm idempotency nếu PO line chưa có UUID (sẽ bị bỏ qua khi Prisma create)
+              productId,
+              productName: line.name || rawName,
+              quantity: Number(line.product_qty) || 1,
+              priceUnit: Number(line.price_unit) || 0,
+              priceSubtotal: Number(line.price_subtotal) || 0,
+            };
+          })
+          .filter(Boolean);
+
+        const existing = await prisma.purchaseOrder.findFirst({
+          where: {
+            orgId: oid,
+            odooPurchaseId: po.id,
+          },
+        });
+
+        if (existing) {
+          // Update existing
+          await prisma.$transaction(async (tx) => {
+            await tx.purchaseOrderLine.deleteMany({
+              where: { purchaseOrderId: existing.id },
+            });
+            await tx.purchaseOrder.update({
+              where: { id: existing.id },
+              data: {
+                vendorId,
+                vendorName,
+                deliverTo: deliverTo || existing.deliverTo,
+                orderDeadline: po.date_order ? new Date(po.date_order) : existing.orderDeadline,
+                expectedDate: po.date_planned ? new Date(po.date_planned) : existing.expectedDate,
+                amountUntaxed: Number(po.amount_untaxed) || 0,
+                amountTotal: Number(po.amount_total) || 0,
+                state: po.state || existing.state,
+                purchaseCode: po.name || existing.purchaseCode,
+                activitySummary: typeof po.activity_summary === 'string' ? po.activity_summary : existing.activitySummary,
+                notes: typeof po.notes === 'string' ? po.notes : existing.notes,
+                lines: {
+                  create: orderLinesData.map(({ id, ...rest }: any) => rest), // prisma sẽ gen uuid cho id
+                },
+              },
+            });
+          });
+          
+          if (po.state === 'done') {
+            const { InventoryService } = await import('../inventory/inventory-service.js');
+            const inventoryService = new InventoryService();
+            await inventoryService.receivePurchaseStock(oid, existing.id, po.name || existing.purchaseCode, orderLinesData).catch(e => {
+              logger.error(`[Sync PO] receivePurchaseStock error: ${e.message}`);
+              throw e;
+            });
+          }
+          
+          updatedCount++;
+        } else {
+          // Create new PO
+          const newPo = await prisma.purchaseOrder.create({
+            data: {
+              orgId: oid,
+              vendorId,
+              vendorName,
+              deliverTo,
+              orderDeadline: po.date_order ? new Date(po.date_order) : null,
+              expectedDate: po.date_planned ? new Date(po.date_planned) : null,
+              amountUntaxed: Number(po.amount_untaxed) || 0,
+              amountTotal: Number(po.amount_total) || 0,
+              state: po.state || 'draft',
+              odooPurchaseId: po.id,
+              purchaseCode: po.name,
+              activitySummary: typeof po.activity_summary === 'string' ? po.activity_summary : null,
+              notes: typeof po.notes === 'string' ? po.notes : null,
+              lines: {
+                create: orderLinesData.map(({ id, ...rest }: any) => rest),
+              },
+            },
+          });
+          
+          if (po.state === 'done') {
+            const { InventoryService } = await import('../inventory/inventory-service.js');
+            const inventoryService = new InventoryService();
+            await inventoryService.receivePurchaseStock(oid, newPo.id, po.name, orderLinesData).catch(e => {
+              logger.error(`[Sync PO] receivePurchaseStock error: ${e.message}`);
+              throw e;
+            });
+          }
+          
+          newCount++;
+        }
+      }
+
+      await this.updateSyncState(oid, modelName, {
+        status: 'idle',
+        recordCount: odooPOs.length,
+      });
+
+      logger.info(`[sync] ${modelName}: Synced ${odooPOs.length} POs (${newCount} new, ${updatedCount} updated, ${deletedCount} deleted).`);
+      return { total: odooPOs.length, newCount, updatedCount, deletedCount };
+    } catch (err: any) {
+      await this.updateSyncState(oid, modelName, {
+        status: 'error',
+        errorMessage: err.message,
+      });
+      logger.error(`[sync] ${modelName} error:`, err.message);
+      throw err;
     }
   }
 

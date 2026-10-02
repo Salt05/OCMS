@@ -2,13 +2,14 @@
   <v-app class="zalo-app-wrapper" :class="{ 'is-dark-theme': isDark, 'is-light-theme': !isDark, 'is-mobile': isMobile }">
     <div class="zalo-main-layout d-flex" :class="{ 'flex-column': isMobile }">
       <!-- 1. DESKTOP: Left Vertical Navigation Rail (Zalo PC style, mdAndUp) -->
-      <aside v-if="!isMobile" class="zalo-nav-rail d-flex flex-column align-center justify-space-between py-3">
-        <!-- Top Section: Avatar & Primary Nav -->
-        <div class="d-flex flex-column align-center w-100">
+      <!-- 1. DESKTOP: Left Vertical Navigation Rail (Zalo PC style, mdAndUp) -->
+      <aside v-if="!isMobile" class="zalo-nav-rail d-flex flex-column align-center py-3">
+        <!-- Top Section: Avatar (Fixed at top) -->
+        <div class="zalo-nav-top flex-shrink-0 d-flex flex-column align-center w-100">
           <!-- Profile Avatar with Online Badge -->
           <v-menu location="end top" offset="12">
             <template #activator="{ props: menuProps }">
-              <div v-bind="menuProps" class="zalo-user-avatar-wrap mb-4 cursor-pointer" :title="authStore.user?.fullName || 'Tài khoản'">
+              <div v-bind="menuProps" class="zalo-user-avatar-wrap mb-3 cursor-pointer" :title="authStore.user?.fullName || 'Tài khoản'">
                 <v-avatar size="44" class="zalo-rail-avatar elevation-1" color="primary">
                   <v-img v-if="(authStore.user as any)?.avatarUrl" :src="(authStore.user as any).avatarUrl">
                     <template #error>
@@ -44,36 +45,75 @@
               </v-list>
             </v-card>
           </v-menu>
-
-          <!-- Nav Items -->
-          <nav class="zalo-nav-icons d-flex flex-column align-center gap-2 w-100">
-            <router-link
-              v-for="item in primaryMenuItems"
-              :key="item.path"
-              :to="item.path"
-              class="zalo-rail-btn d-flex align-center justify-center position-relative"
-              :class="{ 'is-active': isRouteActive(item.path) }"
-              :title="item.title"
-            >
-              <v-icon size="22">{{ item.icon }}</v-icon>
-              <!-- Unread Badge on Chat icon (Red) -->
-              <span v-if="item.path === '/chat' && unreadChatCount > 0" class="zalo-rail-badge">
-                {{ unreadChatCount > 99 ? '99+' : unreadChatCount }}
-              </span>
-              <!-- Pending Orders Badge on Orders icon (Amber/Red) -->
-              <span
-                v-if="item.path === '/orders' && pendingOrdersCount > 0"
-                class="zalo-rail-badge zalo-rail-badge-amber"
-                :class="{ 'badge-pulse-once': orderBadgePulsing }"
-              >
-                {{ pendingOrdersCount > 99 ? '99+' : pendingOrdersCount }}
-              </span>
-            </router-link>
-          </nav>
         </div>
 
-        <!-- Bottom Section: Tools, Theme, Settings -->
-        <div class="d-flex flex-column align-center gap-2 w-100">
+        <!-- Middle Scrollable Section: Nav Items wrapped in subtle translucent background -->
+        <div class="zalo-nav-scroll-wrapper position-relative d-flex flex-column align-center" :class="{ 'can-scroll-up': canScrollUp, 'can-scroll-down': canScrollDown }">
+          <!-- Top Scroll Indicator / Action -->
+          <button
+            v-show="canScrollUp"
+            type="button"
+            class="zalo-scroll-indicator zalo-scroll-indicator-top"
+            @click="scrollNav('up')"
+            title="Cuộn lên"
+          >
+            <v-icon size="14">lucide-chevron-up</v-icon>
+          </button>
+
+          <!-- Scroll Viewport (Scrollbar hidden) -->
+          <div
+            ref="navScrollRef"
+            class="zalo-nav-scroll-viewport w-100 d-flex flex-column align-center"
+            @scroll="handleNavScroll"
+          >
+            <nav class="zalo-nav-icons d-flex flex-column align-center gap-1.5 w-100">
+              <v-tooltip
+                v-for="item in primaryMenuItems"
+                :key="item.path"
+                location="end"
+                :text="item.title"
+                open-delay="150"
+              >
+                <template #activator="{ props: tooltipProps }">
+                  <router-link
+                    v-bind="tooltipProps"
+                    :to="item.path"
+                    class="zalo-rail-btn d-flex align-center justify-center position-relative"
+                    :class="{ 'is-active': isRouteActive(item.path) }"
+                  >
+                    <v-icon size="22">{{ item.icon }}</v-icon>
+                    <!-- Unread Badge on Chat icon (Red) -->
+                    <span v-if="item.path === '/chat' && unreadChatCount > 0" class="zalo-rail-badge">
+                      {{ unreadChatCount > 99 ? '99+' : unreadChatCount }}
+                    </span>
+                    <!-- Pending Orders Badge on Orders icon (Amber/Red) -->
+                    <span
+                      v-if="item.path === '/orders' && pendingOrdersCount > 0"
+                      class="zalo-rail-badge zalo-rail-badge-amber"
+                      :class="{ 'badge-pulse-once': orderBadgePulsing }"
+                    >
+                      {{ pendingOrdersCount > 99 ? '99+' : pendingOrdersCount }}
+                    </span>
+                  </router-link>
+                </template>
+              </v-tooltip>
+            </nav>
+          </div>
+
+          <!-- Bottom Scroll Indicator / Action -->
+          <button
+            v-show="canScrollDown"
+            type="button"
+            class="zalo-scroll-indicator zalo-scroll-indicator-bottom"
+            @click="scrollNav('down')"
+            title="Cuộn xuống"
+          >
+            <v-icon size="14">lucide-chevron-down</v-icon>
+          </button>
+        </div>
+
+        <!-- Bottom Section: Tools, Theme, Settings (Fixed at bottom) -->
+        <div class="zalo-nav-bottom flex-shrink-0 d-flex flex-column align-center gap-2 w-100 pt-2 mt-auto">
           <!-- Connection Status Popover -->
           <v-menu location="end bottom" offset="12">
             <template #activator="{ props: connProps }">
@@ -446,7 +486,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTheme, useDisplay } from 'vuetify';
 import { useAuthStore } from '@/stores/auth';
@@ -465,6 +505,30 @@ const router = useRouter();
 
 const isMobile = computed(() => display.smAndDown.value);
 const showMobileMoreDrawer = ref(false);
+
+const navScrollRef = ref<HTMLElement | null>(null);
+const canScrollUp = ref(false);
+const canScrollDown = ref(false);
+
+function checkScrollPosition() {
+  const el = navScrollRef.value;
+  if (!el) return;
+  canScrollUp.value = el.scrollTop > 4;
+  canScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 4;
+}
+
+function handleNavScroll() {
+  checkScrollPosition();
+}
+
+function scrollNav(direction: 'up' | 'down') {
+  const el = navScrollRef.value;
+  if (!el) return;
+  el.scrollBy({
+    top: direction === 'up' ? -120 : 120,
+    behavior: 'smooth',
+  });
+}
 
 const {
   unreadChatCount,
@@ -487,6 +551,25 @@ onMounted(() => {
   connectionStore.init();
   fetchAllBadges();
   setupSocketListeners();
+
+  nextTick(() => {
+    checkScrollPosition();
+    const activeEl = navScrollRef.value?.querySelector('.is-active');
+    if (activeEl) {
+      activeEl.scrollIntoView({ block: 'nearest' });
+    }
+  });
+  window.addEventListener('resize', checkScrollPosition);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('resize', checkScrollPosition);
+});
+
+watch(() => route.path, () => {
+  nextTick(() => {
+    checkScrollPosition();
+  });
 });
 
 const isFullWidthPage = computed(() => route.path === '/chat' || route.path.startsWith('/ai-assistant') || route.path.startsWith('/chatbot-test'));
@@ -518,6 +601,7 @@ const primaryMenuItems = computed(() => {
     { title: 'Tài khoản Zalo (Cloud)', icon: 'lucide-cloud', path: '/zalo-accounts' },
     { title: 'Đơn hàng & CRM', icon: 'lucide-shopping-bag', path: '/orders' },
     { title: 'Đối soát Thanh toán', icon: 'lucide-credit-card', path: '/payments' },
+    { title: 'Kho hàng (Inventory)', icon: 'lucide-boxes', path: '/inventory' },
     { title: 'Sản phẩm & Phân loại', icon: 'lucide-package', path: '/products' },
     { title: 'Ưu đãi & Chiết khấu', icon: 'lucide-percent', path: '/promotions' },
     { title: 'Báo cáo & Thống kê', icon: 'lucide-pie-chart', path: '/reports' },
@@ -592,6 +676,8 @@ function logout() {
   flex-shrink: 0;
   z-index: 100;
   transition: background-color 0.2s ease;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .is-light-theme .zalo-nav-rail {
@@ -602,6 +688,132 @@ function logout() {
 .is-dark-theme .zalo-nav-rail {
   background-color: #18191a;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.zalo-nav-top {
+  flex-shrink: 0;
+}
+
+/* Scrollable wrapper with subtle translucent light-white background */
+.zalo-nav-scroll-wrapper {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 58px;
+  position: relative;
+  border-radius: 18px;
+  padding: 4px 0;
+  overflow: hidden;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.is-light-theme .zalo-nav-scroll-wrapper {
+  background-color: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.is-dark-theme .zalo-nav-scroll-wrapper {
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+/* Scroll Viewport with hidden scrollbar */
+.zalo-nav-scroll-viewport {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+  scroll-behavior: smooth;
+  padding: 2px 0;
+}
+
+.zalo-nav-scroll-viewport::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+  width: 0;
+  height: 0;
+}
+
+/* Subtle gradient edge cues when content is scrollable */
+.zalo-nav-scroll-wrapper.can-scroll-up::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 18px;
+  background: linear-gradient(to bottom, rgba(0, 75, 195, 0.5), transparent);
+  pointer-events: none;
+  z-index: 4;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+}
+
+.is-dark-theme .zalo-nav-scroll-wrapper.can-scroll-up::before {
+  background: linear-gradient(to bottom, rgba(20, 20, 22, 0.75), transparent);
+}
+
+.zalo-nav-scroll-wrapper.can-scroll-down::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 18px;
+  background: linear-gradient(to top, rgba(0, 75, 195, 0.5), transparent);
+  pointer-events: none;
+  z-index: 4;
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 18px;
+}
+
+.is-dark-theme .zalo-nav-scroll-wrapper.can-scroll-down::after {
+  background: linear-gradient(to top, rgba(20, 20, 22, 0.75), transparent);
+}
+
+/* Scroll indicators (chevrons) */
+.zalo-scroll-indicator {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: 28px;
+  height: 14px;
+  border-radius: 7px;
+  border: none;
+  background-color: rgba(0, 0, 0, 0.3);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+  backdrop-filter: blur(4px);
+}
+
+.zalo-scroll-indicator:hover {
+  background-color: rgba(0, 0, 0, 0.6);
+  transform: translateX(-50%) scale(1.1);
+}
+
+.zalo-scroll-indicator-top {
+  top: 2px;
+}
+
+.zalo-scroll-indicator-bottom {
+  bottom: 2px;
+}
+
+/* Fixed Bottom Tools Section */
+.zalo-nav-bottom {
+  flex-shrink: 0;
+  width: 100%;
+  margin-top: auto;
+  padding-top: 8px;
 }
 
 .zalo-user-avatar-wrap {

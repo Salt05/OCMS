@@ -84,6 +84,76 @@ export async function mutationRoutes(app: FastifyInstance) {
   });
 
   /**
+   * POST /api/v1/router/odoo/create-purchase-order
+   * Router Gateway: Điều phối tạo phiếu nhập hàng (RFQ / PO) sang máy chủ Odoo đích (Test hoặc Prod)
+   */
+  app.post('/api/v1/router/odoo/create-purchase-order', async (request: FastifyRequest, reply: FastifyReply) => {
+    const activeOdoo = routingRegistry.getActiveOdooConfig();
+    const body = request.body as any;
+
+    app.log.info(
+      { partner_id: body?.partner_id, target: activeOdoo.id, odoo_url: activeOdoo.url },
+      `[Router Mutation Gateway] 📦 Điều phối TẠO PHIẾU NHẬP HÀNG tới: [${activeOdoo.name}]`
+    );
+
+    routerLogger.add({
+      level: 'INFO',
+      service: 'ROUTER',
+      event: 'purchase_order.creating',
+      message: `[Gateway] 📦 Điều phối TẠO PHIẾU NHẬP tới ${activeOdoo.name} (${activeOdoo.url})`,
+      details: { target: activeOdoo.id, partner_id: body?.partner_id, lines_count: body?.order_line?.length },
+    });
+
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/internal/odoo/create-purchase-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(35000),
+        body: JSON.stringify({
+          ...body,
+          odoo_target: {
+            url: activeOdoo.url,
+            db: activeOdoo.db,
+            user: activeOdoo.user,
+            apiKey: activeOdoo.apiKey,
+          },
+        }),
+      });
+
+      const json = (await res.json()) as any;
+      if (!res.ok || !json.success) {
+        return reply.status(res.status || 500).send({
+          success: false,
+          error: json.error || 'Lỗi khi tạo phiếu nhập trên Odoo',
+          target: activeOdoo.id,
+        });
+      }
+
+      routerLogger.add({
+        level: 'INFO',
+        service: 'ROUTER',
+        event: 'purchase_order.created',
+        message: `[Gateway] ✅ Tạo phiếu nhập thành công trên Odoo: PO #${json.odooPurchaseId}`,
+        details: { target: activeOdoo.id, odooPurchaseId: json.odooPurchaseId },
+      });
+
+      return reply.send({
+        success: true,
+        odooPurchaseId: json.odooPurchaseId,
+        target: activeOdoo.id,
+        target_name: activeOdoo.name,
+      });
+    } catch (err: any) {
+      app.log.error(err, `Lỗi Gateway điều phối tạo phiếu nhập: ${err.message}`);
+      return reply.status(500).send({
+        success: false,
+        error: `Router không thể kết nối tới máy chủ Odoo (${err.message})`,
+        target: activeOdoo.id,
+      });
+    }
+  });
+
+  /**
    * POST /api/v1/router/odoo/cancel-order
    * Router Gateway: Điều phối hủy đơn hàng trên máy chủ Odoo đích (Test hoặc Prod)
    */

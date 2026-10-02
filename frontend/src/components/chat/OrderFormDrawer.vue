@@ -607,7 +607,16 @@ function onUnitPriceInput(line: OrderLineItem, event: Event) {
 
 // Quantity controls
 function incrementQty(line: OrderLineItem) {
-  line.qty = (Number(line.qty) || 0) + 1;
+  let maxQty = line.product?.available_quantity;
+  let nextQty = (Number(line.qty) || 0) + 1;
+  if (maxQty !== undefined) {
+    if (maxQty <= 0) {
+      nextQty = 0;
+    } else if (nextQty > maxQty) {
+      nextQty = maxQty;
+    }
+  }
+  line.qty = nextQty;
 }
 
 function decrementQty(line: OrderLineItem) {
@@ -617,10 +626,19 @@ function decrementQty(line: OrderLineItem) {
 }
 
 function onQtyChange(line: OrderLineItem) {
+  let maxQty = line.product?.available_quantity;
   if (line.qty === null || line.qty === undefined || line.qty < 0 || isNaN(line.qty)) {
     line.qty = 0;
   } else {
-    line.qty = Math.floor(line.qty);
+    let q = Math.floor(line.qty);
+    if (maxQty !== undefined) {
+      if (maxQty <= 0) {
+        q = 0;
+      } else if (q > maxQty) {
+        q = maxQty;
+      }
+    }
+    line.qty = q;
   }
 }
 
@@ -634,10 +652,9 @@ function onProductFromPicker(product: OdooProduct, addQty: number = 1) {
   const quantityToAdd = typeof addQty === 'number' && addQty > 0 ? addQty : 1;
 
   if (existingLine) {
-    existingLine.qty += quantityToAdd;
     snackbar.value = {
       show: true,
-      text: `Đã tăng số lượng "${product.name || product.sku}" lên ${existingLine.qty}`,
+      text: `Sản phẩm "${product.name || product.sku}" đã có trong đơn (x${existingLine.qty})`,
       color: 'info',
     };
   } else {
@@ -989,6 +1006,7 @@ async function submitOrder() {
   try {
     const res = await api.post('/odoo/orders', payload);
     if (res.data?.success) {
+      await fetchProducts(true);
       snackbar.value = { show: true, text: `Tạo đơn thành công: ${res.data.orderCode}`, color: 'success' };
       emit('created', res.data);
       setTimeout(() => emit('close'), 1500);

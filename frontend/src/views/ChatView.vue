@@ -17,6 +17,9 @@
         @select="onSelectConversation"
         @filter-account="onFilterAccount"
         @toggle-pin="onTogglePin"
+        @load-more="loadMoreConversations"
+        :loading-more="loadingMoreConvs"
+        :has-more="hasMoreConvs"
       />
       <!-- Resize handle (Desktop only) -->
       <div v-if="!isMobile" class="resize-handle" @mousedown="startResize('left', $event)" />
@@ -374,9 +377,9 @@ const route = useRoute();
 
 const {
   conversations, selectedConvId, selectedConv, messages,
-  loadingConvs, loadingMsgs, loadingMoreMsgs, sendingMsg, hasMoreMessages,
+  loadingConvs, loadingMoreConvs, hasMoreConvs, loadingMsgs, loadingMoreMsgs, sendingMsg, hasMoreMessages,
   searchQuery, accountFilter,
-  fetchConversations, selectConversation, fetchMessages, sendMessage, retrySendMessage, sendAttachment, retrySendAttachment, removeOptimisticMessage,
+  fetchConversations, loadMoreConversations, selectConversation, fetchMessages, sendMessage, retrySendMessage, sendAttachment, retrySendAttachment, removeOptimisticMessage,
   sendReaction, undoMessage, getFriendStatus, sendFriendRequest, acceptFriendRequest, undoFriendRequest,
   loadMoreMessages,
   pauseAi, resumeAi, toggleAi,

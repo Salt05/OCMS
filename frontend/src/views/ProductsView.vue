@@ -338,178 +338,28 @@
     </v-card>
 
     <!-- ── Product Detail & Classification Modal ── -->
-    <v-dialog v-model="detailModalVisible" max-width="540" scrollable>
-      <v-card v-if="detailItem" class="rounded-xl overflow-hidden border elevation-8">
-        <!-- Detail Header -->
-        <v-card-title class="d-flex align-center justify-space-between pa-4 bg-surface border-b">
-          <div class="d-flex align-center gap-2 overflow-hidden">
-            <v-chip size="small" color="primary" variant="tonal" class="font-weight-bold flex-shrink-0">
-              {{ detailItem.sku || detailItem.default_code }}
-            </v-chip>
-            <span class="text-subtitle-1 font-weight-bold text-truncate">{{ detailItem.name }}</span>
-          </div>
-          <v-btn
-            icon
-            variant="text"
-            size="small"
-            class="rounded-lg flex-shrink-0"
-            @click="detailModalVisible = false"
-          >
-            <v-icon size="18">lucide-x</v-icon>
-          </v-btn>
-        </v-card-title>
-
-        <!-- Detail Body -->
-        <v-card-text class="pa-4" style="max-height: 560px;">
-          <!-- Top section: Image & Key info -->
-          <div class="d-flex gap-4 mb-4 flex-wrap">
-            <div class="detail-img-box rounded-xl border bg-surface flex-shrink-0 overflow-hidden">
-              <img
-                v-if="detailItem.imageUrl || detailItem.image_url"
-                :src="detailItem.imageUrl || detailItem.image_url"
-                :alt="detailItem.name"
-                class="w-100 h-100"
-                style="object-fit: cover;"
-                @error="() => { detailItem.imageUrl = null; detailItem.image_url = null; }"
-              />
-              <div v-else class="w-100 h-100 d-flex align-center justify-center text-medium-emphasis">
-                <v-icon size="40" class="opacity-50">lucide-image</v-icon>
-              </div>
-            </div>
-
-            <div class="flex-grow-1 d-flex flex-column justify-space-between py-1" style="min-width: 220px;">
-              <div>
-                <div class="text-h6 font-weight-bold text-high-emphasis mb-1">{{ detailItem.name }}</div>
-                <div class="d-flex align-center gap-2 flex-wrap text-caption text-medium-emphasis mb-2">
-                  <v-chip size="x-small" color="primary" variant="tonal">
-                    Odoo ID: {{ detailItem.odooId || detailItem.odoo_id || detailItem.id }}
-                  </v-chip>
-                  <v-chip v-if="detailItem.product_group_name" size="x-small" color="secondary" variant="tonal">
-                    {{ detailItem.product_group_name }}
-                  </v-chip>
-                  <v-chip v-if="detailItem.weight" size="x-small" variant="outlined">
-                    {{ detailItem.weight }}
-                  </v-chip>
-                </div>
-              </div>
-
-              <!-- Price highlights -->
-              <div class="pa-2.5 rounded-lg border detail-price-box">
-                <div class="text-caption font-weight-medium text-medium-emphasis">Giá sỉ / Giá bán:</div>
-                <div class="text-h6 font-weight-bold text-success">
-                  {{ formatVND(detailItem.listPrice || detailItem.wholesalePrice || detailItem.list_price || 0) }}
-                </div>
-                <div v-if="detailItem.retailPrice || detailItem.retail_price" class="text-caption text-medium-emphasis mt-0.5">
-                  Giá bán lẻ niêm yết: {{ formatVND(detailItem.retailPrice || detailItem.retail_price) }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- ── 2 EDITABLE FIELDS: NGÀNH HÀNG & THƯƠNG HIỆU ── -->
-          <!-- Ngành hàng (Category) -->
-          <div class="detail-item border rounded-lg pa-3 bg-surface shadow-xs mb-3.5">
-            <div class="text-subtitle-2 font-weight-bold text-primary mb-2">
-              Ngành hàng (Category)
-            </div>
-            <v-combobox
-              v-model="editForm.category"
-              :items="suggestedCategories"
-              placeholder="Chọn hoặc nhập ngành hàng..."
-              variant="outlined"
-              density="compact"
-              hide-details
-              clearable
-            />
-          </div>
-
-          <!-- Thương hiệu (Brand) -->
-          <div class="detail-item border rounded-lg pa-3 bg-surface shadow-xs mb-3.5">
-            <div class="text-subtitle-2 font-weight-bold text-success mb-2">
-              Thương hiệu (Brand)
-            </div>
-            <v-combobox
-              v-model="editForm.brand"
-              :items="suggestedBrands"
-              placeholder="Chọn hoặc nhập thương hiệu..."
-              variant="outlined"
-              density="compact"
-              hide-details
-              clearable
-            />
-          </div>
-
-          <!-- Rich Details from Directus -->
-          <div class="d-flex flex-column gap-3.5 text-body-2">
-            <!-- Specification -->
-            <div v-if="detailItem.specification" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-primary mb-1.5">
-                Quy cách đóng gói
-              </div>
-              <div class="text-high-emphasis">{{ detailItem.specification }}</div>
-            </div>
-
-            <!-- Ingredients -->
-            <div v-if="detailItem.ingredients" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-warning-darken-2 mb-1.5">
-                Thành phần
-              </div>
-              <div class="text-high-emphasis">{{ detailItem.ingredients }}</div>
-            </div>
-
-            <!-- Nutritional Info -->
-            <div v-if="detailItem.nutritional_info" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-success mb-1.5">
-                Thông tin dinh dưỡng
-              </div>
-              <div class="text-high-emphasis white-space-pre-line">{{ detailItem.nutritional_info }}</div>
-            </div>
-
-            <!-- Target -->
-            <div v-if="detailItem.target" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-info mb-1.5">
-                Đối tượng sử dụng
-              </div>
-              <div class="text-high-emphasis">{{ detailItem.target }}</div>
-            </div>
-
-            <!-- Preservation -->
-            <div v-if="detailItem.preservation" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-teal mb-1.5">
-                Bảo quản
-              </div>
-              <div class="text-high-emphasis">{{ detailItem.preservation }}</div>
-            </div>
-
-            <!-- Description -->
-            <div v-if="detailItem.description" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-purple mb-1.5">
-                Mô tả chi tiết
-              </div>
-              <div class="text-high-emphasis white-space-pre-line text-caption">{{ detailItem.description }}</div>
-            </div>
-          </div>
-        </v-card-text>
-
-        <!-- Detail Actions -->
-        <v-card-actions class="pa-3.5 border-t bg-surface-variant d-flex justify-space-between flex-shrink-0">
-          <v-btn variant="text" rounded="lg" @click="detailModalVisible = false">
-            Đóng
-          </v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            rounded="lg"
-            class="font-weight-bold px-5"
-            prepend-icon="lucide-save"
-            :loading="saving"
-            @click="saveSingleProduct"
-          >
-            Lưu phân loại
-          </v-btn>
+    <ProductDetailModal
+      v-model="detailModalVisible"
+      :product="detailItem"
+      show-inventory-history
+    >
+      <template #edit-fields>
+        <div class="detail-item border rounded-lg pa-3 bg-surface shadow-xs mb-3">
+          <div class="text-subtitle-2 font-weight-bold text-primary mb-2">Ngành hàng (Category)</div>
+          <v-combobox v-model="editForm.category" :items="suggestedCategories" placeholder="Chọn hoặc nhập ngành hàng..." variant="outlined" density="compact" hide-details clearable />
+        </div>
+        <div class="detail-item border rounded-lg pa-3 bg-surface shadow-xs mb-3">
+          <div class="text-subtitle-2 font-weight-bold text-success mb-2">Thương hiệu (Brand)</div>
+          <v-combobox v-model="editForm.brand" :items="suggestedBrands" placeholder="Chọn hoặc nhập thương hiệu..." variant="outlined" density="compact" hide-details clearable />
+        </div>
+      </template>
+      <template #actions>
+        <v-card-actions class="pa-3 border-t bg-surface-variant d-flex justify-space-between flex-shrink-0">
+          <v-btn variant="text" rounded="lg" @click="detailModalVisible = false">Đóng</v-btn>
+          <v-btn color="primary" variant="flat" rounded="lg" class="font-weight-bold px-5" prepend-icon="lucide-save" :loading="saving" @click="saveSingleProduct">Lưu phân loại</v-btn>
         </v-card-actions>
-      </v-card>
-    </v-dialog>
+      </template>
+    </ProductDetailModal>
 
     <!-- ── Bulk Edit Modal ──────────────────────────────────────────────────── -->
     <v-dialog v-model="bulkModalVisible" max-width="520" persistent>
@@ -605,11 +455,16 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useDisplay } from 'vuetify';
+import ProductDetailModal from '@/components/common/ProductDetailModal.vue';
 import { api } from '@/api';
+import { useInventoryStore } from '@/stores/inventory';
 
 // ── Mobile Responsive Setup ──────────────────────────────────────────────────
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
+
+// ── Inventory Store ───────────────────────────────────────────────────────────
+const inventoryStore = useInventoryStore();
 
 // ── State ────────────────────────────────────────────────────────────────────
 const loading = ref(false);
@@ -646,10 +501,14 @@ let startCoords = { x: 0, y: 0 };
 // Detail & Edit Modal
 const detailModalVisible = ref(false);
 const detailItem = ref<any>(null);
+const detailTab = ref<'info' | 'history'>('info');
 const editForm = reactive({
   category: '' as string | null,
   brand: '' as string | null,
 });
+
+// Inventory History tab state
+const currentDetailSku = ref('');
 
 // Bulk Edit Modal
 const bulkModalVisible = ref(false);
@@ -875,10 +734,18 @@ async function handleSyncProducts() {
 // ── Detail & Single Edit Handlers ────────────────────────────────────────────
 function openDetailModal(item: any) {
   detailItem.value = item;
+  detailTab.value = 'info';
   editForm.category = item.category || '';
   editForm.brand = item.brand || '';
   detailModalVisible.value = true;
+  // Load stock info in background
+  const sku = item.sku || item.default_code;
+  if (sku) {
+    currentDetailSku.value = sku;
+    inventoryStore.fetchStockBySku(sku);
+  }
 }
+
 
 async function saveSingleProduct() {
   if (!detailItem.value) return;
@@ -1162,5 +1029,47 @@ onMounted(() => {
 
 .white-space-pre-line {
   white-space: pre-line;
+}
+
+/* ── Inventory History Table ────────────────────────────────────────────────── */
+.history-table thead tr {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgb(var(--v-theme-surface));
+}
+
+.history-th {
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(var(--v-theme-on-surface), 0.6) !important;
+  padding: 10px 12px !important;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.history-th.sortable-col {
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.history-th.sortable-col:hover {
+  color: rgb(var(--v-theme-primary)) !important;
+  background-color: rgba(var(--v-theme-primary), 0.05);
+}
+
+.history-row {
+  transition: background-color 0.12s ease;
+}
+
+.history-row:hover {
+  background-color: rgba(var(--v-theme-primary), 0.04) !important;
+}
+
+.history-row td {
+  padding: 8px 12px !important;
+  vertical-align: middle;
 }
 </style>

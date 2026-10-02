@@ -54,6 +54,8 @@ import { productRoutes } from './modules/products/product-routes.js';
 import { paymentRoutes } from './modules/payments/payment-routes.js';
 import { odooSyncService } from './modules/sync/odoo-sync-service.js';
 import { internalRoutes } from './modules/internal/internal-routes.js';
+import { inventoryRoutes } from './modules/inventory/inventory-routes.js';
+import { purchaseRoutes } from './modules/inventory/purchase-routes.js';
 import cron from 'node-cron';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -204,6 +206,8 @@ async function bootstrap() {
   await app.register(chatbotRoutes, { prefix: '/api/v1/chatbot' });
   await app.register(chatbotTestRoutes);
   await app.register(internalRoutes);
+  await app.register(inventoryRoutes);
+  await app.register(purchaseRoutes);
 
   // Directus asset proxy endpoint (public for <img> tags)
   app.get('/api/v1/directus/assets/:fileId', async (request, reply) => {

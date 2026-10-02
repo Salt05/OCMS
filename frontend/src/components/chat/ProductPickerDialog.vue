@@ -268,6 +268,10 @@
                       <span class="product-price-val font-weight-bold">
                         {{ formatCurrency(prod.list_price || prod.wholesale_price || 0) }}
                       </span>
+                      <!-- Available Quantity Text -->
+                      <span class="text-caption text-medium-emphasis ml-1">
+                        (Có thể bán: {{ prod.available_quantity ?? 0 }})
+                      </span>
                       <v-chip
                         v-if="hasAdded(prod)"
                         size="x-small"
@@ -313,17 +317,19 @@
                       type="number"
                       :value="getQty(prod.id)"
                       min="1"
+                      :max="prod.available_quantity"
                       class="stepper-input text-center font-weight-bold text-high-emphasis"
                       aria-label="Số lượng sản phẩm"
-                      @input="onQtyInput(prod.id, $event)"
+                      @input="onQtyInput(prod.id, $event, prod.available_quantity)"
                       @click.stop
                     />
                     <button
                       type="button"
                       class="stepper-btn stepper-btn-plus"
+                      :disabled="prod.available_quantity !== undefined && getQty(prod.id) >= prod.available_quantity"
                       aria-label="Tăng số lượng"
                       title="Tăng 1"
-                      @click.stop="incrementQty(prod.id)"
+                      @click.stop="incrementQty(prod.id, prod.available_quantity)"
                     >
                       <v-icon size="12">lucide-plus</v-icon>
                     </button>
@@ -337,6 +343,7 @@
                     height="32"
                     class="select-btn rounded-lg font-weight-bold px-3.5 shadow-xs text-none"
                     prepend-icon="lucide-plus"
+                    :disabled="prod.available_quantity !== undefined && prod.available_quantity <= 0"
                     aria-label="Chọn sản phẩm"
                     @click.stop="selectProduct(prod)"
                   >
@@ -367,150 +374,21 @@
     </v-card>
 
     <!-- Nested Product Detail Modal -->
-    <v-dialog v-model="showDetailModal" max-width="580" scrollable>
-      <v-card v-if="detailProduct" class="rounded-xl overflow-hidden elevation-8 bg-surface">
-        <!-- Detail Header -->
-        <v-card-title class="pa-4 border-b bg-surface-variant d-flex align-center justify-space-between flex-shrink-0">
-          <div class="d-flex align-center gap-2 overflow-hidden mr-2">
-            <span class="sku-badge flex-shrink-0">{{ detailProduct.sku || detailProduct.default_code }}</span>
-            <span class="text-subtitle-1 font-weight-bold text-high-emphasis text-truncate" style="max-width: 380px;">
-              {{ detailProduct.name }}
-            </span>
-          </div>
-          <v-btn
-            icon
-            size="36"
-            variant="text"
-            rounded="lg"
-            aria-label="Đóng chi tiết"
-            @click="showDetailModal = false"
-          >
-            <v-icon size="18">lucide-x</v-icon>
-          </v-btn>
-        </v-card-title>
-
-        <!-- Detail Body -->
-        <v-card-text class="pa-4" style="max-height: 520px;">
-          <!-- Top section: Image & Key info -->
-          <div class="d-flex gap-4 mb-4 flex-wrap">
-            <div class="detail-img-box rounded-xl border bg-surface flex-shrink-0 overflow-hidden">
-              <img
-                v-if="detailProduct.image_url"
-                :src="detailProduct.image_url"
-                :alt="detailProduct.name"
-                class="w-100 h-100"
-                style="object-fit: cover;"
-                @error="() => { if (detailProduct) detailProduct.image_url = undefined; }"
-              />
-              <div v-else class="w-100 h-100 d-flex align-center justify-center text-medium-emphasis">
-                <v-icon size="40" class="opacity-50">lucide-image</v-icon>
-              </div>
-            </div>
-
-            <div class="flex-grow-1 d-flex flex-column justify-space-between py-1" style="min-width: 220px;">
-              <div>
-                <div class="text-h6 font-weight-bold text-high-emphasis mb-1">{{ detailProduct.name }}</div>
-                <div class="d-flex align-center gap-2 flex-wrap text-caption text-medium-emphasis mb-2">
-                  <v-chip size="x-small" color="primary" variant="tonal">Odoo ID: {{ detailProduct.odoo_id || detailProduct.id }}</v-chip>
-                  <v-chip size="x-small" :color="detailProduct.source === 'odoo' ? 'teal' : 'indigo'" variant="tonal">
-                    {{ detailProduct.source === 'odoo' ? 'Nguồn: Odoo ERP' : 'Nguồn: Directus' }}
-                  </v-chip>
-                  <v-chip v-if="detailProduct.product_group_name" size="x-small" color="secondary" variant="tonal">
-                    {{ detailProduct.product_group_name }}
-                  </v-chip>
-                  <v-chip v-if="detailProduct.weight" size="x-small" variant="outlined">{{ detailProduct.weight }}</v-chip>
-                </div>
-              </div>
-
-              <!-- Price highlights -->
-              <div class="pa-2.5 rounded-lg border detail-price-box">
-                <div class="text-caption font-weight-medium text-medium-emphasis">Giá sỉ / Giá bán:</div>
-                <div class="text-h6 font-weight-bold text-success">
-                  {{ formatCurrency(detailProduct.list_price || detailProduct.wholesale_price || 0) }}
-                </div>
-                <div v-if="detailProduct.retail_price" class="text-caption text-medium-emphasis mt-0.5">
-                  Giá bán lẻ niêm yết: {{ formatCurrency(detailProduct.retail_price) }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <v-divider class="my-3"></v-divider>
-
-          <!-- Rich Details (Ingredients, Nutrition, Target, Description) -->
-          <div class="d-flex flex-column gap-3.5 text-body-2">
-            <!-- Specification -->
-            <div v-if="detailProduct.specification" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-primary mb-1.5">
-                Quy cách đóng gói
-              </div>
-              <div class="text-high-emphasis">{{ detailProduct.specification }}</div>
-            </div>
-
-            <!-- Ingredients -->
-            <div v-if="detailProduct.ingredients" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-warning-darken-2 mb-1.5">
-                Thành phần
-              </div>
-              <div class="text-high-emphasis">{{ detailProduct.ingredients }}</div>
-            </div>
-
-            <!-- Nutritional Info -->
-            <div v-if="detailProduct.nutritional_info" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-success mb-1.5">
-                Thông tin dinh dưỡng
-              </div>
-              <div class="text-high-emphasis white-space-pre-line">{{ detailProduct.nutritional_info }}</div>
-            </div>
-
-            <!-- Target -->
-            <div v-if="detailProduct.target" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-info mb-1.5">
-                Đối tượng sử dụng
-              </div>
-              <div class="text-high-emphasis">{{ detailProduct.target }}</div>
-            </div>
-
-            <!-- Preservation -->
-            <div v-if="detailProduct.preservation" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-teal mb-1.5">
-                Bảo quản
-              </div>
-              <div class="text-high-emphasis">{{ detailProduct.preservation }}</div>
-            </div>
-
-            <!-- Description -->
-            <div v-if="detailProduct.description" class="detail-item border rounded-lg pa-3 bg-surface shadow-xs">
-              <div class="text-subtitle-2 font-weight-bold text-purple mb-1.5">
-                Mô tả chi tiết
-              </div>
-              <div class="text-high-emphasis white-space-pre-line text-caption">{{ detailProduct.description }}</div>
-            </div>
-          </div>
-        </v-card-text>
-
-        <!-- Detail Actions -->
-        <v-card-actions class="pa-3.5 border-t bg-surface-variant d-flex justify-space-between flex-shrink-0">
-          <v-btn variant="text" rounded="lg" @click="showDetailModal = false">Đóng</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            rounded="lg"
-            class="font-weight-bold px-4"
-            prepend-icon="lucide-plus"
-            @click="addFromDetail(detailProduct)"
-          >
-            Thêm vào đơn hàng
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductDetailModal
+      v-model="showDetailModal"
+      :product="detailProduct"
+      show-add-button
+      add-text="Thêm vào đơn hàng"
+      show-inventory-history
+      @add="addFromDetail"
+    />
   </v-dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useDisplay } from 'vuetify';
+import ProductDetailModal from '@/components/common/ProductDetailModal.vue';
 import { useOdoo, type OdooProduct } from '@/composables/use-odoo';
 
 const display = useDisplay();
@@ -549,22 +427,31 @@ function getQty(id: number | string): number {
   return quantities.value[id] || 1;
 }
 
-function setQty(id: number | string, val: number) {
-  quantities.value[id] = Math.max(1, Math.floor(val) || 1);
+function setQty(id: number | string, val: number, maxQty?: number) {
+  let v = Math.max(1, Math.floor(val) || 1);
+  if (maxQty !== undefined) {
+    if (maxQty <= 0) {
+      v = 0;
+    } else {
+      v = Math.min(v, maxQty);
+    }
+  }
+  quantities.value[id] = v;
 }
 
-function incrementQty(id: number | string) {
-  setQty(id, getQty(id) + 1);
+function incrementQty(id: number | string, maxQty?: number) {
+  setQty(id, getQty(id) + 1, maxQty);
 }
 
 function decrementQty(id: number | string) {
   setQty(id, Math.max(1, getQty(id) - 1));
 }
 
-function onQtyInput(id: number | string, event: Event) {
+function onQtyInput(id: number | string, event: Event, maxQty?: number) {
   const target = event.target as HTMLInputElement;
   const val = parseInt(target.value, 10);
-  setQty(id, isNaN(val) ? 1 : val);
+  setQty(id, isNaN(val) ? 1 : val, maxQty);
+  target.value = getQty(id).toString();
 }
 
 // Compute distinct product groups from Directus and Odoo products

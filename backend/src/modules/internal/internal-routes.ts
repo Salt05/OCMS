@@ -14,6 +14,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { integrationSettingsService } from '../settings/integration-settings-service.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
+import { orderDomainService } from '../orders/order-service.js';
 
 function formatVND(amount: number): string {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
@@ -236,6 +237,45 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // ── ODOO WORKER: TẠO PHIẾU NHẬP HÀNG TRÊN ODOO DÙNG CẤU HÌNH TỪ ROUTER ─
+  app.post('/api/v1/internal/odoo/create-purchase-order', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const body = request.body as {
+        partner_id: number;
+        partner_ref?: string;
+        picking_type_id?: number;
+        date_order?: string;
+        date_planned?: string;
+        note?: string;
+        order_line: Array<{
+          product_id: number;
+          product_qty: number;
+          price_unit: number;
+        }>;
+        odoo_target?: {
+          url: string;
+          db: string;
+          user: string;
+          apiKey: string;
+        };
+      };
+
+      const odooPurchaseId = await odooService.createPurchaseOrder({
+        partner_id: body.partner_id,
+        partner_ref: body.partner_ref,
+        picking_type_id: body.picking_type_id,
+        date_order: body.date_order,
+        date_planned: body.date_planned,
+        note: body.note,
+        order_line: body.order_line || []
+      }, body.odoo_target);
+
+      return { success: true, odooPurchaseId };
+    } catch (err: any) {
+      return reply.status(500).send({ success: false, error: err.message });
+    }
+  });
+
   // ── 2. ODOO WORKER: TẠO ĐƠN HÀNG THẬT TRÊN ODOO DÙNG CẤU HÌNH TỪ /settings ─
   app.post('/api/v1/internal/odoo/create-order', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -407,13 +447,14 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
             where: { orderHistoryId: savedOrder.id },
           });
 
+          const reservationLines: { id: string; sku: string; quantity: number }[] = [];
           for (const line of odooOrder.lines) {
             const prodName = Array.isArray(line.product_id) && line.product_id.length > 1
               ? String(line.product_id[1])
               : (line.name || 'Sản phẩm');
             const prodSku = prodName.match(/\[(.*?)\]/)?.[1] || null;
 
-            await prisma.orderLineHistory.create({
+            const savedLine = await prisma.orderLineHistory.create({
               data: {
                 orderHistoryId: savedOrder.id,
                 odooLineId: line.id,
@@ -428,6 +469,19 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
                 priceTotal: line.price_total || line.price_subtotal || 0,
               },
             });
+
+            if (prodSku) {
+              reservationLines.push({
+                id: savedLine.id,
+                sku: prodSku,
+                quantity: line.product_uom_qty || 1,
+              });
+            }
+          }
+
+          if (reservationLines.length > 0 && ['draft', 'sent', 'sale', 'done'].includes(odooOrder?.state || 'draft')) {
+            await orderDomainService.handleOrderConfirmed(orgId, savedOrder.id, officialCode, reservationLines);
+            logger.info(`[internal-routes] Đã giữ ${reservationLines.length} dòng tồn kho cho báo giá ${officialCode}`);
           }
         }
         logger.info(`[internal-routes] Đã đồng bộ OrderHistory & ${odooOrder?.lines?.length || 0} sản phẩm cho Báo giá #${createdOdooId} (${officialCode})`);

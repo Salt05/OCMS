@@ -57,6 +57,19 @@
 
             <!-- Edit Mode Toggle Button -->
             <v-btn
+              v-if="!isEditing && order && !readOnly && order.odooOrderId"
+              size="small"
+              color="deep-purple"
+              variant="tonal"
+              prepend-icon="lucide-file-text"
+              class="text-none font-weight-bold mr-1"
+              :loading="generatingPdf"
+              @click="generatePdf"
+            >
+              Tạo PDF
+            </v-btn>
+
+            <v-btn
               v-if="!isEditing && order && !readOnly"
               size="small"
               color="primary"
@@ -871,10 +884,12 @@ import { useAuthStore } from '@/stores/auth';
 import { useOrders } from '@/composables/use-orders';
 import type { OrderItem } from '@/composables/use-orders';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
+import { useOdoo } from '@/composables/use-odoo';
 
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
 const authStore = useAuthStore();
+const { fetchProducts } = useOdoo();
 
 const props = defineProps<{
   modelValue: boolean;
@@ -901,6 +916,43 @@ const {
   invoiceStatusLabel,
   confirmSaleOrder,
 } = useOrders();
+
+const generatingPdf = ref(false);
+
+async function generatePdf() {
+  if (!props.order?.id) return;
+  generatingPdf.value = true;
+  try {
+    const res = await api.get(`/orders/${props.order.id}/pdf`, {
+      responseType: 'blob',
+    });
+    const url = window.URL.createObjectURL(new Blob([res.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    const contentDisposition = res.headers['content-disposition'];
+    let fileName = `${props.order.orderCode}.pdf`;
+    if (contentDisposition) {
+      const fileNameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+      if (fileNameMatch && fileNameMatch.length === 2) {
+        fileName = fileNameMatch[1];
+      }
+    }
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  } catch (err: any) {
+    console.error('Download PDF error:', err);
+    snackbar.value = {
+      show: true,
+      text: 'Không thể tải PDF. Vui lòng thử lại sau.',
+      color: 'error',
+    };
+  } finally {
+    generatingPdf.value = false;
+  }
+}
 
 // ── Confirm Quotation (Báo giá -> Đơn hàng) State ──────────────────────────
 const canConfirmQuotation = computed(() => {
@@ -1229,6 +1281,10 @@ async function saveOrderChanges() {
         text: res.data.message || 'Cập nhật đơn hàng thành công!',
         color: res.data.odooWarning ? 'warning' : 'success',
       };
+      
+      // Auto refresh products list to update inventory immediately
+      fetchProducts(true).catch(e => console.warn('[fetchProducts]', e));
+
       emit('saved', res.data.order || props.order);
     }
   } catch (err: any) {

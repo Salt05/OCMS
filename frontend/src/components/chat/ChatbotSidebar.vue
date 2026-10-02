@@ -1417,7 +1417,7 @@ function onProductFromPickerForDraft(product: OdooProduct, addQty: number = 1) {
 
   const basePrice = product.wholesale_price || product.list_price || 0;
   if (existing) {
-    existing.qty += (typeof addQty === 'number' && addQty >= 0 ? addQty : 1);
+    copySnackbarText.value = `Sản phẩm "${product.name}" đã có trong đơn (x${existing.qty})`;
   } else {
     draft.items.push({
       product: {
@@ -1434,7 +1434,9 @@ function onProductFromPickerForDraft(product: OdooProduct, addQty: number = 1) {
     });
   }
 
-  copySnackbarText.value = `Đã thêm "${product.name}" vào đơn!`;
+  if (!existing) {
+    copySnackbarText.value = `Đã thêm "${product.name}" vào đơn!`;
+  }
   showCopySnackbar.value = true;
 }
 

@@ -24,6 +24,146 @@ export async function odooRoutes(app: FastifyInstance) {
     }
   });
 
+  // GET /api/v1/odoo/vendors — list vendors
+  app.get('/api/v1/odoo/vendors', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { query = '' } = request.query as { query?: string };
+      const activeOdoo = await routerClient.getActiveOdooConfig();
+
+      const q = query.trim();
+      let domain: any[];
+      if (q) {
+        domain = [
+          '|',
+          '|',
+          ['name', 'ilike', q],
+          ['phone', 'ilike', q],
+          ['email', 'ilike', q],
+        ];
+      } else {
+        domain = [
+          '|',
+          ['supplier_rank', '>', 0],
+          ['is_company', '=', true],
+        ];
+      }
+
+      let vendors = await odooService.executeKw<any[]>(
+        'res.partner',
+        'search_read',
+        [domain],
+        {
+          fields: ['id', 'name', 'phone', 'email', 'supplier_rank', 'is_company'],
+          limit: 300,
+          order: 'supplier_rank desc, name asc',
+        },
+        activeOdoo || undefined
+      );
+
+      // Nếu vẫn trống thì lấy bất kỳ đối tác nào có tên
+      if (!vendors || vendors.length === 0) {
+        vendors = await odooService.executeKw<any[]>(
+          'res.partner',
+          'search_read',
+          [[['name', '!=', false]]],
+          {
+            fields: ['id', 'name', 'phone', 'email', 'supplier_rank', 'is_company'],
+            limit: 100,
+            order: 'name asc',
+          },
+          activeOdoo || undefined
+        );
+      }
+
+      const formattedVendors = (vendors || []).map((v) => ({
+        id: v.id,
+        name: v.name,
+        phone: typeof v.phone === 'string' ? v.phone : '',
+        email: typeof v.email === 'string' ? v.email : '',
+        supplier_rank: v.supplier_rank || 0,
+      }));
+
+      return reply.send({ success: true, vendors: formattedVendors, total: formattedVendors.length });
+    } catch (err: any) {
+      logger.error('[odoo-routes] get vendors error:', err);
+      return reply.status(500).send({ error: 'Lỗi lấy danh sách nhà cung cấp từ Odoo' });
+    }
+  });
+
+  // GET /api/v1/odoo/locations — list stock locations / warehouses for purchase delivery
+  app.get('/api/v1/odoo/locations', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { query = '' } = request.query as { query?: string };
+      const activeOdoo = await routerClient.getActiveOdooConfig();
+
+      // 1. Ưu tiên lấy stock.picking.type (Loại hoạt động nhập kho / "Deliver To" của purchase.order)
+      let pickingDomain: any[] = [['code', '=', 'incoming']];
+      if (query.trim()) {
+        pickingDomain.push(['name', 'ilike', query.trim()]);
+      }
+
+      const pickingTypes = await odooService.executeKw<any[]>(
+        'stock.picking.type',
+        'search_read',
+        [pickingDomain],
+        {
+          fields: ['id', 'name', 'display_name', 'warehouse_id', 'default_location_dest_id'],
+          limit: 50,
+        },
+        activeOdoo || undefined
+      );
+
+      let locations: any[] = [];
+      if (pickingTypes && pickingTypes.length > 0) {
+        locations = pickingTypes.map((pt) => {
+          const whName = Array.isArray(pt.warehouse_id) ? pt.warehouse_id[1] : '';
+          const destLocName = Array.isArray(pt.default_location_dest_id) ? pt.default_location_dest_id[1] : '';
+          let displayName = pt.display_name || pt.name;
+          if (whName && destLocName) {
+            displayName = `${whName}: ${pt.name} (${destLocName})`;
+          } else if (whName) {
+            displayName = `${whName}: ${pt.name}`;
+          }
+          return {
+            id: pt.id, // picking_type_id
+            name: pt.name,
+            display_name: displayName,
+            warehouse_name: whName,
+            dest_location_name: destLocName,
+            type: 'picking_type',
+          };
+        });
+      } else {
+        // Fallback sang stock.location nếu Odoo chưa cấu hình picking type
+        const domain: any[] = [['usage', '=', 'internal']];
+        if (query.trim()) {
+          domain.push(['name', 'ilike', query.trim()]);
+        }
+        const rawLocations = await odooService.executeKw<any[]>(
+          'stock.location',
+          'search_read',
+          [domain],
+          {
+            fields: ['id', 'display_name', 'name'],
+            limit: 50,
+          },
+          activeOdoo || undefined
+        );
+        locations = (rawLocations || []).map((l) => ({
+          id: l.id,
+          name: l.name,
+          display_name: l.display_name,
+          type: 'stock_location',
+        }));
+      }
+
+      return reply.send({ success: true, locations, total: locations.length });
+    } catch (err: any) {
+      logger.error('[odoo-routes] get locations error:', err);
+      return reply.status(500).send({ error: 'Lỗi lấy địa điểm kho từ Odoo' });
+    }
+  });
+
   // GET /api/v1/odoo/customers/search — search customers by name, phone, email, or ID
   app.get('/api/v1/odoo/customers/search', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -153,6 +293,20 @@ export async function odooRoutes(app: FastifyInstance) {
   let productsCacheTime = 0;
   const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 
+  async function refreshAvailableQuantities(products: any[]): Promise<any[]> {
+    const inventoryItems = await prisma.inventoryItem.findMany({
+      select: { sku: true, onHand: true, reserved: true },
+    });
+    const inventoryMap = new Map<string, number>();
+    for (const item of inventoryItems) {
+      inventoryMap.set(item.sku, Math.max(0, item.onHand - item.reserved));
+    }
+    for (const product of products) {
+      product.available_quantity = product.sku ? inventoryMap.get(product.sku) || 0 : 0;
+    }
+    return products;
+  }
+
   /**
    * Helper to sync and enrich products from Directus, disk cache, and Odoo.
    * Merges Directus products and Odoo products; if duplicate, prioritizes Directus data.
@@ -160,7 +314,7 @@ export async function odooRoutes(app: FastifyInstance) {
   async function getOrSyncProducts(force = false): Promise<any[]> {
     const now = Date.now();
     if (productsCache && !force && now - productsCacheTime < CACHE_DURATION) {
-      return productsCache;
+      return refreshAvailableQuantities(productsCache);
     }
 
     // 1. Load rich products from Directus (or persistent disk cache)
@@ -339,6 +493,12 @@ export async function odooRoutes(app: FastifyInstance) {
         product_groups: dp.product_groups || (dp.product_group_name ? [{ id: dp.product_group_id || 1, name: dp.product_group_name }] : []),
         source: 'directus',
       });
+    }
+
+    try {
+      await refreshAvailableQuantities(unifiedList);
+    } catch (err: any) {
+      logger.error('[odoo-routes] Failed to append inventory to products:', err.message);
     }
 
     productsCache = unifiedList;
@@ -677,16 +837,29 @@ export async function odooRoutes(app: FastifyInstance) {
         await prisma.order.create({
           data: {
             id: randomUUID(),
-            orgId: user.orgId,
-            contactId: body.contactId,
-            createdByUserId: user.id,
+            org: { connect: { id: user.orgId } },
+            contact: { connect: { id: body.contactId } },
+            createdBy: { connect: { id: user.id } },
             conversationId: body.conversationId || null,
             orderCode,
             totalAmount,
-            status: 'processing',
+            status: 'processing', // sẽ kích hoạt webhook hoặc sync sau
             notes: body.notes || 'Tạo từ tích hợp Odoo',
+            lines: {
+              create: items.map((it: any) => ({
+                sku: it.sku,
+                productId: it.odoo_product_id,
+                productName: it.sku, // sẽ được enrich sau
+                quantity: it.quantity,
+                priceUnit: it.price,
+                priceSubtotal: it.price * it.quantity * (1 - (it.discount || 0) / 100),
+              })),
+            },
           }
         }).catch(e => logger.warn('[odoo-routes] Failed to create local order record:', e.message));
+
+        // Cập nhật tồn kho (Reserve stock ngay khi tạo order local nếu đã confirmed, nhưng ở đây đang processing, tuỳ logic. Tạm thời processing coi như chưa giữ hàng).
+
 
         // Clear draftOrder in ConversationAiState on order creation
         if (body.conversationId) {

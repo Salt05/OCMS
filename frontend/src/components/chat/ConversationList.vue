@@ -89,7 +89,7 @@
 
     <!-- 2. Zalo PC Tab Filter Row: Tất cả | Chưa đọc | Khu vực | Phân loại ▾ | ... -->
     <div class="zalo-conv-tabs-row d-flex align-center justify-space-between px-3 pb-2 border-b">
-      <div class="d-flex align-center gap-2 flex-nowrap overflow-x-auto">
+      <div class="horizontal-wheel-scroll d-flex align-center gap-2 flex-nowrap overflow-x-auto" @wheel="handleHorizontalWheel">
         <button
           type="button"
           class="zalo-tab-btn flex-shrink-0"
@@ -479,7 +479,7 @@
           </div>
 
           <!-- Zone Pills Scrollable Bar -->
-          <div v-if="zoneGroups.length > 1" class="zone-pills-row d-flex align-center gap-1 overflow-x-auto pt-1">
+          <div v-if="zoneGroups.length > 1" class="zone-pills-row horizontal-wheel-scroll d-flex align-center gap-1 overflow-x-auto pt-1" @wheel="handleHorizontalWheel">
             <button
               type="button"
               class="zone-pill-btn flex-shrink-0"
@@ -897,6 +897,17 @@ function onScroll(e: Event) {
   if (isBottom && props.hasMore && !props.loadingMore && !props.loading) {
     emit('load-more');
   }
+}
+
+function handleHorizontalWheel(e: WheelEvent) {
+  const target = e.currentTarget as HTMLElement | null;
+  if (!target || target.scrollWidth <= target.clientWidth) return;
+
+  const horizontalDelta = e.deltaY || e.deltaX;
+  if (!horizontalDelta) return;
+
+  target.scrollLeft += horizontalDelta;
+  e.preventDefault();
 }
 
 const contextMenuVisible = ref(false);
@@ -1593,6 +1604,11 @@ function formatTime(dateStr: string | null): string {
 .zalo-search-input { border: none; background: transparent; outline: none; font-size: 13px; }
 .zalo-tab-btn { background: transparent; border: none; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .zalo-tab-btn.is-active { background: rgba(0, 104, 255, 0.1); color: #0068ff; }
+.horizontal-wheel-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.horizontal-wheel-scroll::-webkit-scrollbar { display: none; }
 .zalo-filter-count-dot { width: 6px; height: 6px; background: #0068ff; border-radius: 50%; display: inline-block; }
 .tag-group-filter-item { border: 1px solid rgba(0,0,0,0.1); }
 .tag-group-filter-item.is-selected { border-color: #0068ff; background: rgba(0, 104, 255, 0.05); }
@@ -1649,10 +1665,7 @@ function formatTime(dateStr: string | null): string {
   text-decoration: underline;
 }
 .zone-pills-row {
-  scrollbar-width: thin;
-}
-.zone-pills-row::-webkit-scrollbar {
-  height: 3px;
+  scrollbar-width: none;
 }
 .zone-pill-btn {
   background: rgba(var(--v-theme-on-surface, 128, 128, 128), 0.06);

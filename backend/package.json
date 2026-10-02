@@ -32,6 +32,7 @@
     "@fastify/static": "^9.0.0",
     "@prisma/adapter-pg": "^7.5.0",
     "@prisma/client": "^7.5.0",
+    "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.20.0",
     "bcryptjs": "^3.0.3",
     "exceljs": "^4.4.0",
@@ -39,6 +40,7 @@
     "image-size": "^2.0.2",
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.2.1",
+    "pdfkit": "^0.20.2",
     "pg": "^8.20.0",
     "socket.io": "^4.8.3",
     "uuid": "^13.0.0",
@@ -53,6 +55,7 @@
     "nodemon": "^3.1.14",
     "prisma": "^7.5.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^5.0.3"
   }
 }

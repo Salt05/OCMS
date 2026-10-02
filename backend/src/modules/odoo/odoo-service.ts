@@ -1042,6 +1042,132 @@ class OdooService {
       return { ok: false, error: err.message };
     }
   }
+
+  // --- Purchase Order Methods ---
+
+  async createPurchaseOrder(data: {
+    partner_id: number;
+    partner_ref?: string;
+    picking_type_id?: number;
+    date_order?: string;
+    date_planned?: string;
+    note?: string;
+    order_line: Array<{
+      product_id: number;
+      product_qty: number;
+      price_unit: number;
+    }>;
+  }, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<number | null> {
+    try {
+      const orderLines = data.order_line.map(line => [0, 0, {
+        product_id: line.product_id,
+        product_qty: line.product_qty,
+        price_unit: line.price_unit,
+      }]);
+
+      const orderData: any = {
+        partner_id: data.partner_id,
+        order_line: orderLines,
+      };
+
+      if (data.picking_type_id) orderData.picking_type_id = data.picking_type_id;
+      if (data.partner_ref) orderData.partner_ref = data.partner_ref;
+      if (data.date_order) orderData.date_order = data.date_order;
+      if (data.date_planned) orderData.date_planned = data.date_planned;
+      if (data.note) orderData.notes = data.note; // on purchase.order it's notes
+
+      const res = await this.executeKw<any>('purchase.order', 'create', [[orderData]], {}, overrideConfig);
+      const purchaseId = Array.isArray(res) ? res[0] : (typeof res === 'number' ? res : parseInt(res, 10));
+      if (!purchaseId || isNaN(purchaseId)) {
+        throw new Error('Tạo phiếu nhập hàng thất bại: Odoo trả về rỗng');
+      }
+      return purchaseId;
+    } catch (err: any) {
+      logger.error('[odoo] createPurchaseOrder error:', err.message);
+      throw err;
+    }
+  }
+
+  async getPurchaseOrderReportPdf(purchaseId: number, overrideConfig?: { url: string; db: string; user: string; apiKey: string }): Promise<{ buffer: Buffer; filename: string } | null> {
+    try {
+      // Let Odoo generate the report attachment so its active QWeb template,
+      // company branding, language, and document state are preserved.
+      let templates = await this.executeKw<any[]>('mail.template', 'search_read', [
+        [['model', '=', 'purchase.order'], ['name', 'ilike', 'Purchase Order']]
+      ], { fields: ['id', 'name', 'report_template_ids'], limit: 10 }, overrideConfig);
+
+      templates = (templates || []).filter((template: any) =>
+        Array.isArray(template.report_template_ids) && template.report_template_ids.length > 0
+      );
+
+      if (templates.length === 0) {
+        templates = await this.executeKw<any[]>('mail.template', 'search_read', [
+          [['model', '=', 'purchase.order']]
+        ], { fields: ['id', 'name', 'report_template_ids'], limit: 20 }, overrideConfig);
+        templates = (templates || []).filter((template: any) =>
+          Array.isArray(template.report_template_ids) && template.report_template_ids.length > 0
+        );
+      }
+
+      const templateId = templates[0]?.id;
+      if (!templateId) {
+        logger.warn(`[odoo] No purchase.order mail template with a PDF report found`);
+        return null;
+      }
+
+      const wizardContext = {
+        active_model: 'purchase.order',
+        active_id: purchaseId,
+        active_ids: [purchaseId],
+        default_model: 'purchase.order',
+        default_res_ids: [purchaseId],
+        default_template_id: templateId,
+      };
+
+      const defaultValues = await this.executeKw<any>('mail.compose.message', 'default_get', [
+        ['subject', 'body', 'attachment_ids', 'template_id', 'model', 'res_ids']
+      ], { context: wizardContext }, overrideConfig);
+
+      const wizardId = await this.executeKw<number>('mail.compose.message', 'create', [{
+        ...(defaultValues || {}),
+        template_id: templateId,
+        composition_mode: 'comment',
+        model: 'purchase.order',
+        res_ids: `[${purchaseId}]`,
+      }], { context: wizardContext }, overrideConfig);
+
+      if (!wizardId) return null;
+
+      const wizards = await this.executeKw<any[]>('mail.compose.message', 'read', [
+        [wizardId],
+        ['id', 'attachment_ids']
+      ], {}, overrideConfig);
+
+      const attachmentIds = wizards?.[0]?.attachment_ids;
+      if (!Array.isArray(attachmentIds) || attachmentIds.length === 0) {
+        logger.warn(`[odoo] No purchase.order PDF attachment generated for ${purchaseId}`);
+        return null;
+      }
+
+      const attachments = await this.executeKw<any[]>('ir.attachment', 'read', [
+        attachmentIds,
+        ['id', 'name', 'mimetype', 'datas']
+      ], {}, overrideConfig);
+
+      const pdfAttachment = attachments?.find((attachment: any) =>
+        attachment.mimetype === 'application/pdf' || attachment.name?.toLowerCase().endsWith('.pdf')
+      );
+      if (!pdfAttachment?.datas) return null;
+
+      const buffer = Buffer.from(pdfAttachment.datas, 'base64');
+      const filename = pdfAttachment.name || `PurchaseOrder_${purchaseId}.pdf`;
+      logger.info(`[odoo] Retrieved purchase.order PDF ${purchaseId}: ${filename} (${buffer.length} bytes)`);
+      return { buffer, filename };
+    } catch (err: any) {
+      logger.error(`[odoo] getPurchaseOrderReportPdf error for PO ${purchaseId}:`, err.message);
+      return null;
+    }
+  }
 }
 
 export const odooService = new OdooService();

@@ -203,6 +203,177 @@ export async function productRoutes(app: FastifyInstance) {
     }
   });
 
+  // ── 2b. Get Single Product by SKU ──────────────────────────────────────────
+  app.get('/api/v1/products/by-sku/:sku', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { sku } = request.params as { sku: string };
+
+    if (!sku) {
+      return reply.status(400).send({ success: false, error: 'Thiếu mã SKU' });
+    }
+
+    try {
+      const { map: directusMap } = await getDirectusMap();
+      const p = await db.productCache.findFirst({
+        where: {
+          orgId: user.orgId,
+          sku: { equals: sku.trim(), mode: 'insensitive' },
+          isActive: true,
+        },
+      });
+
+      if (!p) {
+        // Fallback: check if exists in Directus
+        const directusProducts = await directusService.getProducts();
+        const dp = directusProducts.find(
+          (d: any) => (d.sku || d.default_code || '').trim().toLowerCase() === sku.trim().toLowerCase()
+        );
+        if (dp) {
+          const odooId = Number(dp.odoo_id || dp.id);
+          const listPrice = Number(dp.list_price || dp.wholesale_price || 0);
+          const wholesalePrice = Number(dp.wholesale_price || listPrice);
+          const retailPrice = Number(dp.retail_price || 0);
+          const img = directusService.getAssetUrl(dp.image_url);
+          return {
+            success: true,
+            product: {
+              id: dp.id,
+              odooId,
+              odoo_id: odooId,
+              sku: dp.sku || dp.default_code,
+              name: dp.name,
+              displayName: dp.display_name || dp.name,
+              imageUrl: img,
+              image_url: img,
+              category: dp.product_group_name || null,
+              product_group_name: dp.product_group_name || null,
+              brand: null,
+              listPrice,
+              list_price: listPrice,
+              wholesalePrice,
+              wholesale_price: wholesalePrice,
+              retailPrice,
+              retail_price: retailPrice,
+              specification: dp.specification || null,
+              ingredients: dp.ingredients || null,
+              nutritional_info: dp.nutritional_info || null,
+              target: dp.target || null,
+              preservation: dp.preservation || null,
+              description: dp.description || null,
+              weight: dp.weight || null,
+              uomName: dp.uom_name || 'Cái',
+              source: 'directus',
+            },
+          };
+        }
+        return reply.status(404).send({ success: false, error: 'Không tìm thấy sản phẩm' });
+      }
+
+      const dp = directusMap.get(p.odooId) || {};
+      const img = directusService.getAssetUrl(p.imageUrl || dp.image_url) || p.imageUrl || null;
+      const listPrice = Number(p.listPrice || dp.list_price || dp.wholesale_price || 0);
+      const wholesalePrice = Number(p.wholesalePrice || dp.wholesale_price || listPrice || 0);
+      const retailPrice = Number(p.retailPrice || dp.retail_price || 0);
+
+      const enriched = {
+        ...p,
+        odooId: p.odooId,
+        odoo_id: p.odooId,
+        imageUrl: img,
+        image_url: img,
+        weight: p.weight || dp.weight || null,
+        specification: p.specification || dp.specification || null,
+        ingredients: p.ingredients || dp.ingredients || null,
+        nutritional_info: dp.nutritional_info || null,
+        target: p.target || dp.target || null,
+        preservation: p.preservation || dp.preservation || null,
+        description: p.description || dp.description || null,
+        product_group_name: dp.product_group_name || p.category || null,
+        product_group_id: dp.product_group_id || null,
+        category: p.category || dp.product_group_name || null,
+        brand: p.brand || null,
+        retailPrice,
+        retail_price: retailPrice,
+        wholesalePrice,
+        wholesale_price: wholesalePrice,
+        listPrice,
+        list_price: listPrice,
+        uomName: p.uomName || dp.uom_name || 'Cái',
+        source: dp.id ? 'directus' : 'odoo',
+      };
+
+      return { success: true, product: enriched };
+    } catch (err: any) {
+      logger.error('[product-routes] get product by sku error:', err);
+      return reply.status(500).send({ success: false, error: err.message });
+    }
+  });
+
+  // ── 2c. Get Single Product by ID (Database ID or Odoo ID) ───────────────────
+  app.get('/api/v1/products/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+
+    try {
+      const { map: directusMap } = await getDirectusMap();
+      const numId = Number(id);
+      const orConditions: any[] = [{ id }];
+      if (!isNaN(numId) && numId > 0) {
+        orConditions.push({ odooId: numId });
+      }
+
+      const p = await db.productCache.findFirst({
+        where: {
+          orgId: user.orgId,
+          OR: orConditions,
+          isActive: true,
+        },
+      });
+
+      if (!p) {
+        return reply.status(404).send({ success: false, error: 'Không tìm thấy sản phẩm' });
+      }
+
+      const dp = directusMap.get(p.odooId) || {};
+      const img = directusService.getAssetUrl(p.imageUrl || dp.image_url) || p.imageUrl || null;
+      const listPrice = Number(p.listPrice || dp.list_price || dp.wholesale_price || 0);
+      const wholesalePrice = Number(p.wholesalePrice || dp.wholesale_price || listPrice || 0);
+      const retailPrice = Number(p.retailPrice || dp.retail_price || 0);
+
+      const enriched = {
+        ...p,
+        odooId: p.odooId,
+        odoo_id: p.odooId,
+        imageUrl: img,
+        image_url: img,
+        weight: p.weight || dp.weight || null,
+        specification: p.specification || dp.specification || null,
+        ingredients: p.ingredients || dp.ingredients || null,
+        nutritional_info: dp.nutritional_info || null,
+        target: p.target || dp.target || null,
+        preservation: p.preservation || dp.preservation || null,
+        description: p.description || dp.description || null,
+        product_group_name: dp.product_group_name || p.category || null,
+        product_group_id: dp.product_group_id || null,
+        category: p.category || dp.product_group_name || null,
+        brand: p.brand || null,
+        retailPrice,
+        retail_price: retailPrice,
+        wholesalePrice,
+        wholesale_price: wholesalePrice,
+        listPrice,
+        list_price: listPrice,
+        uomName: p.uomName || dp.uom_name || 'Cái',
+        source: dp.id ? 'directus' : 'odoo',
+      };
+
+      return { success: true, product: enriched };
+    } catch (err: any) {
+      logger.error('[product-routes] get product by id error:', err);
+      return reply.status(500).send({ success: false, error: err.message });
+    }
+  });
+
   // ── 3. Update Product Classification (Strictly category and brand only) ─────
   app.patch('/api/v1/products/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;

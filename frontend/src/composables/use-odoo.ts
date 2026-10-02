@@ -38,6 +38,7 @@ export interface OdooProduct {
   product_group_name?: string | null;
   product_groups?: { id: number | string; name: string; slug?: string }[];
   source?: 'directus' | 'odoo';
+  available_quantity?: number;
 }
 
 export const SKU_GROUP_MAP: Record<string, { id: number; name: string }> = {

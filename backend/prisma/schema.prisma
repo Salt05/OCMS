@@ -41,6 +41,10 @@ model Organization {
   bankTransactions     BankTransaction[]
   senderIdentities     SenderIdentity[]
   orderPayments        OrderPayment[]
+  inventoryItems       InventoryItem[]
+  inventoryTransactions InventoryTransaction[]
+  stockTakes           StockTake[]
+  purchaseOrders       PurchaseOrder[]
 
   @@map("organizations")
 }
@@ -84,6 +88,9 @@ model User {
   quickMessages    QuickMessage[]
   notifications    Notification[]
   createdPayments  OrderPayment[]
+  inventoryTransactions InventoryTransaction[] @relation("InventoryTransactions")
+  stockTakes            StockTake[]            @relation("StockTakes")
+  createdPurchases      PurchaseOrder[]        @relation("CreatedPurchases")
 
   @@map("users")
 }
@@ -330,8 +337,28 @@ model Order {
   appliedPromotions OrderAppliedPromotion[]
   bankTransactions  BankTransaction[]       @relation("MatchedOrderTransactions")
   payments          OrderPayment[]
+  lines             OrderLine[]
 
   @@map("orders")
+}
+
+// Order line details for local Order
+model OrderLine {
+  id               String @id @default(uuid())
+  orderId          String @map("order_id")
+  sku              String?
+  productId        Int?   @map("product_id")
+  productName      String @map("product_name")
+  quantity         Float  @default(0)
+  reservedQuantity Float  @default(0) @map("reserved_quantity")
+  shippedQuantity  Float  @default(0) @map("shipped_quantity")
+  returnedQuantity Float  @default(0) @map("returned_quantity")
+  priceUnit        Float  @default(0) @map("price_unit")
+  priceSubtotal    Float  @default(0) @map("price_subtotal")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_lines")
 }
 
 // Organization-scoped tags with custom colors
@@ -431,6 +458,7 @@ model ProductCache {
   listPrice      Float    @default(0) @map("list_price")
   wholesalePrice Float    @default(0) @map("wholesale_price")
   retailPrice    Float    @default(0) @map("retail_price")
+  soldQuantity   Float    @default(0) @map("sold_quantity")
   uomName        String?  @map("uom_name")
   weight         String?
   specification  String?
@@ -546,6 +574,9 @@ model OrderLineHistory {
   priceTotal     Float  @default(0) @map("price_total")
   qtyDelivered   Float  @default(0) @map("qty_delivered")
   qtyInvoiced    Float  @default(0) @map("qty_invoiced")
+  reservedQuantity Float @default(0) @map("reserved_quantity")
+  shippedQuantity  Float @default(0) @map("shipped_quantity")
+  returnedQuantity Float @default(0) @map("returned_quantity")
 
   orderHistory OrderHistory @relation(fields: [orderHistoryId], references: [id], onDelete: Cascade)
 
@@ -853,3 +884,176 @@ model OrderPayment {
   @@map("order_payments")
 }
 
+// ── Inventory Management (Phase 1) ────────────────────────────────────────────
+
+// Current stock level per SKU per org
+// onHand   = actual physical stock (set via INITIAL_STOCK or adjusted via transactions)
+// reserved = quantity held for pending orders (not yet shipped)
+// available = onHand - reserved  (computed at query time, NOT stored)
+model InventoryItem {
+  id           String   @id @default(uuid())
+  orgId        String   @map("org_id")
+  sku          String   // matches ProductCache.sku (unique per org)
+  productName  String   @map("product_name")  // denormalized for display speed
+  variantName  String?  @map("variant_name")  // optional variant label
+  odooProductId Int?    @map("odoo_product_id") // ref to ProductCache.odooId
+  onHand       Float    @default(0) @map("on_hand")     // tồn thực tế
+  reserved     Float    @default(0)                     // đang giữ
+  soldQuantity Float    @default(0) @map("sold_quantity") // số lượng đã bán trên Odoo
+  minStock     Float    @default(0) @map("min_stock")   // ngưỡng sắp hết
+  unit         String?                                  // đơn vị tính (Gói, Hộp…)
+  isActive     Boolean  @default(true) @map("is_active")
+  notes        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  org          Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  transactions InventoryTransaction[]
+  stockTakeItems StockTakeItem[]
+
+  @@unique([orgId, sku])
+  @@index([orgId, isActive])
+  @@index([orgId, sku])
+  @@map("inventory_items")
+}
+
+// Every stock movement is recorded as an immutable transaction.
+// type values:
+//   INITIAL_STOCK   — first-time stock count entered manually
+//   IMPORT          — goods received from supplier
+//   RETURN_IN       — customer return received back into stock
+//   SALE            — goods sold (linked to OrderLineHistory)
+//   ADJUSTMENT_IN   — positive correction (stock count, found items…)
+//   ADJUSTMENT_OUT  — negative correction (loss, damage, expiry…)
+//   DAMAGE          — goods damaged / written off
+//   OTHER           — catch-all manual entry
+//
+// channel values (string enum, extensible):
+//   CONTACT  — order from Zalo/Facebook/direct contact
+//   ODOO     — order from Odoo (OrderHistory)
+//   SHOPEE   — Shopee order (future integration)
+model InventoryTransaction {
+  id                  String   @id @default(uuid())
+  orgId               String   @map("org_id")
+  inventoryItemId     String   @map("inventory_item_id")
+  sku                 String   // denormalized for fast queries
+
+  // Movement details
+  type                String   // INITIAL_STOCK | IMPORT | RETURN_IN | SALE | ADJUSTMENT_IN | ADJUSTMENT_OUT | DAMAGE | OTHER
+  channel             String?  // CONTACT | ODOO | SHOPEE | null
+  quantity            Float    // positive = stock in, negative = stock out
+  quantityBefore      Float    @map("quantity_before")  // onHand snapshot before this tx
+  quantityAfter       Float    @map("quantity_after")   // onHand snapshot after this tx
+
+  // Reference — links back to source document
+  referenceType       String?  @map("reference_type")  // ORDER_HISTORY | STOCK_TAKE | MANUAL
+  referenceId         String?  @map("reference_id")    // OrderHistory.id or StockTake.id
+  referenceCode       String?  @map("reference_code")  // e.g. S02312
+  idempotencyKey      String?  @map("idempotency_key") @unique
+
+  // Audit
+  performedByUserId   String?  @map("performed_by_user_id")
+  performedAt         DateTime @default(now()) @map("performed_at")
+  reason              String?
+  notes               String?  @db.Text
+
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  org           Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  performedBy   User?         @relation("InventoryTransactions", fields: [performedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, sku])
+  @@index([orgId, type])
+  @@index([orgId, channel])
+  @@index([orgId, performedAt])
+  @@index([referenceId])
+  @@map("inventory_transactions")
+}
+
+// Stock-take session header — one session covers all SKUs counted at that time
+model StockTake {
+  id              String    @id @default(uuid())
+  orgId           String    @map("org_id")
+  code            String    // e.g. KK-20240925-001
+  status          String    @default("DRAFT") // DRAFT | IN_PROGRESS | COMPLETED | CANCELLED
+  notes           String?   @db.Text
+  performedByUserId String? @map("performed_by_user_id")
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  org         Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  items       StockTakeItem[]
+  performedBy User?           @relation("StockTakes", fields: [performedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, code])
+  @@index([orgId, status])
+  @@map("stock_takes")
+}
+
+// One row per SKU within a stock-take session
+// After completing, system auto-creates ADJUSTMENT_IN / ADJUSTMENT_OUT transactions
+model StockTakeItem {
+  id                    String  @id @default(uuid())
+  stockTakeId           String  @map("stock_take_id")
+  inventoryItemId       String  @map("inventory_item_id")
+  sku                   String  // denormalized
+  systemQuantity        Float   @map("system_quantity")  // onHand at time of count
+  actualQuantity        Float?  @map("actual_quantity")  // null = not yet counted
+  difference            Float?  // actualQuantity - systemQuantity (computed on save)
+  reason                String? // explanation for difference
+  adjustmentTransactionId String? @map("adjustment_transaction_id") // created after completion
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  stockTake     StockTake     @relation(fields: [stockTakeId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([stockTakeId, sku])
+  @@map("stock_take_items")
+}
+
+// ── Purchase Order (Phiếu Nhập Hàng / Yêu Cầu Báo Giá) ────────────────────────
+model PurchaseOrder {
+  id              String   @id @default(uuid())
+  orgId           String   @map("org_id")
+  vendorId        Int      @map("vendor_id") // odoo res.partner ID
+  vendorName      String   @map("vendor_name")
+  currency        String   @default("VND")
+  orderDeadline   DateTime? @map("order_deadline")
+  expectedDate    DateTime? @map("expected_date")
+  deliverTo       String?  @map("deliver_to")
+  amountUntaxed   Float    @default(0) @map("amount_untaxed")
+  amountTotal     Float    @default(0) @map("amount_total")
+  state           String   @default("draft") // draft, sent, purchase, done, cancel
+  odooPurchaseId  Int?     @map("odoo_purchase_id")
+  purchaseCode    String?  @map("purchase_code") // e.g. P0001
+  activitySummary String?  @map("activity_summary") @db.Text
+  notes           String?  @db.Text
+  createdById     String?  @map("created_by_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  org             Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lines           PurchaseOrderLine[]
+  createdBy       User?                @relation("CreatedPurchases", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([orgId, state])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id              String   @id @default(uuid())
+  purchaseOrderId String   @map("purchase_order_id")
+  productId       Int      @map("product_id") // Odoo product.product ID
+  productName     String   @map("product_name")
+  quantity        Float    @default(1)
+  priceUnit       Float    @default(0) @map("price_unit")
+  priceSubtotal   Float    @default(0) @map("price_subtotal")
+
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_lines")
+}

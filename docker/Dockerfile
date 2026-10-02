@@ -17,7 +17,7 @@ RUN npm run build
 
 # ── Stage 3: Production image ────────────────────────────────────────────────
 FROM node:20-alpine
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini font-noto-cjk font-dejavu
 WORKDIR /app
 
 # Copy built artefacts
@@ -27,6 +27,7 @@ COPY --from=backend-builder /app/backend/prisma     /app/prisma
 COPY --from=backend-builder /app/backend/prisma.config.ts /app/prisma.config.ts
 COPY --from=backend-builder /app/backend/package.json /app/package.json
 COPY --from=backend-builder /app/backend/data       /app/data
+COPY --from=backend-builder /app/backend/assets     /app/assets
 COPY --from=frontend-builder /app/frontend/dist     /app/static
 
 RUN mkdir -p /var/lib/ocms/files

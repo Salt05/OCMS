@@ -160,4 +160,34 @@ export async function syncRoutes(app: FastifyInstance) {
       return reply.status(500).send({ error: err.message || 'Lỗi làm sạch và đồng bộ đơn hàng' });
     }
   });
+
+  // POST /api/v1/sync/purchase-orders — Sync purchase orders from Odoo
+  app.post('/api/v1/sync/purchase-orders', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const res = await odooSyncService.syncPurchaseOrders(user.orgId);
+
+      let message = 'Dữ liệu phiếu nhập Odoo đã ở trạng thái mới nhất';
+      if (res.newCount > 0 && res.updatedCount > 0) {
+        message = `Đồng bộ thành công: ${res.newCount} phiếu mới, ${res.updatedCount} phiếu cập nhật từ Odoo`;
+      } else if (res.newCount > 0) {
+        message = `Đồng bộ thành công: ${res.newCount} phiếu nhập mới từ Odoo`;
+      } else if (res.updatedCount > 0) {
+        message = `Đồng bộ thành công: Đã cập nhật ${res.updatedCount} phiếu nhập từ Odoo`;
+      }
+
+      return reply.send({
+        success: true,
+        message,
+        ...res,
+      });
+    } catch (err: any) {
+      logger.error('[sync-routes] Purchase orders sync error:', err);
+      const isAccessError = err.message && (err.message.includes('AccessError') || err.message.includes('không được phép truy cập'));
+      const errorMsg = isAccessError
+        ? 'Tài khoản Odoo chưa được cấp quyền Mua hàng (Purchase). Vui lòng vào Cài đặt Odoo -> Người dùng để bật quyền Purchase cho tài khoản kết nối.'
+        : ('Lỗi đồng bộ phiếu nhập: ' + err.message);
+      return reply.status(500).send({ success: false, error: errorMsg });
+    }
+  });
 }

@@ -113,6 +113,9 @@ export function useChat() {
   const selectedConvId = ref<string | null>(null);
   const messages = ref<Message[]>([]);
   const loadingConvs = ref(false);
+  const loadingMoreConvs = ref(false);
+  const convPage = ref(1);
+  const hasMoreConvs = ref(true);
   const loadingMsgs = ref(false);
   const loadingMoreMsgs = ref(false);
   const sendingMsg = ref(false);
@@ -130,22 +133,50 @@ export function useChat() {
     conversations.value.find(c => c.id === selectedConvId.value) || null,
   );
 
-  async function fetchConversations(options?: { silent?: boolean }) {
-    if (!options?.silent) {
+  async function fetchConversations(options?: { silent?: boolean, loadMore?: boolean }) {
+    if (!options?.silent && !options?.loadMore) {
       loadingConvs.value = true;
     }
+    if (options?.loadMore) {
+      loadingMoreConvs.value = true;
+    } else {
+      convPage.value = 1;
+      hasMoreConvs.value = true;
+    }
+
     try {
       const res = await api.get('/conversations', {
-        params: { limit: 100, search: searchQuery.value, accountId: accountFilter.value || undefined },
+        params: { limit: 100, page: convPage.value, search: searchQuery.value, accountId: accountFilter.value || undefined },
       });
-      conversations.value = sortConversations(res.data.conversations || []);
+      const fetched = res.data.conversations || [];
+      if (fetched.length < 100) {
+        hasMoreConvs.value = false;
+      }
+      
+      if (options?.loadMore) {
+        // Merge without duplicates just in case
+        const existingIds = new Set(conversations.value.map(c => c.id));
+        const newUnique = fetched.filter((c: Conversation) => !existingIds.has(c.id));
+        conversations.value = sortConversations([...conversations.value, ...newUnique]);
+      } else {
+        conversations.value = sortConversations(fetched);
+      }
     } catch (err) {
       console.error('Failed to fetch conversations:', err);
     } finally {
-      if (!options?.silent) {
+      if (!options?.silent && !options?.loadMore) {
         loadingConvs.value = false;
       }
+      if (options?.loadMore) {
+        loadingMoreConvs.value = false;
+      }
     }
+  }
+
+  async function loadMoreConversations() {
+    if (loadingMoreConvs.value || !hasMoreConvs.value || loadingConvs.value) return;
+    convPage.value++;
+    await fetchConversations({ loadMore: true });
   }
 
   async function selectConversation(convId: string | null) {
@@ -957,6 +988,8 @@ export function useChat() {
     selectedConv,
     messages,
     loadingConvs,
+    loadingMoreConvs,
+    hasMoreConvs,
     loadingMsgs,
     loadingMoreMsgs,
     sendingMsg,
@@ -964,6 +997,7 @@ export function useChat() {
     searchQuery,
     accountFilter,
     fetchConversations,
+    loadMoreConversations,
     selectConversation,
     fetchMessages,
     loadMoreMessages,

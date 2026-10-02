@@ -14,6 +14,7 @@ import { odooService } from '../odoo/odoo-service.js';
 import { odooSyncService } from '../sync/odoo-sync-service.js';
 import { checkConversationContactAccess } from '../chat/chat-routes.js';
 import { routerClient } from '../../shared/services/router-client.js';
+import { orderDomainService } from './order-service.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +25,17 @@ import {
   DEFAULT_SELECTED_COLUMNS,
   type OrderExportFilters,
 } from './order-excel-service.js';
+
+function buildAttachmentHeader(filename: string, fallbackName = 'download.pdf') {
+  const rawName = (filename || fallbackName).trim() || fallbackName;
+  const asciiName = rawName
+    .replace(/[\\/"<>|?*\r\n\t]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/[^\x20-\x7E]/g, '_')
+    || fallbackName;
+
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(rawName)}`;
+}
 
 export async function orderRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -182,7 +194,7 @@ export async function orderRoutes(app: FastifyInstance) {
                   if (g && (g.sku || g.name) && (Number(g.quantity) > 0 || Number(g.qty) > 0)) {
                     const exists = allGifts.some(
                       ag => (ag.sku && g.sku && ag.sku.toLowerCase() === g.sku.toLowerCase()) ||
-                            (ag.name && g.name && ag.name.toLowerCase() === g.name.toLowerCase())
+                        (ag.name && g.name && ag.name.toLowerCase() === g.name.toLowerCase())
                     );
                     if (!exists) allGifts.push(g);
                   }
@@ -554,7 +566,7 @@ export async function orderRoutes(app: FastifyInstance) {
           prisma.orderHistory.update({
             where: { id: orderObj.id },
             data: { activitySummary: liveSummary },
-          }).catch(() => {});
+          }).catch(() => { });
         }
       } catch (actErr: any) {
         // Non-blocking fallback
@@ -651,9 +663,9 @@ export async function orderRoutes(app: FastifyInstance) {
                 state: odooRes.state || 'sale',
                 invoiceStatus: odooRes.invoiceStatus || 'invoiced',
               },
-            }).catch(() => {});
+            }).catch(() => { });
           }
-        }).catch(() => {});
+        }).catch(() => { });
       } catch (err: any) {
         logger.warn(`[order-payments] Lỗi gọi createInvoiceForOrder: ${err.message}`);
       }
@@ -870,9 +882,9 @@ export async function orderRoutes(app: FastifyInstance) {
                 state: odooRes.state || 'sale',
                 invoiceStatus: odooRes.invoiceStatus || 'invoiced',
               },
-            }).catch(() => {});
+            }).catch(() => { });
           }
-        }).catch(() => {});
+        }).catch(() => { });
       } catch (err: any) {
         logger.warn(`[order-payments] Lỗi gọi createInvoiceForOrder: ${err.message}`);
       }
@@ -1043,7 +1055,7 @@ export async function orderRoutes(app: FastifyInstance) {
       const filename = `Danh_sach_don_hang_${timestamp}.xlsx`;
 
       reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+      reply.header('Content-Disposition', buildAttachmentHeader(filename));
       return reply.send(buffer);
     } catch (err: any) {
       logger.error('[order-export-excel] Error generating Excel:', err);
@@ -1510,11 +1522,47 @@ export async function orderRoutes(app: FastifyInstance) {
       return { sent: false, reason: err.message };
     } finally {
       if (tempFilePath) {
-        await fs.promises.rm(tempFilePath, { force: true }).catch(() => {});
+        await fs.promises.rm(tempFilePath, { force: true }).catch(() => { });
       }
     }
   }
 
+
+  app.get('/api/v1/orders/:id/pdf', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const isNumeric = /^\d+$/.test(id);
+
+    const order = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [
+          { id },
+          ...(isNumeric ? [{ odooOrderId: parseInt(id, 10) }] : []),
+          { orderCode: id },
+        ],
+      },
+    });
+
+    if (!order || !order.odooOrderId) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng trên Odoo' });
+    }
+
+    try {
+      const pdf = await odooService.getOrderReportPdf(order.odooOrderId);
+      if (!pdf || !pdf.buffer || pdf.buffer.length === 0) {
+        return reply.status(404).send({ error: 'Không thể lấy PDF từ Odoo' });
+      }
+
+      const filename = `${order.orderCode}.pdf`;
+      reply.header('Content-Type', 'application/pdf');
+      reply.header('Content-Disposition', buildAttachmentHeader(filename));
+      return reply.send(pdf.buffer);
+    } catch (err: any) {
+      logger.error(`[order-routes] Error fetching PDF for order ${order.orderCode}:`, err);
+      return reply.status(500).send({ error: 'Lỗi tải PDF từ Odoo', details: err.message });
+    }
+  });
 
   app.get('/api/v1/orders/pending-count', async (request: FastifyRequest) => {
     const user = request.user!;
@@ -1869,6 +1917,18 @@ export async function orderRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Đơn hàng đã bị hủy, không thể xác nhận' });
     }
 
+    try {
+      await orderDomainService.handleOrderConfirmed(
+        user.orgId,
+        order.id,
+        order.orderCode,
+        order.lines.map(line => ({ id: line.id, sku: line.productSku || '', quantity: line.quantity })),
+        user.id,
+      );
+    } catch (err: any) {
+      return reply.status(409).send({ error: err.message || 'Không đủ tồn kho để xác nhận đơn hàng' });
+    }
+
     let odooError: string | null = null;
 
     // Kích hoạt action_confirm trên Odoo qua Universal Router
@@ -1885,6 +1945,17 @@ export async function orderRoutes(app: FastifyInstance) {
         logger.error(`[order-routes] Lỗi khi điều phối xác nhận đơn qua Router #${order.orderCode}:`, err.message);
         odooError = err.message;
       }
+    }
+
+    if (odooError) {
+      await orderDomainService.handleOrderCancelled(
+        user.orgId,
+        order.id,
+        order.lines.map(line => ({ id: line.id, sku: line.productSku || '' })),
+      ).catch(releaseError => {
+        logger.error(`[order-routes] Không thể hoàn tác giữ hàng sau khi Odoo từ chối xác nhận #${order.orderCode}:`, releaseError.message);
+      });
+      return reply.status(502).send({ error: `Không thể xác nhận đơn hàng trên Odoo: ${odooError}` });
     }
 
 
@@ -2040,7 +2111,7 @@ export async function orderRoutes(app: FastifyInstance) {
           const allSales = await odooService.getSalespersons();
           const match = allSales.find((s: any) => s.name?.trim().toLowerCase() === salespersonName?.toLowerCase());
           if (match) salespersonOdooUserId = match.id;
-        } catch (e) {}
+        } catch (e) { }
       }
 
       // 2. Fallback: logged-in user
@@ -2077,7 +2148,7 @@ export async function orderRoutes(app: FastifyInstance) {
           const orConditions: any[] = [];
           if (skuToMatch) orConditions.push({ sku: { equals: skuToMatch, mode: 'insensitive' } });
           if (nameToMatch) orConditions.push({ name: { contains: nameToMatch, mode: 'insensitive' } });
-          
+
           const cacheProd = await prisma.productCache.findFirst({
             where: {
               orgId: user.orgId,
@@ -2131,7 +2202,7 @@ export async function orderRoutes(app: FastifyInstance) {
               if (g && (g.sku || g.name) && (Number(g.quantity) > 0 || Number(g.qty) > 0)) {
                 const exists = allFreeGifts.some(
                   ag => (ag.sku && g.sku && ag.sku.toLowerCase() === g.sku.toLowerCase()) ||
-                        (ag.name && g.name && ag.name.toLowerCase() === g.name.toLowerCase())
+                    (ag.name && g.name && ag.name.toLowerCase() === g.name.toLowerCase())
                 );
                 if (!exists) allFreeGifts.push(g);
               }
@@ -2146,7 +2217,7 @@ export async function orderRoutes(app: FastifyInstance) {
           if (bl.isFreeGift || bl.discount === 100) {
             const exists = allFreeGifts.some(
               g => (bl.productSku && g.sku && bl.productSku.toLowerCase() === g.sku.toLowerCase()) ||
-                   (bl.productName && g.name && bl.productName.toLowerCase() === g.name.toLowerCase())
+                (bl.productName && g.name && bl.productName.toLowerCase() === g.name.toLowerCase())
             );
             if (!exists) {
               allFreeGifts.push({
@@ -2730,6 +2801,16 @@ Mong khách hàng thông cảm.`;
 
     const rejectionNote = `[Từ chối ngày ${new Date().toLocaleDateString('vi-VN')}] Lý do: ${reason}`;
 
+    try {
+      await orderDomainService.handleOrderCancelled(
+        user.orgId,
+        order.id,
+        order.lines.map(line => ({ id: line.id, sku: line.productSku || '' })),
+      );
+    } catch (err: any) {
+      return reply.status(409).send({ error: err.message || 'Không thể nhả tồn giữ của đơn hàng' });
+    }
+
     // 1. Update order state in PostgreSQL
     const updatedOrder = await prisma.orderHistory.update({
       where: { id: order.id },
@@ -2764,7 +2845,7 @@ Mong khách hàng thông cảm.`;
     const linesText = buildLinesSummary(order.lines);
 
     const defaultRejectZalo =
-`Xin lỗi khách hàng, đơn hàng trên không thể được tạo với lý do: ${reason}.
+      `Xin lỗi khách hàng, đơn hàng trên không thể được tạo với lý do: ${reason}.
 Quý khách có thể sửa lại nội dung đơn hàng để hợp lệ không ạ?
 Mong khách hàng thông cảm.`;
 
