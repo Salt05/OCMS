@@ -324,4 +324,12 @@ function showMessage(text: string, color: string) {
 .stepper-btn:hover:not(:disabled) { background: rgba(var(--v-theme-primary), 0.08); }
 .stepper-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .stepper-input { width: 46px; height: 28px; border: 0; border-left: 1px solid rgba(var(--v-border-color), 0.2); border-right: 1px solid rgba(var(--v-border-color), 0.2); outline: none; }
+.stepper-input::-webkit-outer-spin-button,
+.stepper-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.stepper-input {
+  -moz-appearance: textfield;
+}
 </style>

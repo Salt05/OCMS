@@ -15,7 +15,7 @@
           </v-avatar>
           <div class="overflow-hidden">
             <div class="text-subtitle-1 font-weight-bold text-high-emphasis text-truncate leading-tight">
-              Chọn sản phẩm (Directus & Odoo ERP)
+              Chọn sản phẩm
             </div>
             <div class="text-caption text-medium-emphasis text-truncate">
               Danh mục sản phẩm & giá sỉ đại lý
@@ -183,17 +183,27 @@
                 ({{ filteredList.length }} sp)
               </span>
             </div>
-            <v-chip
-              v-if="searchQuery"
-              size="x-small"
-              color="primary"
-              variant="tonal"
-              closable
-              class="font-weight-medium"
-              @click:close="searchQuery = ''"
-            >
-              {{ searchQuery }}
-            </v-chip>
+            <div class="d-flex align-center gap-3">
+              <v-chip
+                v-if="searchQuery"
+                size="x-small"
+                color="primary"
+                variant="tonal"
+                closable
+                class="font-weight-medium"
+                @click:close="searchQuery = ''"
+              >
+                {{ searchQuery }}
+              </v-chip>
+              <v-checkbox
+                v-model="hideOutofStock"
+                label="Ẩn sản phẩm SL 0"
+                density="compact"
+                hide-details
+                color="primary"
+                class="flex-shrink-0"
+              />
+            </div>
           </div>
 
           <!-- Product List Body -->
@@ -412,6 +422,7 @@ const searchQuery = ref('');
 const selectedGroupId = ref<number | string | null>(null);
 const showDetailModal = ref(false);
 const detailProduct = ref<OdooProduct | null>(null);
+const hideOutofStock = ref(true);
 
 function selectGroup(id: number | string | null) {
   selectedGroupId.value = id;
@@ -484,7 +495,11 @@ const selectedGroupName = computed(() => {
 });
 
 const filteredList = computed(() => {
-  return filterProducts(searchQuery.value, selectedGroupId.value);
+  let list = filterProducts(searchQuery.value, selectedGroupId.value);
+  if (hideOutofStock.value) {
+    list = list.filter(p => (p.available_quantity ?? 0) > 0);
+  }
+  return list;
 });
 
 function hasAdded(product: OdooProduct): boolean {

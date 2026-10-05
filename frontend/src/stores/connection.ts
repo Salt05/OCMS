@@ -143,7 +143,8 @@ export const useConnectionStore = defineStore('connection', () => {
     }
 
     // Socket.IO
-    socket = io({ transports: ['websocket', 'polling'], reconnectionAttempts: Infinity, timeout: 5000 });
+    const socketUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api/v1', '') : '';
+    socket = io(socketUrl, { transports: ['websocket', 'polling'], reconnectionAttempts: Infinity, timeout: 5000 });
 
 
     socket.on('connect', () => {

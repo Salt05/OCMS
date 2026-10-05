@@ -1727,10 +1727,6 @@ export async function orderRoutes(app: FastifyInstance) {
     let newAmountUntaxed = 0;
 
     if (body.lines && Array.isArray(body.lines)) {
-      await prisma.orderLineHistory.deleteMany({
-        where: { orderHistoryId: existingOrder.id },
-      });
-
       let maxLineId = 0;
       for (const line of body.lines) {
         if (line.odooLineId && Number(line.odooLineId) > maxLineId) {
@@ -1738,6 +1734,35 @@ export async function orderRoutes(app: FastifyInstance) {
         }
       }
 
+      const matchedExistingLineIds = new Set<string>();
+      const existingLineMatches = new Map<number, (typeof existingOrder.lines)[number]>();
+      for (const [idx, line] of body.lines.entries()) {
+        const resolvedLineId = line.odooLineId ? Number(line.odooLineId) : ++maxLineId;
+        const existingLine = existingOrder.lines.find(candidate =>
+          !matchedExistingLineIds.has(candidate.id) &&
+          (candidate.odooLineId === resolvedLineId ||
+            (!!line.productSku && candidate.productSku === line.productSku)),
+        );
+        if (existingLine) {
+          matchedExistingLineIds.add(existingLine.id);
+          existingLineMatches.set(idx, existingLine);
+        }
+      }
+
+      const removedLines = existingOrder.lines.filter(line => !matchedExistingLineIds.has(line.id));
+      if (removedLines.length > 0) {
+        await orderDomainService.handleOrderCancelled(
+          user.orgId,
+          existingOrder.id,
+          removedLines.map(line => ({ id: line.id, sku: line.productSku || '' })),
+        );
+      }
+
+      await prisma.orderLineHistory.deleteMany({
+        where: { orderHistoryId: existingOrder.id },
+      });
+
+      const reservationLines: { id: string; sku: string; quantity: number }[] = [];
       for (const [idx, line] of body.lines.entries()) {
         const qty = Number(line.quantity) || 0;
         const price = Number(line.priceUnit) || 0;
@@ -1746,8 +1771,9 @@ export async function orderRoutes(app: FastifyInstance) {
         newAmountUntaxed += subtotal;
 
         const resolvedLineId = line.odooLineId ? Number(line.odooLineId) : ++maxLineId;
+        const existingLine = existingLineMatches.get(idx);
 
-        await prisma.orderLineHistory.create({
+        const savedLine = await prisma.orderLineHistory.create({
           data: {
             orderHistoryId: existingOrder.id,
             odooLineId: resolvedLineId,
@@ -1760,8 +1786,23 @@ export async function orderRoutes(app: FastifyInstance) {
             discount: discount,
             priceSubtotal: subtotal,
             priceTotal: subtotal,
+            reservedQuantity: existingLine?.reservedQuantity || 0,
           },
         });
+
+        if (line.productSku && (qty > 0 || existingLine?.reservedQuantity)) {
+          reservationLines.push({ id: savedLine.id, sku: line.productSku, quantity: qty });
+        }
+      }
+
+      if (reservationLines.length > 0) {
+        await orderDomainService.handleOrderConfirmed(
+          user.orgId,
+          existingOrder.id,
+          existingOrder.orderCode,
+          reservationLines,
+          user.id,
+        );
       }
     }
 
