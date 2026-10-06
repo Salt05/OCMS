@@ -70,14 +70,14 @@
       <v-table hover class="purchase-order-table">
         <thead>
           <tr>
-            <th style="width: 150px; min-width: 150px;">Mã Phiếu</th>
-            <th style="width: 240px; min-width: 220px;">Nhà cung cấp</th>
-            <th style="width: 240px; min-width: 220px;">Hoạt động</th>
-            <th style="width: 200px; min-width: 180px;">Địa điểm giao</th>
-            <th style="width: 150px; min-width: 120px;">Hạn đặt hàng</th>
-            <th style="width: 150px; min-width: 120px;">Ngày dự kiến về</th>
-            <th style="width: 180px; min-width: 160px;" class="text-right">Tổng tiền</th>
-            <th style="width: 180px; min-width: 150px;" class="text-center">Trạng thái</th>
+            <th style="width: 120px;">Mã Phiếu</th>
+            <th style="min-width: 140px;">Nhà cung cấp</th>
+            <th style="min-width: 120px;">Hoạt động</th>
+            <th style="width: 135px;">Địa điểm giao</th>
+            <th style="width: 110px;">Hạn đặt hàng</th>
+            <th style="width: 120px;">Ngày dự kiến về</th>
+            <th style="width: 120px;" class="text-right">Tổng tiền</th>
+            <th style="width: 120px;" class="text-center">Trạng thái</th>
           </tr>
         </thead>
         <tbody>
@@ -137,9 +137,9 @@
 
     <!-- ==================== POPUP CHI TIẾT & CHỈNH SỬA PHIẾU NHẬP ==================== -->
     <v-dialog v-model="detailDialog" max-width="920px" scrollable persistent>
-      <v-card rounded="xl" class="d-flex flex-column overflow-hidden elevation-12" style="max-height: 88vh;">
+      <v-card rounded="xl" class="d-flex flex-column overflow-hidden elevation-12 bg-surface" style="max-height: 88vh;">
         <!-- Header -->
-        <v-card-title class="pa-4 px-6 bg-slate-900 text-white d-flex justify-space-between align-center flex-shrink-0" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);">
+        <v-card-title class="pa-4 px-6 bg-primary text-white d-flex justify-space-between align-center flex-shrink-0">
           <div class="d-flex align-center gap-3">
             <v-avatar color="primary" size="40" class="rounded-lg">
               <v-icon size="22" color="white">lucide-clipboard-check</v-icon>
@@ -176,17 +176,17 @@
         </v-card-title>
 
         <!-- Body Scrollable -->
-        <v-card-text class="purchase-detail-body pa-6 overflow-y-auto flex-grow-1">
+        <v-card-text class="pa-6 overflow-y-auto flex-grow-1 bg-surface-variant">
           <!-- Loading state -->
           <div v-if="detailLoading" class="text-center py-12">
             <v-progress-circular indeterminate color="primary" size="48"></v-progress-circular>
-            <div class="text-body-2 text-grey mt-3">Đang tải thông tin chi tiết đơn hàng...</div>
+            <div class="text-body-2 text-medium-emphasis mt-3">Đang tải thông tin chi tiết đơn hàng...</div>
           </div>
 
           <v-form v-else>
             <!-- Box 1: Thông tin đơn hàng -->
-            <v-card rounded="lg" class="pa-4 mb-4 bg-white border" elevation="0">
-              <div class="text-subtitle-2 font-weight-bold text-grey-darken-3 mb-3 d-flex align-center gap-2">
+            <v-card rounded="lg" class="pa-4 mb-4 bg-surface border" elevation="0">
+              <div class="text-subtitle-2 font-weight-bold text-high-emphasis mb-3 d-flex align-center gap-2">
                 <v-icon size="18" color="primary">lucide-info</v-icon>
                 Thông tin chung
               </div>
@@ -275,11 +275,11 @@
             </v-card>
 
             <!-- Box 2: Danh sách sản phẩm -->
-            <v-card rounded="lg" class="pa-4 bg-white border" elevation="0">
+            <v-card rounded="lg" class="pa-4 bg-surface border" elevation="0">
               <div class="d-flex justify-space-between align-center mb-3">
                 <div class="d-flex align-center gap-2">
                   <v-icon size="18" color="primary">lucide-boxes</v-icon>
-                  <span class="text-subtitle-2 font-weight-bold text-grey-darken-3">Danh sách sản phẩm trong đơn</span>
+                  <span class="text-subtitle-2 font-weight-bold text-high-emphasis">Danh sách sản phẩm trong đơn</span>
                   <v-chip size="x-small" color="primary" variant="tonal" class="font-weight-medium">
                     {{ detailForm.lines.length }} sản phẩm
                   </v-chip>
@@ -298,18 +298,18 @@
               </div>
 
               <!-- Empty product state -->
-              <div v-if="detailForm.lines.length === 0" class="text-center py-6 px-4 border border-dashed rounded-lg bg-grey-lighten-5 mb-2">
-                <v-icon size="32" color="grey">lucide-package-open</v-icon>
-                <div class="text-body-2 font-weight-medium text-grey-darken-2 mt-2">Phiếu nhập này chưa có sản phẩm nào</div>
+              <div v-if="detailForm.lines.length === 0" class="text-center py-6 px-4 border border-dashed rounded-lg bg-surface-variant mb-2">
+                <v-icon size="32" color="primary">lucide-package-open</v-icon>
+                <div class="text-body-2 font-weight-medium text-high-emphasis mt-2">Phiếu nhập này chưa có sản phẩm nào</div>
                 <v-btn size="small" color="primary" variant="text" class="text-none mt-2" @click="openPickerForEdit">
                   Chọn sản phẩm ngay
                 </v-btn>
               </div>
 
               <!-- Product Lines Table -->
-              <div v-else class="border rounded-lg overflow-hidden">
+              <div v-else class="border rounded-lg overflow-hidden bg-surface">
                 <table class="w-100 detail-table">
-                  <thead class="bg-grey-lighten-4 text-caption font-weight-bold text-grey-darken-2">
+                  <thead class="bg-surface-variant text-caption font-weight-bold text-medium-emphasis">
                     <tr>
                       <th class="text-center py-2 px-3" style="width: 40px;">#</th>
                       <th class="text-left py-2 px-3">Tên sản phẩm</th>
@@ -320,64 +320,59 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="(line, index) in detailForm.lines" :key="index" class="border-b">
-                      <td class="text-center py-2 px-3 text-caption text-grey">
+                    <tr v-for="(line, index) in detailForm.lines" :key="index" class="border-b hover-bg">
+                      <td class="text-center py-1.5 px-3 text-caption text-medium-emphasis">
                         {{ Number(index) + 1 }}
                       </td>
-                      <td class="py-2 px-3">
-                        <div class="font-weight-medium text-body-2 text-high-emphasis">
-                          {{ line.productName }}
-                        </div>
-                        <div class="text-caption text-grey" v-if="line.productId">
-                          ID SP: {{ line.productId }}
-                        </div>
-                      </td>
-                      <td class="py-2 px-2 text-center">
-                        <div class="d-flex align-center justify-center gap-1">
-                          <v-btn
-                            icon="lucide-minus"
-                            size="x-small"
-                            variant="text"
-                            density="compact"
-                            :disabled="Number(line.quantity) <= 1"
-                            @click="decrementLineQty(line)"
-                          ></v-btn>
-                          <v-text-field
-                            v-model.number="line.quantity"
-                            type="number"
-                            min="1"
-                            density="compact"
-                            variant="outlined"
-                            hide-details
-                            class="qty-field text-center"
-                            style="width: 60px;"
-                          ></v-text-field>
-                          <v-btn
-                            icon="lucide-plus"
-                            size="x-small"
-                            variant="text"
-                            density="compact"
-                            @click="incrementLineQty(line)"
-                          ></v-btn>
+                      <td class="py-1.5 px-3">
+                        <div class="d-flex align-center gap-3">
+                          <v-avatar size="36" rounded="lg" color="grey-lighten-3" class="flex-shrink-0">
+                            <v-img
+                              v-if="getLineImage(line)"
+                              :src="getLineImage(line)"
+                              cover
+                            ></v-img>
+                            <v-icon v-else size="18" color="grey-darken-1">lucide-package</v-icon>
+                          </v-avatar>
+                          <div class="overflow-hidden">
+                            <div class="font-weight-medium text-body-2 text-high-emphasis text-truncate" :title="line.productName">
+                              {{ line.productName }}
+                            </div>
+                            <div class="text-caption text-primary font-weight-medium" v-if="getLineSku(line)">
+                              SKU: {{ getLineSku(line) }}
+                            </div>
+                          </div>
                         </div>
                       </td>
-                      <td class="py-2 px-2 text-right">
+                      <td class="py-1.5 px-2 text-center">
+                        <v-text-field
+                          v-model.number="line.quantity"
+                          type="number"
+                          min="1"
+                          density="compact"
+                          variant="plain"
+                          hide-details
+                          class="qty-field mx-auto"
+                          style="max-width: 75px;"
+                        ></v-text-field>
+                      </td>
+                      <td class="py-1.5 px-2 text-right">
                         <v-text-field
                           v-model.number="line.priceUnit"
                           type="number"
                           min="0"
                           density="compact"
-                          variant="outlined"
+                          variant="plain"
                           hide-details
                           suffix="₫"
-                          class="price-field text-right"
-                          style="max-width: 140px; margin-left: auto;"
+                          class="price-field text-right font-weight-bold text-high-emphasis"
+                          style="max-width: 130px; margin-left: auto;"
                         ></v-text-field>
                       </td>
-                      <td class="py-2 px-3 text-right font-weight-bold text-primary">
+                      <td class="py-1.5 px-3 text-right font-weight-bold text-primary">
                         {{ formatCurrency((Number(line.quantity) || 0) * (Number(line.priceUnit) || 0)) }}
                       </td>
-                      <td class="py-2 px-2 text-center">
+                      <td class="py-1.5 px-2 text-center">
                         <v-btn
                           icon="lucide-trash-2"
                           size="x-small"
@@ -396,16 +391,16 @@
         </v-card-text>
 
         <!-- Sticky Footer -->
-        <v-card-actions class="px-6 py-3.5 border-t bg-white d-flex justify-space-between align-center flex-shrink-0">
+        <v-card-actions class="px-6 py-3.5 border-t bg-surface d-flex justify-space-between align-center flex-shrink-0">
           <div class="d-flex align-center gap-4 flex-wrap">
-            <div class="text-caption text-grey-darken-1">
-              Số mặt hàng: <strong class="text-grey-darken-3">{{ detailForm.lines.length }}</strong>
+            <div class="text-caption text-medium-emphasis">
+              Số mặt hàng: <strong class="text-high-emphasis">{{ detailForm.lines.length }}</strong>
             </div>
-            <div class="text-caption text-grey-darken-1">
-              Tổng số lượng: <strong class="text-grey-darken-3">{{ detailTotalQty }}</strong>
+            <div class="text-caption text-medium-emphasis">
+              Tổng số lượng: <strong class="text-high-emphasis">{{ detailTotalQty }}</strong>
             </div>
             <div class="d-flex align-center">
-              <span class="text-caption text-grey-darken-1 mr-1.5">Tổng tiền:</span>
+              <span class="text-caption text-medium-emphasis mr-1.5">Tổng tiền:</span>
               <span class="text-h6 font-weight-bold text-primary">{{ formatCurrency(detailTotalAmount) }}</span>
             </div>
           </div>
@@ -431,7 +426,7 @@
 
     <!-- ==================== POPUP TẠO PHIẾU NHẬP MỚI ==================== -->
     <v-dialog v-model="dialog" max-width="880px" scrollable persistent>
-      <v-card rounded="xl" class="d-flex flex-column overflow-hidden elevation-10" style="max-height: 85vh;">
+      <v-card rounded="xl" class="d-flex flex-column overflow-hidden elevation-10 bg-surface" style="max-height: 85vh;">
         <!-- Header -->
         <v-card-title class="pa-4 px-6 bg-primary text-white d-flex justify-space-between align-center flex-shrink-0">
           <div>
@@ -468,7 +463,7 @@
         </v-card-title>
 
         <!-- Body -->
-        <v-card-text class="pa-6 overflow-y-auto flex-grow-1">
+        <v-card-text class="pa-6 overflow-y-auto flex-grow-1 bg-surface-variant">
           <v-form ref="form" v-model="valid">
             <v-row dense>
               <!-- Nhà cung cấp -->
@@ -597,7 +592,7 @@
             <!-- Product Lines Header -->
             <div class="d-flex justify-space-between align-center mb-3">
               <div>
-                <span class="text-subtitle-1 font-weight-bold text-grey-darken-3">Sản phẩm cần nhập</span>
+                <span class="text-subtitle-1 font-weight-bold text-high-emphasis">Sản phẩm cần nhập</span>
                 <span v-if="txForm.lines.length" class="text-caption text-primary ml-2 font-weight-medium">
                   ({{ txForm.lines.length }} sản phẩm)
                 </span>
@@ -615,14 +610,14 @@
             </div>
 
             <!-- Empty Product Lines State -->
-            <div v-if="txForm.lines.length === 0" class="text-center py-7 px-4 border border-dashed rounded-xl bg-grey-lighten-5 mb-4">
+            <div v-if="txForm.lines.length === 0" class="text-center py-7 px-4 border border-dashed rounded-xl bg-surface mb-4">
               <v-avatar size="44" color="primary" variant="tonal" class="mb-2">
                 <v-icon size="22" color="primary">lucide-package-plus</v-icon>
               </v-avatar>
-              <div class="text-subtitle-2 font-weight-bold text-grey-darken-3 mb-1">
+              <div class="text-subtitle-2 font-weight-bold text-high-emphasis mb-1">
                 Chưa có sản phẩm nào trong phiếu nhập
               </div>
-              <div class="text-caption text-grey-darken-1 mb-3">
+              <div class="text-caption text-medium-emphasis mb-3">
                 Nhấn vào nút bên dưới để chọn sản phẩm từ danh mục Directus & Odoo
               </div>
               <v-btn
@@ -638,8 +633,8 @@
             </div>
 
             <!-- Product Lines Table List -->
-            <div v-else class="border rounded-xl overflow-hidden mb-4 bg-white">
-              <div class="d-flex align-center px-4 py-2.5 bg-grey-lighten-4 border-b text-caption font-weight-bold text-grey-darken-2">
+            <div v-else class="border rounded-lg overflow-hidden mb-4 bg-surface">
+              <div class="d-flex align-center px-4 py-2.5 bg-surface-variant border-b text-caption font-weight-bold text-medium-emphasis">
                 <div style="flex: 2">Sản phẩm</div>
                 <div style="width: 130px;" class="text-center">Số lượng</div>
                 <div style="width: 140px;" class="text-right">Đơn giá</div>
@@ -650,30 +645,25 @@
               <div
                 v-for="(line, idx) in txForm.lines"
                 :key="idx"
-                class="d-flex align-center px-4 py-3 border-b hover-bg"
+                class="d-flex align-center px-4 py-1.5 border-b hover-bg"
               >
                 <!-- Cột Sản phẩm -->
                 <div style="flex: 2" class="pr-3">
-                  <div class="d-flex align-center gap-2.5">
+                  <div class="d-flex align-center gap-3">
                     <v-avatar size="36" rounded="lg" color="grey-lighten-3" class="flex-shrink-0">
                       <v-img
-                        v-if="line.selectedProduct?.imageUrl || line.selectedProduct?.thumbnailUrl"
-                        :src="line.selectedProduct.imageUrl || line.selectedProduct.thumbnailUrl"
+                        v-if="getLineImage(line)"
+                        :src="getLineImage(line)"
                         cover
                       ></v-img>
                       <v-icon v-else size="18" color="grey-darken-1">lucide-package</v-icon>
                     </v-avatar>
                     <div class="overflow-hidden">
-                      <div class="text-subtitle-2 font-weight-medium text-grey-darken-4 text-truncate">
-                        {{ line.selectedProduct?.name }}
+                      <div class="text-subtitle-2 font-weight-medium text-high-emphasis text-truncate" :title="line.productName || line.selectedProduct?.name">
+                        {{ line.productName || line.selectedProduct?.name }}
                       </div>
-                      <div class="d-flex align-center gap-2 text-caption text-grey">
-                        <span v-if="line.selectedProduct?.sku" class="font-weight-medium text-primary">
-                          SKU: {{ line.selectedProduct.sku }}
-                        </span>
-                        <span v-if="line.selectedProduct?.odooId || line.selectedProduct?.id">
-                          #{{ line.selectedProduct.odooId || line.selectedProduct.id }}
-                        </span>
+                      <div class="text-caption text-primary font-weight-medium" v-if="getLineSku(line)">
+                        SKU: {{ getLineSku(line) }}
                       </div>
                     </div>
                   </div>
@@ -681,33 +671,16 @@
 
                 <!-- Cột Số lượng -->
                 <div style="width: 130px;" class="text-center px-2">
-                  <div class="d-flex align-center justify-center gap-1">
-                    <v-btn
-                      icon="lucide-minus"
-                      size="x-small"
-                      variant="text"
-                      density="compact"
-                      :disabled="Number(line.quantity) <= 1"
-                      @click="decrementLineQty(line)"
-                    ></v-btn>
-                    <v-text-field
-                      v-model.number="line.quantity"
-                      type="number"
-                      min="1"
-                      density="compact"
-                      variant="outlined"
-                      hide-details
-                      class="text-center"
-                      style="width: 55px;"
-                    ></v-text-field>
-                    <v-btn
-                      icon="lucide-plus"
-                      size="x-small"
-                      variant="text"
-                      density="compact"
-                      @click="incrementLineQty(line)"
-                    ></v-btn>
-                  </div>
+                  <v-text-field
+                    v-model.number="line.quantity"
+                    type="number"
+                    min="1"
+                    density="compact"
+                    variant="plain"
+                    hide-details
+                    class="qty-field mx-auto"
+                    style="max-width: 75px;"
+                  ></v-text-field>
                 </div>
 
                 <!-- Cột Đơn giá -->
@@ -717,10 +690,11 @@
                     type="number"
                     min="0"
                     density="compact"
-                    variant="outlined"
+                    variant="plain"
                     hide-details
                     suffix="₫"
-                    class="text-right"
+                    class="price-field text-right font-weight-bold text-high-emphasis"
+                    style="max-width: 120px; margin-left: auto;"
                   ></v-text-field>
                 </div>
 
@@ -756,13 +730,13 @@
         </v-card-text>
 
         <!-- Sticky Footer -->
-        <v-card-actions class="px-6 py-3.5 border-t bg-white d-flex justify-space-between align-center flex-shrink-0">
+        <v-card-actions class="px-6 py-3.5 border-t bg-surface d-flex justify-space-between align-center flex-shrink-0">
           <div class="d-flex align-center gap-4 flex-wrap">
-            <div class="text-caption text-grey-darken-1">
-              Số mặt hàng: <strong class="text-grey-darken-3">{{ txForm.lines.length }}</strong>
+            <div class="text-caption text-medium-emphasis">
+              Số mặt hàng: <strong class="text-high-emphasis">{{ txForm.lines.length }}</strong>
             </div>
             <div class="d-flex align-center">
-              <span class="text-caption text-grey-darken-1 mr-1.5">Tổng tiền trước thuế:</span>
+              <span class="text-caption text-medium-emphasis mr-1.5">Tổng tiền trước thuế:</span>
               <span class="text-h6 font-weight-bold text-primary">{{ formatCurrency(totalAmount) }}</span>
             </div>
           </div>
@@ -789,6 +763,7 @@
     <!-- Product Picker Dialog (Shared for Create & Edit) -->
     <ProductPickerDialog
       v-model="showProductPicker"
+      mode="purchase"
       @select="handleProductPicked"
     />
 
@@ -803,7 +778,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { api } from '@/api';
 import { useInventoryStore } from '@/stores/inventory';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
@@ -824,6 +799,46 @@ const locationOptions = ref<any[]>([]);
 const selectedVendor = ref<any>(null);
 const selectedLocation = ref<any>(null);
 
+function restoreCachedVendorAndLocation() {
+  try {
+    const cachedVendor = localStorage.getItem('ocms_last_po_vendor');
+    if (cachedVendor && !selectedVendor.value) {
+      const parsed = JSON.parse(cachedVendor);
+      if (parsed?.id) {
+        selectedVendor.value = parsed;
+        if (!vendorOptions.value.some(v => v.id === parsed.id)) {
+          vendorOptions.value.push(parsed);
+        }
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const cachedLoc = localStorage.getItem('ocms_last_po_location');
+    if (cachedLoc && !selectedLocation.value) {
+      const parsed = JSON.parse(cachedLoc);
+      if (parsed?.id || parsed?.display_name || parsed?.name) {
+        selectedLocation.value = parsed;
+        if (parsed.id && !locationOptions.value.some(l => l.id === parsed.id)) {
+          locationOptions.value.push(parsed);
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+watch(selectedVendor, (val) => {
+  if (val) {
+    localStorage.setItem('ocms_last_po_vendor', JSON.stringify(val));
+  }
+}, { deep: true });
+
+watch(selectedLocation, (val) => {
+  if (val) {
+    localStorage.setItem('ocms_last_po_location', JSON.stringify(val));
+  }
+}, { deep: true });
+
 const loadingOdooData = ref(false);
 const loadingVendors = ref(false);
 const loadingLocations = ref(false);
@@ -837,12 +852,22 @@ const snackbar = ref({
   color: 'success'
 });
 
+function getTodayDateString(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const txForm = ref({
-  orderDeadline: '',
-  expectedDate: '',
+  orderDeadline: getTodayDateString(),
+  expectedDate: getTodayDateString(),
   notes: '',
   lines: [] as any[]
 });
+
+
 
 // Detail & Edit Dialog State
 const detailDialog = ref(false);
@@ -973,13 +998,7 @@ function getStateColor(state: string) {
   }
 }
 
-function incrementLineQty(line: any) {
-  line.quantity = (Number(line.quantity) || 0) + 1;
-}
 
-function decrementLineQty(line: any) {
-  line.quantity = Math.max(1, (Number(line.quantity) || 1) - 1);
-}
 
 // Picker trigger functions
 function openPickerForCreate() {
@@ -1018,17 +1037,80 @@ function onCreateProductPicked(product: any, qty: number) {
   }
 }
 
+function getLineSku(line: any): string {
+  if (line.productSku) return line.productSku;
+  if (line.sku) return line.sku;
+  if (line.selectedProduct?.sku) return line.selectedProduct.sku;
+  if (line.selectedProduct?.defaultCode) return line.selectedProduct.defaultCode;
+  if (line.selectedProduct?.default_code) return line.selectedProduct.default_code;
+  
+  const pId = line.productId || line.selectedProduct?.id || line.selectedProduct?.odooId;
+  if (pId && inventoryStore.productList.length > 0) {
+    const found = inventoryStore.productList.find((p: any) => 
+      String(p.id) === String(pId) || 
+      String(p.odoo_id) === String(pId) || 
+      String(p.odooId) === String(pId)
+    );
+    if (found?.sku) return found.sku;
+  }
+  
+  const pName = line.productName || line.selectedProduct?.name;
+  if (pName) {
+    if (inventoryStore.productList.length > 0) {
+      const found = inventoryStore.productList.find((p: any) => 
+        p.name === pName || p.display_name === pName || p.productName === pName
+      );
+      if (found?.sku) return found.sku;
+    }
+    const match = pName.match(/^\[(.*?)\]/);
+    if (match && match[1]) return match[1];
+  }
+  
+  return '';
+}
+
+function getLineImage(line: any): string {
+  if (line.imageUrl) return line.imageUrl;
+  if (line.selectedProduct?.imageUrl) return line.selectedProduct.imageUrl;
+  if (line.selectedProduct?.thumbnailUrl) return line.selectedProduct.thumbnailUrl;
+  
+  const pId = line.productId || line.selectedProduct?.id || line.selectedProduct?.odooId;
+  if (pId && inventoryStore.productList.length > 0) {
+    const found = inventoryStore.productList.find((p: any) => 
+      String(p.id) === String(pId) || 
+      String((p as any).odoo_id) === String(pId) || 
+      String(p.odooId) === String(pId)
+    );
+    if (found?.imageUrl || (found as any)?.image_url) return (found?.imageUrl || (found as any)?.image_url || '');
+  }
+  
+  const pName = line.productName || line.selectedProduct?.name;
+  if (pName && inventoryStore.productList.length > 0) {
+    const found = inventoryStore.productList.find((p: any) => 
+      p.name === pName || (p as any).display_name === pName || (p as any).productName === pName
+    );
+    if (found?.imageUrl || (found as any)?.image_url) return (found?.imageUrl || (found as any)?.image_url || '');
+  }
+  
+  return '';
+}
+
 function onEditProductPicked(product: any, qty: number) {
   const pId = product.odooId || product.id;
   const existing = (detailForm.value.lines || []).find((l: any) => l.productId === pId);
   const unitPrice = product.priceUnit || product.list_price || product.listPrice || product.retail_price || 0;
+  const sku = product.sku || product.default_code || product.defaultCode || null;
+  const img = product.imageUrl || product.image_url || product.thumbnailUrl || null;
 
   if (existing) {
     existing.quantity = (Number(existing.quantity) || 0) + (qty || 1);
   } else {
     detailForm.value.lines.push({
       productId: pId,
-      productName: product.name,
+      productName: product.name || product.display_name,
+      productSku: sku,
+      sku: sku,
+      imageUrl: img,
       quantity: qty || 1,
       priceUnit: unitPrice,
       priceSubtotal: (qty || 1) * unitPrice
@@ -1145,7 +1227,13 @@ async function saveDetailChanges() {
 // Open Create Dialog
 function openCreateDialog() {
   dialog.value = true;
-  txForm.value.lines = [];
+  txForm.value = {
+    orderDeadline: getTodayDateString(),
+    expectedDate: getTodayDateString(),
+    notes: '',
+    lines: []
+  };
+  restoreCachedVendorAndLocation();
   setTimeout(() => {
     form.value?.resetValidation?.();
   }, 50);
@@ -1276,6 +1364,7 @@ async function loadOdooData() {
     ]);
     vendorOptions.value = venRes.data?.vendors || [];
     locationOptions.value = locRes.data?.locations || [];
+    restoreCachedVendorAndLocation();
     snackbar.value = {
       show: true,
       text: `Đã đồng bộ Odoo: ${vendorOptions.value.length} NCC, ${locationOptions.value.length} địa điểm kho`,
@@ -1317,11 +1406,11 @@ async function submitPO() {
     const res = await api.post('/inventory/purchase', payload);
     dialog.value = false;
     
-    selectedVendor.value = null;
-    selectedLocation.value = null;
+    // Keep cached vendor and location prefilled for convenience
+    restoreCachedVendorAndLocation();
     txForm.value = {
-      orderDeadline: '',
-      expectedDate: '',
+      orderDeadline: getTodayDateString(),
+      expectedDate: getTodayDateString(),
       notes: '',
       lines: []
     };
@@ -1401,44 +1490,44 @@ onMounted(() => {
   background-color: rgba(0, 0, 0, 0.02);
 }
 .purchase-order-table {
-  table-layout: fixed;
+  table-layout: auto;
+  width: 100%;
 }
 .purchase-order-table th,
 .purchase-order-table td {
   white-space: nowrap;
   vertical-align: middle;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
 }
-.purchase-order-table .vendor-cell,
+.purchase-order-table .vendor-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .purchase-order-table .activity-cell {
-  max-width: 240px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .purchase-order-table .purchase-code-cell {
-  min-width: 150px;
+  white-space: nowrap;
 }
-.purchase-detail-dialog {
-  background: #0f172a;
+.hover-bg:hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.04);
 }
-.purchase-detail-body {
-  background: #0f172a;
-  color: #f8fafc;
+:deep(.qty-field input) {
+  text-align: center !important;
+  font-weight: 600 !important;
 }
-:deep(.v-theme--dark) .purchase-detail-dialog,
-:deep(.v-theme--dark) .purchase-detail-body {
-  background: #0f172a !important;
-  color: #f8fafc !important;
+:deep(.price-field input) {
+  text-align: right !important;
+  font-weight: 700 !important;
 }
-:deep(.v-theme--dark) .v-card,
-:deep(.v-theme--dark) .v-card-text,
-:deep(.v-theme--dark) .v-dialog > .v-card {
-  background: #0f172a !important;
-  color: #f8fafc !important;
-}
-:deep(.v-theme--dark) .v-sheet,
-:deep(.v-theme--dark) .v-card-title,
-:deep(.v-theme--dark) .v-card-actions {
-  background: #0f172a !important;
-  color: #f8fafc !important;
+:deep(.qty-field .v-field__outline),
+:deep(.price-field .v-field__outline),
+:deep(.qty-field .v-field__overlay),
+:deep(.price-field .v-field__overlay) {
+  display: none !important;
 }
 </style>

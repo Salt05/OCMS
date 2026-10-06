@@ -55,6 +55,21 @@
               Xác nhận đơn
             </v-btn>
 
+            <!-- Nút Xác nhận giao hàng (chỉ hiện khi đơn hàng ở trạng thái Đơn hàng) -->
+            <v-btn
+              v-if="!isEditing && order && !readOnly && (order.state === 'sale' || order.state === 'done') && order.deliveryStatus !== 'full'"
+              size="small"
+              color="teal"
+              variant="flat"
+              prepend-icon="lucide-truck"
+              class="text-none font-weight-bold mr-1"
+              :loading="deliveringAll"
+              @click="promptDeliverAll"
+              title="Xác nhận giao hàng và cập nhật ghi chú hoạt động Odoo"
+            >
+              Giao Hàng
+            </v-btn>
+
             <!-- Edit Mode Toggle Button -->
             <v-btn
               v-if="!isEditing && order && !readOnly && order.odooOrderId"
@@ -279,11 +294,12 @@
                     <th :class="isMobile ? 'text-left' : ''">
                       {{ isMobile ? 'Mã SP' : 'Sản phẩm' }}
                     </th>
-                    <th v-if="!isMobile" style="width: 80px;" class="text-center">ĐVT</th>
-                    <th :style="!isMobile ? 'width: 100px;' : ''" class="text-center">SL</th>
-                    <th :style="!isMobile ? 'width: 140px;' : ''" class="text-right">Đơn giá</th>
-                    <th :style="!isMobile ? 'width: 90px;' : ''" class="text-center">CK %</th>
-                    <th :style="!isMobile ? 'width: 130px;' : ''" class="text-right">Thành tiền</th>
+                    <th v-if="!isMobile" style="width: 70px;" class="text-center">ĐVT</th>
+                    <th :style="!isMobile ? 'width: 80px;' : ''" class="text-center">SL đặt</th>
+                    <th :style="!isMobile ? 'width: 90px;' : ''" class="text-center">Đã giao</th>
+                    <th :style="!isMobile ? 'width: 125px;' : ''" class="text-right">Đơn giá</th>
+                    <th :style="!isMobile ? 'width: 75px;' : ''" class="text-center">CK %</th>
+                    <th :style="!isMobile ? 'width: 120px;' : ''" class="text-right">Thành tiền</th>
                     <th v-if="isEditing" style="width: 45px;" class="text-center"></th>
                   </tr>
                 </thead>
@@ -291,7 +307,7 @@
                   <!-- ── 1. READ ONLY MODE ── -->
                   <template v-if="!isEditing">
                     <tr v-if="productLines.length === 0">
-                      <td :colspan="isMobile ? 6 : 7" class="text-center text-medium-emphasis py-6">Không có dữ liệu dòng sản phẩm</td>
+                      <td :colspan="isMobile ? 7 : 8" class="text-center text-medium-emphasis py-6">Không có dữ liệu dòng sản phẩm</td>
                     </tr>
                     <tr v-for="(line, idx) in productLines" :key="line.id">
                       <td class="text-center text-caption text-medium-emphasis">{{ idx + 1 }}</td>
@@ -310,6 +326,16 @@
                       </td>
                       <td v-if="!isMobile" class="text-center text-caption">{{ line.uomName || 'Units' }}</td>
                       <td class="text-center font-weight-medium">{{ line.quantity }}</td>
+                      <td class="text-center">
+                        <v-chip
+                          size="x-small"
+                          :color="line.qtyDelivered >= line.quantity ? 'success' : line.qtyDelivered > 0 ? 'warning' : 'grey'"
+                          variant="tonal"
+                          class="font-weight-bold"
+                        >
+                          {{ line.qtyDelivered ?? 0 }}
+                        </v-chip>
+                      </td>
                       <td class="text-right text-caption">
                         <div v-if="!isMobile && line.originalPrice && line.originalPrice > line.priceUnit" class="text-caption text-decoration-line-through text-medium-emphasis">
                           {{ formatVND(line.originalPrice) }}
@@ -329,7 +355,7 @@
                   <!-- ── 2. EDIT MODE ── -->
                   <template v-else>
                     <tr v-if="editedLines.length === 0">
-                      <td :colspan="isMobile ? 6 : 8" class="text-center text-medium-emphasis py-6">
+                      <td :colspan="isMobile ? 7 : 9" class="text-center text-medium-emphasis py-6">
                         Chưa có sản phẩm nào. Bấm "+ Thêm sản phẩm" ở trên để chọn.
                       </td>
                     </tr>
@@ -349,8 +375,20 @@
                             type="number"
                             v-model.number="line.quantity"
                             min="1"
-                            class="text-center font-weight-bold"
-                            style="width: 48px; font-size: 0.85rem; border: none; outline: none; background: transparent;"
+                            style="width: 55px; text-align: center; font-weight: 600; outline: none; border: none;"
+                            class="text-caption"
+                          />
+                        </div>
+                      </td>
+                      <!-- Delivered Qty in Edit Mode -->
+                      <td class="text-center">
+                        <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
+                          <input
+                            type="number"
+                            v-model.number="line.qtyDelivered"
+                            min="0"
+                            style="width: 55px; text-align: center; font-weight: 700; outline: none; border: none;"
+                            class="text-caption text-success"
                           />
                         </div>
                       </td>
@@ -861,6 +899,47 @@
       </v-card>
     </v-dialog>
 
+    <!-- Dialog Xác nhận Giao Hàng & Ghi chú Hoạt động Odoo -->
+    <v-dialog v-model="showDeliverDialog" max-width="480px" persistent>
+      <v-card class="rounded-xl">
+        <v-card-title class="text-subtitle-1 font-weight-bold d-flex align-center gap-2 bg-teal text-white py-3 px-4">
+          <v-icon size="20">lucide-truck</v-icon>
+          Xác nhận Giao Hàng #{{ order?.orderCode }}
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <div class="text-body-2 mb-3">
+            Hệ thống sẽ xác nhận giao 100% tất cả sản phẩm và tự động cập nhật ghi chú hoạt động giao việc trên Odoo.
+          </div>
+
+          <v-textarea
+            v-model="deliverActivityNote"
+            label="Ghi chú giao việc / Hoạt động Odoo *"
+            variant="outlined"
+            density="compact"
+            rows="2"
+            auto-grow
+            placeholder="Ví dụ: 06/10 Đã Giao"
+            hide-details
+            class="mb-2 text-body-2 font-weight-medium"
+          />
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="pa-3 bg-surface d-flex justify-end gap-2">
+          <v-btn variant="outlined" color="grey" :disabled="deliveringAll" @click="showDeliverDialog = false">Hủy bỏ</v-btn>
+          <v-btn
+            color="teal"
+            variant="flat"
+            class="text-none font-weight-bold"
+            :loading="deliveringAll"
+            prepend-icon="lucide-check-circle-2"
+            @click="executeDeliverAll"
+          >
+            Xác nhận Giao Hàng
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar
       v-model="snackbar.show"
       :color="snackbar.color"
@@ -918,6 +997,48 @@ const {
 } = useOrders();
 
 const generatingPdf = ref(false);
+const deliveringAll = ref(false);
+const showDeliverDialog = ref(false);
+const deliverActivityNote = ref('');
+
+function promptDeliverAll() {
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2, '0');
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  deliverActivityNote.value = `${dd}/${mm} Đã Giao`;
+  showDeliverDialog.value = true;
+}
+
+async function executeDeliverAll() {
+  if (!props.order?.id) return;
+  deliveringAll.value = true;
+  try {
+    const res = await api.post(`/orders/${props.order.id}/deliver-all`, {
+      activitySummary: deliverActivityNote.value.trim(),
+    });
+    if (res.data?.success) {
+      if (res.data.order) {
+        Object.assign(props.order, res.data.order);
+      }
+      showDeliverDialog.value = false;
+      snackbar.value = {
+        show: true,
+        text: res.data.message || 'Đã xác nhận giao hàng và cập nhật ghi chú thành công!',
+        color: 'success',
+      };
+      emit('saved', props.order);
+    }
+  } catch (err: any) {
+    console.error('Deliver all items error:', err);
+    snackbar.value = {
+      show: true,
+      text: err.response?.data?.error || err.message || 'Lỗi khi xác nhận giao hàng',
+      color: 'error',
+    };
+  } finally {
+    deliveringAll.value = false;
+  }
+}
 
 async function generatePdf() {
   if (!props.order?.id) return;
@@ -1021,6 +1142,7 @@ const editedLines = ref<Array<{
   productSku?: string;
   uomName?: string;
   quantity: number;
+  qtyDelivered?: number;
   priceUnit: number;
   discount: number;
 }>>([]);
@@ -1228,6 +1350,7 @@ function startEdit() {
     productSku: l.productSku || undefined,
     uomName: l.uomName || 'Units',
     quantity: l.quantity,
+    qtyDelivered: l.qtyDelivered || 0,
     priceUnit: l.priceUnit,
     discount: l.discount || 0,
   }));

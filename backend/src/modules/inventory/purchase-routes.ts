@@ -5,6 +5,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { routerClient } from '../../shared/services/router-client.js';
 import { odooService } from '../odoo/odoo-service.js';
 import { odooSyncService } from '../sync/odoo-sync-service.js';
+import { inventoryService } from './inventory-service.js';
 
 function getPurchaseOrderSortNumber(po: any): number {
   const rawCode = po?.purchaseCode || po?.odooPurchaseId ? `PO${String(po?.odooPurchaseId || '').padStart(5, '0')}` : '';
@@ -205,6 +206,13 @@ export async function purchaseRoutes(app: FastifyInstance) {
         include: { lines: true }
       });
 
+      if (po.state === 'done') {
+        const poCode = po.odooPurchaseId ? `PO${String(po.odooPurchaseId).padStart(5, '0')}` : `PO-${po.id.slice(0, 6).toUpperCase()}`;
+        await inventoryService.receivePurchaseStock(orgId, po.id, poCode, po.lines, userId).catch(err => {
+          logger.error('Error applying stock for new done PO:', err);
+        });
+      }
+
       return { success: true, data: po };
     } catch (error: any) {
       logger.error('Error creating purchase order:', error);
@@ -231,7 +239,8 @@ export async function purchaseRoutes(app: FastifyInstance) {
       } = request.body as any;
 
       const existing = await prisma.purchaseOrder.findFirst({
-        where: { id, orgId }
+        where: { id, orgId },
+        include: { lines: true }
       });
 
       if (!existing) {
@@ -253,6 +262,11 @@ export async function purchaseRoutes(app: FastifyInstance) {
         };
       });
 
+      const userId = request.user?.id;
+      const targetState = state !== undefined ? state : existing.state;
+      const isTransitioningToDone = existing.state !== 'done' && targetState === 'done';
+      const isTransitioningFromDone = existing.state === 'done' && targetState !== 'done';
+
       // Update in transaction: replace lines & update PO fields
       const updated = await prisma.$transaction(async (tx) => {
         if (lines && lines.length >= 0) {
@@ -270,7 +284,7 @@ export async function purchaseRoutes(app: FastifyInstance) {
             orderDeadline: orderDeadline !== undefined ? (orderDeadline ? new Date(orderDeadline) : null) : existing.orderDeadline,
             expectedDate: expectedDate !== undefined ? (expectedDate ? new Date(expectedDate) : null) : existing.expectedDate,
             notes: notes !== undefined ? notes : existing.notes,
-            state: state || existing.state,
+            state: targetState,
             amountUntaxed,
             amountTotal: amountUntaxed,
             lines: {
@@ -283,6 +297,18 @@ export async function purchaseRoutes(app: FastifyInstance) {
           }
         });
       });
+
+      const poCode = updated.odooPurchaseId ? `PO${String(updated.odooPurchaseId).padStart(5, '0')}` : `PO-${updated.id.slice(0, 6).toUpperCase()}`;
+
+      if (isTransitioningToDone) {
+        await inventoryService.receivePurchaseStock(orgId, updated.id, poCode, updated.lines, userId).catch(err => {
+          logger.error('Error in receivePurchaseStock on PO update:', err);
+        });
+      } else if (isTransitioningFromDone) {
+        await inventoryService.revertPurchaseStock(orgId, existing.id, poCode, existing.lines, userId).catch(err => {
+          logger.error('Error in revertPurchaseStock on PO update:', err);
+        });
+      }
 
       return { success: true, data: updated };
     } catch (error: any) {

@@ -312,6 +312,16 @@
                 >
                   AI {{ Math.round(line.aiConfidence * 100) }}%
                 </v-chip>
+
+                <!-- Warning notice if line.qty > available_quantity -->
+                <div
+                  v-if="line.product && line.qty > (line.product.available_quantity ?? 0)"
+                  class="text-caption text-error font-weight-medium mt-1 d-flex align-center gap-1"
+                  style="font-size: 11px;"
+                >
+                  <v-icon size="12" color="error">lucide-alert-circle</v-icon>
+                  <span>Lưu ý: số lượng không đủ</span>
+                </div>
               </div>
 
               <!-- Right: Delete Button -->
@@ -607,16 +617,7 @@ function onUnitPriceInput(line: OrderLineItem, event: Event) {
 
 // Quantity controls
 function incrementQty(line: OrderLineItem) {
-  let maxQty = line.product?.available_quantity;
-  let nextQty = (Number(line.qty) || 0) + 1;
-  if (maxQty !== undefined) {
-    if (maxQty <= 0) {
-      nextQty = 0;
-    } else if (nextQty > maxQty) {
-      nextQty = maxQty;
-    }
-  }
-  line.qty = nextQty;
+  line.qty = (Number(line.qty) || 0) + 1;
 }
 
 function decrementQty(line: OrderLineItem) {
@@ -626,19 +627,10 @@ function decrementQty(line: OrderLineItem) {
 }
 
 function onQtyChange(line: OrderLineItem) {
-  let maxQty = line.product?.available_quantity;
   if (line.qty === null || line.qty === undefined || line.qty < 0 || isNaN(line.qty)) {
     line.qty = 0;
   } else {
-    let q = Math.floor(line.qty);
-    if (maxQty !== undefined) {
-      if (maxQty <= 0) {
-        q = 0;
-      } else if (q > maxQty) {
-        q = maxQty;
-      }
-    }
-    line.qty = q;
+    line.qty = Math.floor(line.qty);
   }
 }
 

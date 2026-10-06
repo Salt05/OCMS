@@ -108,7 +108,14 @@ export const useInventoryStore = defineStore('inventory', () => {
   const itemsCache = new Map<string, { items: InventoryItem[]; total: number; timestamp: number }>();
   const ITEMS_CACHE_TTL = 30000; // 30s client cache
 
+  function clearItemsCache() {
+    itemsCache.clear();
+  }
+
   async function fetchItems(params: any = {}, options?: { force?: boolean }) {
+    if (options?.force) {
+      itemsCache.clear();
+    }
     const cacheKey = JSON.stringify(params);
     const cached = itemsCache.get(cacheKey);
     if (!options?.force && cached && Date.now() - cached.timestamp < ITEMS_CACHE_TTL) {
@@ -222,6 +229,7 @@ export const useInventoryStore = defineStore('inventory', () => {
     skuLoading,
     fetchDashboardStats,
     fetchItems,
+    clearItemsCache,
     fetchTransactions,
     createTransaction,
     searchReturnOrders,

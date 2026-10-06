@@ -117,6 +117,7 @@
 
   <ProductPickerDialog
     v-model="productPickerDialog"
+    mode="purchase"
     @select="addProduct"
   />
 

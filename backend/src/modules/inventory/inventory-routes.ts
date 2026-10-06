@@ -67,7 +67,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const query = (request.query || {}) as any;
     
     const page = Math.max(1, parseInt(query.page || '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(query.limit || '50', 10)));
+    const limitParam = parseInt(query.limit || '50', 10);
+    const limit = limitParam >= 1000 ? 999999 : Math.min(1000, Math.max(1, limitParam));
     
     try {
       const data = await inventoryService.getInventoryItems(user.orgId, {
@@ -131,6 +132,27 @@ export async function inventoryRoutes(app: FastifyInstance) {
     } catch (err: any) {
       logger.error('[inventory-routes] update minStock error:', err);
       return reply.status(500).send({ error: 'Lỗi khi cập nhật mức cảnh báo tồn kho' });
+    }
+  });
+
+  // 3c. Bulk Update Min Stock
+  app.post('/api/v1/inventory/bulk-min-stock', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const body = request.body as any;
+    if (!Array.isArray(body.skus) || typeof body.minStock !== 'number' || body.minStock < 0) {
+      return reply.status(400).send({ error: 'Thiếu hoặc sai thông tin bắt buộc: skus (array), minStock' });
+    }
+    
+    try {
+      await prisma.inventoryItem.updateMany({
+        where: { orgId: user.orgId, sku: { in: body.skus } },
+        data: { minStock: body.minStock }
+      });
+      inventoryService.clearCache();
+      return { success: true };
+    } catch (err: any) {
+      logger.error('[inventory-routes] bulk update minStock error:', err);
+      return reply.status(500).send({ error: 'Lỗi khi cập nhật mức cảnh báo tồn kho hàng loạt' });
     }
   });
 

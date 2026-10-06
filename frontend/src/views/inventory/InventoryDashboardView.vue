@@ -46,6 +46,15 @@
         </v-btn>
         <v-btn
           v-if="selectionMode && selectedProducts.length"
+          color="warning"
+          prepend-icon="lucide-bell"
+          class="text-none font-weight-medium"
+          @click="openBulkMinStockDialog(selectedProducts)"
+        >
+          Cảnh báo ({{ selectedProducts.length }})
+        </v-btn>
+        <v-btn
+          v-if="selectionMode && selectedProducts.length"
           color="primary"
           prepend-icon="lucide-file-plus"
           class="text-none font-weight-medium"
@@ -89,7 +98,8 @@
                 { title: 'Tất cả trạng thái', value: '' },
                 { title: 'Đủ hàng', value: 'in_stock' },
                 { title: 'Sắp hết hàng', value: 'low_stock' },
-                { title: 'Hết hàng', value: 'out_of_stock' }
+                { title: 'Hết hàng', value: 'out_of_stock' },
+                { title: 'Thiếu hàng', value: 'deficit' }
               ]"
               label="Trạng thái tồn kho"
               variant="outlined"
@@ -179,14 +189,18 @@
               </div>
             </td>
             <td class="text-grey-darken-1 text-caption text-no-wrap">{{ item.category || '---' }}</td>
-            <td class="text-right font-weight-medium">{{ item.onHand }}</td>
+            <td class="text-right font-weight-medium" :class="{ 'text-error font-weight-bold': item.onHand < 0 }">
+              {{ formatStock(item.onHand) }}
+            </td>
             <td class="text-right text-warning">{{ item.reserved }}</td>
             <td class="text-right text-grey-darken-1">{{ item.soldQuantity }}</td>
-            <td class="text-right font-weight-bold text-success">{{ item.available }}</td>
+            <td class="text-right font-weight-bold" :class="item.available < 0 ? 'text-error' : 'text-success'">
+              {{ formatStock(item.available) }}
+            </td>
             <td class="text-center">
               <v-chip
                 size="small"
-                :color="item.status === 'Đủ hàng' ? 'success' : (item.status === 'Sắp hết' ? 'warning' : 'error')"
+                :color="item.status === 'Đủ hàng' ? 'success' : (item.status === 'Sắp hết' ? 'warning' : (item.status === 'Thiếu hàng' ? 'error' : 'grey'))"
                 variant="flat"
               >
                 {{ item.status }}
@@ -218,9 +232,28 @@
       </v-table>
       
       <!-- Pagination -->
-      <div class="pa-4 border-t d-flex justify-space-between align-center" v-if="totalPages > 1">
+      <div class="pa-4 border-t d-flex justify-space-between align-center flex-wrap ga-3" v-if="totalItems > 0" style="gap: 12px;">
         <span class="text-caption text-grey">Tổng {{ totalItems }} sản phẩm</span>
-        <v-pagination v-model="page" :length="totalPages" density="compact" @update:modelValue="loadItems"></v-pagination>
+        <div class="d-flex align-center ga-4 flex-wrap" style="gap: 16px;">
+          <div class="d-flex align-center ga-2" style="gap: 8px;">
+            <span class="text-caption text-grey text-no-wrap">Hiển thị:</span>
+            <v-select
+              v-model="limit"
+              :items="[
+                { title: '25', value: 25 },
+                { title: '50', value: 50 },
+                { title: '100', value: 100 },
+                { title: 'Tất cả', value: 999999 }
+              ]"
+              variant="outlined"
+              density="compact"
+              hide-details
+              style="max-width: 110px;"
+              @update:modelValue="onLimitChange"
+            ></v-select>
+          </div>
+          <v-pagination v-if="totalPages > 1" v-model="page" :length="totalPages" density="compact" @update:modelValue="onPageChange"></v-pagination>
+        </div>
       </div>
     </v-card>
 
@@ -268,6 +301,36 @@
       </v-card>
     </v-dialog>
 
+    <!-- Bulk Min Stock Config Dialog -->
+    <v-dialog v-model="bulkMinStockDialog.visible" max-width="450px">
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold d-flex align-center">
+          <v-icon color="warning" class="mr-2">lucide-bell</v-icon>
+          Thiết lập cảnh báo hàng loạt
+        </v-card-title>
+        <v-card-text>
+          <div class="mb-4 text-body-2 text-grey-darken-1">
+            Bạn đang thiết lập cảnh báo cho <span class="font-weight-bold text-black">{{ bulkMinStockDialog.products.length }}</span> sản phẩm.
+          </div>
+          <v-text-field
+            v-model.number="bulkMinStockDialog.value"
+            type="number"
+            label="Số lượng cảnh báo chung"
+            variant="outlined"
+            density="compact"
+            min="0"
+            hint="Các sản phẩm sẽ chuyển trạng thái 'Sắp hết' khi: Có thể bán <= mức này."
+            persistent-hint
+          ></v-text-field>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer></v-spacer>
+          <v-btn variant="text" @click="bulkMinStockDialog.visible = false" :disabled="bulkMinStockDialog.loading">Hủy</v-btn>
+          <v-btn color="primary" variant="flat" :loading="bulkMinStockDialog.loading" @click="saveBulkMinStock">Lưu thay đổi</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Toast Notification -->
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3500" location="top right">
       {{ snackbar.text }}
@@ -295,6 +358,7 @@ const brandFilter = ref('Tất cả hãng');
 const sortBy = ref('');
 const sortOrder = ref('desc');
 const page = ref(1);
+const limit = ref(50);
 const detailModalVisible = ref(false);
 const detailItem = ref<any>(null);
 const selectionMode = ref(false);
@@ -308,11 +372,25 @@ const minStockDialog = ref({
   product: null as any,
   value: 0
 });
+const bulkMinStockDialog = ref({
+  visible: false,
+  loading: false,
+  products: [] as any[],
+  value: 0
+});
 const snackbar = ref({
   show: false,
   text: '',
   color: 'success'
 });
+
+function formatStock(val: number | undefined | null): string {
+  if (val === undefined || val === null) return '0';
+  if (val < 0) {
+    return `Thiếu ${Math.abs(val)}`;
+  }
+  return val.toString();
+}
 
 function openDetail(item: any) {
   detailItem.value = {
@@ -341,7 +419,7 @@ const brands = computed(() => {
 
 const items = computed(() => inventoryStore.items);
 const totalItems = computed(() => inventoryStore.totalItems);
-const totalPages = computed(() => Math.ceil(totalItems.value / 50));
+const totalPages = computed(() => Math.ceil(totalItems.value / limit.value));
 const selectedProductIds = computed(() => new Set(selectedProducts.value.map(product => product.id)));
 const allVisibleSelected = computed(() => items.value.length > 0 && items.value.every(item => selectedProductIds.value.has(item.id)));
 const someVisibleSelected = computed(() => items.value.some(item => selectedProductIds.value.has(item.id)));
@@ -400,7 +478,7 @@ async function saveMinStock() {
     });
     snackbar.value = { show: true, text: 'Đã cập nhật mức cảnh báo thành công', color: 'success' };
     minStockDialog.value.visible = false;
-    await loadItems();
+    await loadItems({ force: true });
   } catch (err: any) {
     snackbar.value = { show: true, text: err.response?.data?.error || 'Lỗi khi cập nhật cảnh báo', color: 'error' };
   } finally {
@@ -408,9 +486,35 @@ async function saveMinStock() {
   }
 }
 
+function openBulkMinStockDialog(products: any[]) {
+  bulkMinStockDialog.value.products = products;
+  bulkMinStockDialog.value.value = 0;
+  bulkMinStockDialog.value.visible = true;
+}
+
+async function saveBulkMinStock() {
+  if (!bulkMinStockDialog.value.products.length) return;
+  bulkMinStockDialog.value.loading = true;
+  try {
+    const skus = bulkMinStockDialog.value.products.map(p => p.sku);
+    await api.post('/inventory/bulk-min-stock', {
+      skus,
+      minStock: Number(bulkMinStockDialog.value.value) || 0
+    });
+    snackbar.value = { show: true, text: 'Đã cập nhật mức cảnh báo hàng loạt thành công', color: 'success' };
+    bulkMinStockDialog.value.visible = false;
+    selectedProducts.value = [];
+    await loadItems({ force: true });
+  } catch (err: any) {
+    snackbar.value = { show: true, text: err.response?.data?.error || 'Lỗi khi cập nhật cảnh báo hàng loạt', color: 'error' };
+  } finally {
+    bulkMinStockDialog.value.loading = false;
+  }
+}
+
 async function onTransactionSaved() {
   selectedProducts.value = [];
-  await loadItems();
+  await loadItems({ force: true });
 }
 
 // Actions
@@ -434,11 +538,11 @@ async function loadAll() {
     };
   } finally {
     syncingOdoo.value = false;
-    await loadItems();
+    await loadItems({ force: true });
   }
 }
 
-async function loadItems() {
+async function loadItems(options?: { force?: boolean }) {
   await inventoryStore.fetchItems({
     search: search.value.trim(),
     status: statusFilter.value,
@@ -447,8 +551,17 @@ async function loadItems() {
     sortBy: sortBy.value,
     sortOrder: sortOrder.value,
     page: page.value,
-    limit: 50
-  });
+    limit: limit.value
+  }, options);
+}
+
+function onPageChange() {
+  loadItems();
+}
+
+function onLimitChange() {
+  page.value = 1;
+  loadItems({ force: true });
 }
 
 function toggleSort(column: string) {
@@ -463,7 +576,7 @@ function toggleSort(column: string) {
 
 function onFilterChange() {
   page.value = 1;
-  loadItems();
+  loadItems({ force: true });
 }
 
 function onClearSearch() {
@@ -472,7 +585,7 @@ function onClearSearch() {
 }
 
 onMounted(() => {
-  loadItems();
+  loadItems({ force: true });
 });
 </script>
 

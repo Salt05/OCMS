@@ -139,10 +139,6 @@ export class InventoryService {
         }
 
         if (qtyDiff > 0) {
-          if (item.onHand - item.reserved < qtyDiff) {
-            throw new Error(`Không đủ tồn kho khả dụng cho sản phẩm ${line.sku}. Khả dụng: ${item.onHand - item.reserved}, Yêu cầu thêm: ${qtyDiff}`);
-          }
-
           await tx.inventoryItem.update({
             where: { id: item.id },
             data: { reserved: item.reserved + qtyDiff }
@@ -264,9 +260,6 @@ export class InventoryService {
         const currentReserved = orderLine.reservedQuantity || 0;
         const reservedToDeduct = Math.min(currentReserved, qtyToShip);
         const newOnHand = item.onHand - qtyToShip;
-        if (newOnHand < 0) {
-          throw new Error(`Không thể xuất kho: tồn kho thực tế của ${line.sku} bị âm (còn ${item.onHand}, xuất ${qtyToShip})`);
-        }
 
         await tx.inventoryItem.update({
           where: { id: item.id },
@@ -377,32 +370,70 @@ export class InventoryService {
   /**
    * Nhận hàng từ Purchase Order (nhập kho)
    */
-  async receivePurchaseStock(orgId: string, purchaseOrderId: string, purchaseCode: string, lines: { id: string, productId: number, quantity: number }[], userId?: string) {
+  async receivePurchaseStock(orgId: string, purchaseOrderId: string, purchaseCode: string, lines: { id?: string; productId?: number; productName?: string; quantity: number }[], userId?: string) {
     this.clearCache();
     return await prisma.$transaction(async (tx) => {
       for (const line of lines) {
-        // Find sku from productId (Odoo ID)
-        const pCache = await tx.productCache.findUnique({
-          where: { orgId_odooId: { orgId, odooId: line.productId } }
-        });
-        if (!pCache || !pCache.sku) continue;
-        const sku = pCache.sku;
+        if (!line.quantity || line.quantity <= 0) continue;
 
-        const idempotencyKey = `IMPORT_PO_${purchaseCode}_${sku}`;
+        let sku = '';
+        let productName = line.productName || '';
+        let uomName = 'Cái';
+
+        // 1. Try finding in ProductCache by productId
+        if (line.productId) {
+          const pCache = await tx.productCache.findFirst({
+            where: {
+              orgId,
+              OR: [{ odooId: Number(line.productId) }, { id: String(line.productId) }]
+            }
+          });
+          if (pCache) {
+            if (pCache.sku) sku = pCache.sku;
+            if (pCache.name) productName = pCache.name;
+            if (pCache.uomName) uomName = pCache.uomName;
+          }
+        }
+
+        // 2. Try extracting SKU from productName like "[E01] Name" or lookup by name
+        if (!sku && productName) {
+          const match = productName.match(/^\[(.*?)\]/);
+          if (match && match[1]) {
+            sku = match[1];
+          } else {
+            const pCache = await tx.productCache.findFirst({
+              where: { orgId, name: productName }
+            });
+            if (pCache?.sku) sku = pCache.sku;
+          }
+        }
+
+        if (!sku) {
+          sku = `PROD_${line.productId || productName || Date.now()}`;
+        }
+
+        const idempotencyKey = `IMPORT_PO_${purchaseOrderId}_${sku}_${line.quantity}`;
         const existingTx = await tx.inventoryTransaction.findUnique({ where: { idempotencyKey } });
-        if (existingTx) continue; // Đã nhận kho trước đó
+        if (existingTx) continue;
 
         let item = await tx.inventoryItem.findUnique({ where: { orgId_sku: { orgId, sku } } });
         if (!item) {
           item = await tx.inventoryItem.create({
             data: {
-              orgId, sku, productName: pCache.name, odooProductId: line.productId,
-              onHand: 0, reserved: 0, minStock: 0, unit: pCache.uomName || 'Cái'
+              orgId,
+              sku,
+              productName: productName || sku,
+              odooProductId: line.productId ? Number(line.productId) : null,
+              onHand: 0,
+              reserved: 0,
+              minStock: 0,
+              unit: uomName
             }
           });
         }
 
-        const newOnHand = item.onHand + line.quantity;
+        const quantityBefore = item.onHand;
+        const newOnHand = quantityBefore + line.quantity;
         await tx.inventoryItem.update({
           where: { id: item.id },
           data: { onHand: newOnHand }
@@ -410,13 +441,83 @@ export class InventoryService {
 
         await tx.inventoryTransaction.create({
           data: {
-            orgId, inventoryItemId: item.id, sku,
-            type: 'IMPORT', channel: 'ODOO',
+            orgId,
+            inventoryItemId: item.id,
+            sku,
+            type: 'IMPORT',
+            channel: 'ODOO',
             quantity: line.quantity,
-            quantityBefore: item.onHand,
+            quantityBefore,
             quantityAfter: newOnHand,
-            referenceType: 'PURCHASE_ORDER', referenceId: purchaseOrderId, referenceCode: purchaseCode,
-            performedByUserId: userId, reason: 'Nhập kho từ phiếu mua',
+            referenceType: 'PURCHASE_ORDER',
+            referenceId: purchaseOrderId,
+            referenceCode: purchaseCode,
+            performedByUserId: userId,
+            reason: `Nhập kho từ phiếu mua #${purchaseCode}`,
+            idempotencyKey
+          }
+        });
+      }
+    });
+  }
+
+  async revertPurchaseStock(orgId: string, purchaseOrderId: string, purchaseCode: string, lines: { id?: string; productId?: number; productName?: string; quantity: number }[], userId?: string) {
+    this.clearCache();
+    return await prisma.$transaction(async (tx) => {
+      for (const line of lines) {
+        if (!line.quantity || line.quantity <= 0) continue;
+
+        let sku = '';
+        if (line.productId) {
+          const pCache = await tx.productCache.findFirst({
+            where: {
+              orgId,
+              OR: [{ odooId: Number(line.productId) }, { id: String(line.productId) }]
+            }
+          });
+          if (pCache?.sku) sku = pCache.sku;
+        }
+
+        if (!sku && line.productName) {
+          const match = line.productName.match(/^\[(.*?)\]/);
+          if (match && match[1]) {
+            sku = match[1];
+          } else {
+            const pCache = await tx.productCache.findFirst({
+              where: { orgId, name: line.productName }
+            });
+            if (pCache?.sku) sku = pCache.sku;
+          }
+        }
+
+        if (!sku) continue;
+
+        const item = await tx.inventoryItem.findUnique({ where: { orgId_sku: { orgId, sku } } });
+        if (!item) continue;
+
+        const quantityBefore = item.onHand;
+        const newOnHand = Math.max(0, quantityBefore - line.quantity);
+        await tx.inventoryItem.update({
+          where: { id: item.id },
+          data: { onHand: newOnHand }
+        });
+
+        const idempotencyKey = `REVERT_PO_${purchaseOrderId}_${sku}_${line.quantity}_${Date.now()}`;
+        await tx.inventoryTransaction.create({
+          data: {
+            orgId,
+            inventoryItemId: item.id,
+            sku,
+            type: 'ADJUSTMENT_OUT',
+            channel: 'ODOO',
+            quantity: -line.quantity,
+            quantityBefore,
+            quantityAfter: newOnHand,
+            referenceType: 'PURCHASE_ORDER',
+            referenceId: purchaseOrderId,
+            referenceCode: purchaseCode,
+            performedByUserId: userId,
+            reason: `Hủy trạng thái hoàn tất phiếu nhập #${purchaseCode}`,
             idempotencyKey
           }
         });
@@ -474,8 +575,10 @@ export class InventoryService {
       orderBy: { updatedAt: 'desc' }
     });
 
-    if (status === 'out_of_stock') {
-      allItems = allItems.filter(i => (i.onHand - i.reserved) <= 0);
+    if (status === 'deficit') {
+      allItems = allItems.filter(i => (i.onHand - i.reserved) < 0);
+    } else if (status === 'out_of_stock') {
+      allItems = allItems.filter(i => (i.onHand - i.reserved) === 0);
     } else if (status === 'low_stock') {
       allItems = allItems.filter(i => (i.onHand - i.reserved) > 0 && (i.onHand - i.reserved) <= i.minStock);
     } else if (status === 'in_stock') {
@@ -557,7 +660,7 @@ export class InventoryService {
         uomName: p?.uomName || dp.uom_name || item.unit || 'Cái',
         source: dp.id ? 'directus' : (p?.id ? 'odoo' : undefined),
         available: item.onHand - item.reserved,
-        status: (item.onHand - item.reserved) <= 0 ? 'Hết hàng' : ((item.onHand - item.reserved) <= item.minStock ? 'Sắp hết' : 'Đủ hàng'),
+        status: (item.onHand - item.reserved) < 0 ? 'Thiếu hàng' : ((item.onHand - item.reserved) === 0 ? 'Hết hàng' : ((item.onHand - item.reserved) <= item.minStock ? 'Sắp hết' : 'Đủ hàng')),
       };
     };
 

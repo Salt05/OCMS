@@ -1642,6 +1642,78 @@ export async function orderRoutes(app: FastifyInstance) {
   });
 
   // ── Update Order Details (Items, Qty, Price, Discount, Note) ──────────────
+  // ── Quick Deliver All (Giao Hàng & Cập nhật ghi chú giao việc) ────────────────
+  app.post('/api/v1/orders/:id/deliver-all', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as { activitySummary?: string };
+    const isNumeric = /^\d+$/.test(id);
+
+    const existingOrder = await prisma.orderHistory.findFirst({
+      where: {
+        orgId: user.orgId,
+        OR: [
+          { id },
+          ...(isNumeric ? [{ odooOrderId: parseInt(id, 10) }] : []),
+          { orderCode: id },
+        ],
+      },
+      include: { lines: true },
+    });
+
+    if (!existingOrder) {
+      return reply.status(404).send({ error: 'Không tìm thấy đơn hàng' });
+    }
+
+    for (const line of existingOrder.lines) {
+      const targetQty = Number(line.quantity) || 0;
+      await prisma.orderLineHistory.update({
+        where: { id: line.id },
+        data: { qtyDelivered: targetQty, shippedQuantity: targetQty },
+      });
+      if (line.odooLineId) {
+        await odooService.executeKw('sale.order.line', 'write', [
+          [line.odooLineId],
+          { qty_delivered: targetQty },
+        ]).catch(e => logger.warn(`[deliver-all] Error writing Odoo line #${line.odooLineId}:`, e.message));
+      }
+    }
+
+    const activityText = typeof body.activitySummary === 'string' ? body.activitySummary.trim() : null;
+
+    if (existingOrder.odooOrderId && activityText) {
+      try {
+        await routerClient.manageActivity({
+          odoo_order_id: existingOrder.odooOrderId,
+          action: 'update',
+          summary: activityText,
+        });
+      } catch (actErr: any) {
+        logger.warn(`[deliver-all] Lỗi đồng bộ ghi chú giao việc Odoo:`, actErr.message);
+      }
+    }
+
+    const updated = await prisma.orderHistory.update({
+      where: { id: existingOrder.id },
+      data: {
+        deliveryStatus: 'full',
+        ...(activityText ? { activitySummary: activityText } : {}),
+        updatedAt: new Date(),
+      },
+      include: {
+        customerProfile: true,
+        lines: { orderBy: { odooLineId: 'asc' } },
+      },
+    });
+
+    return {
+      success: true,
+      order: updated,
+      message: 'Đã xác nhận giao hàng và cập nhật ghi chú giao việc thành công!',
+    };
+  });
+
+  // ── Chỉnh sửa đơn hàng (Thông tin + dòng sản phẩm + số lượng đã giao) ──────
   app.put('/api/v1/orders/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
@@ -1656,6 +1728,7 @@ export async function orderRoutes(app: FastifyInstance) {
         productSku?: string;
         uomName?: string;
         quantity: number;
+        qtyDelivered?: number;
         priceUnit: number;
         discount?: number;
       }>;
@@ -1725,6 +1798,7 @@ export async function orderRoutes(app: FastifyInstance) {
     // Cập nhật CSDL nội bộ OCMS
     const now = new Date();
     let newAmountUntaxed = 0;
+    let computedDeliveryStatus = existingOrder.deliveryStatus;
 
     if (body.lines && Array.isArray(body.lines)) {
       let maxLineId = 0;
@@ -1763,6 +1837,9 @@ export async function orderRoutes(app: FastifyInstance) {
       });
 
       const reservationLines: { id: string; sku: string; quantity: number }[] = [];
+      let totalOrderedQty = 0;
+      let totalDeliveredQty = 0;
+
       for (const [idx, line] of body.lines.entries()) {
         const qty = Number(line.quantity) || 0;
         const price = Number(line.priceUnit) || 0;
@@ -1773,6 +1850,13 @@ export async function orderRoutes(app: FastifyInstance) {
         const resolvedLineId = line.odooLineId ? Number(line.odooLineId) : ++maxLineId;
         const existingLine = existingLineMatches.get(idx);
 
+        const deliveredQty = line.qtyDelivered !== undefined
+          ? Number(line.qtyDelivered) || 0
+          : (existingLine?.qtyDelivered || 0);
+
+        totalOrderedQty += qty;
+        totalDeliveredQty += deliveredQty;
+
         const savedLine = await prisma.orderLineHistory.create({
           data: {
             orderHistoryId: existingOrder.id,
@@ -1782,6 +1866,8 @@ export async function orderRoutes(app: FastifyInstance) {
             odooProductId: line.odooProductId ? Number(line.odooProductId) : null,
             uomName: line.uomName || 'Units',
             quantity: qty,
+            qtyDelivered: deliveredQty,
+            shippedQuantity: deliveredQty,
             priceUnit: price,
             discount: discount,
             priceSubtotal: subtotal,
@@ -1790,8 +1876,26 @@ export async function orderRoutes(app: FastifyInstance) {
           },
         });
 
+        // Nếu có cập nhật số lượng đã giao qua API, ghi trực tiếp vào Odoo line
+        if (line.qtyDelivered !== undefined && line.odooLineId) {
+          await odooService.executeKw('sale.order.line', 'write', [
+            [line.odooLineId],
+            { qty_delivered: deliveredQty }
+          ]).catch(e => logger.warn(`[order-routes] Error updating qty_delivered for Odoo line #${line.odooLineId}:`, e.message));
+        }
+
         if (line.productSku && (qty > 0 || existingLine?.reservedQuantity)) {
           reservationLines.push({ id: savedLine.id, sku: line.productSku, quantity: qty });
+        }
+      }
+
+      if (totalOrderedQty > 0) {
+        if (totalDeliveredQty >= totalOrderedQty) {
+          computedDeliveryStatus = 'full';
+        } else if (totalDeliveredQty > 0) {
+          computedDeliveryStatus = 'partial';
+        } else {
+          computedDeliveryStatus = 'pending';
         }
       }
 
@@ -1814,6 +1918,7 @@ export async function orderRoutes(app: FastifyInstance) {
         ...(body.lines ? {
           amountUntaxed: newAmountUntaxed,
           amountTotal: newAmountUntaxed > 0 ? newAmountUntaxed : existingOrder.amountTotal,
+          deliveryStatus: computedDeliveryStatus,
         } : {}),
         writeDate: now,
         writeUid: staffOdooUid || undefined,

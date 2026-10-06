@@ -279,8 +279,8 @@
                         {{ formatCurrency(prod.list_price || prod.wholesale_price || 0) }}
                       </span>
                       <!-- Available Quantity Text -->
-                      <span class="text-caption text-medium-emphasis ml-1">
-                        (Có thể bán: {{ prod.available_quantity ?? 0 }})
+                      <span class="text-caption text-medium-emphasis ml-1" :class="{ 'text-error font-weight-medium': (prod.available_quantity ?? 0) < 0 }">
+                        (Có thể bán: {{ (prod.available_quantity ?? 0) < 0 ? `Thiếu ${Math.abs(prod.available_quantity!)}` : (prod.available_quantity ?? 0) }})
                       </span>
                       <v-chip
                         v-if="hasAdded(prod)"
@@ -291,6 +291,16 @@
                       >
                         Đã thêm: {{ getAddedCount(prod) }}
                       </v-chip>
+                    </div>
+
+                    <!-- Warning notice if qty > available_quantity (only when mode === 'sale') -->
+                    <div
+                      v-if="props.mode === 'sale' && getQty(prod.id) > (prod.available_quantity ?? 0)"
+                      class="text-caption text-error font-weight-medium mt-0.5 d-flex align-center gap-1"
+                      style="font-size: 11px;"
+                    >
+                      <v-icon size="12" color="error">lucide-alert-circle</v-icon>
+                      <span>Lưu ý: số lượng không đủ</span>
                     </div>
                   </div>
                 </div>
@@ -327,19 +337,19 @@
                       type="number"
                       :value="getQty(prod.id)"
                       min="1"
-                      :max="prod.available_quantity"
+                      :max="allowSelectZero ? undefined : prod.available_quantity"
                       class="stepper-input text-center font-weight-bold text-high-emphasis"
                       aria-label="Số lượng sản phẩm"
-                      @input="onQtyInput(prod.id, $event, prod.available_quantity)"
+                      @input="onQtyInput(prod.id, $event, allowSelectZero ? undefined : prod.available_quantity)"
                       @click.stop
                     />
                     <button
                       type="button"
                       class="stepper-btn stepper-btn-plus"
-                      :disabled="prod.available_quantity !== undefined && getQty(prod.id) >= prod.available_quantity"
+                      :disabled="!allowSelectZero && prod.available_quantity !== undefined && getQty(prod.id) >= prod.available_quantity"
                       aria-label="Tăng số lượng"
                       title="Tăng 1"
-                      @click.stop="incrementQty(prod.id, prod.available_quantity)"
+                      @click.stop="incrementQty(prod.id, allowSelectZero ? undefined : prod.available_quantity)"
                     >
                       <v-icon size="12">lucide-plus</v-icon>
                     </button>
@@ -353,7 +363,7 @@
                     height="32"
                     class="select-btn rounded-lg font-weight-bold px-3.5 shadow-xs text-none"
                     prepend-icon="lucide-plus"
-                    :disabled="prod.available_quantity !== undefined && prod.available_quantity <= 0"
+                    :disabled="!allowSelectZero && prod.available_quantity !== undefined && prod.available_quantity <= 0"
                     aria-label="Chọn sản phẩm"
                     @click.stop="selectProduct(prod)"
                   >
@@ -396,7 +406,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useDisplay } from 'vuetify';
 import ProductDetailModal from '@/components/common/ProductDetailModal.vue';
 import { useOdoo, type OdooProduct } from '@/composables/use-odoo';
@@ -405,24 +415,40 @@ const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
 const showMobileSidebar = ref(false);
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: boolean;
   loading?: boolean;
   orderLines?: { product: OdooProduct | null; qty: number }[];
-}>();
+  mode?: 'sale' | 'purchase';
+  allowZeroStock?: boolean;
+}>(), {
+  mode: 'sale',
+  allowZeroStock: false,
+});
+
+const allowSelectZero = computed(() => props.mode === 'sale' || props.mode === 'purchase' || props.allowZeroStock);
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   select: [product: OdooProduct, qty: number];
 }>();
 
-const { products, filterProducts, formatCurrency, syncProducts, isSyncing, loadingProducts } = useOdoo();
+const { products, filterProducts, formatCurrency, syncProducts, fetchProducts, revalidateProductsInBackground, isSyncing, loadingProducts } = useOdoo();
 
 const searchQuery = ref('');
 const selectedGroupId = ref<number | string | null>(null);
 const showDetailModal = ref(false);
 const detailProduct = ref<OdooProduct | null>(null);
-const hideOutofStock = ref(true);
+const hideOutofStock = ref(false);
+
+watch(() => props.modelValue, (newVal) => {
+  if (newVal) {
+    hideOutofStock.value = false;
+    // Show cached products immediately and revalidate in background
+    fetchProducts();
+    revalidateProductsInBackground();
+  }
+});
 
 function selectGroup(id: number | string | null) {
   selectedGroupId.value = id;
@@ -440,7 +466,7 @@ function getQty(id: number | string): number {
 
 function setQty(id: number | string, val: number, maxQty?: number) {
   let v = Math.max(1, Math.floor(val) || 1);
-  if (maxQty !== undefined) {
+  if (!allowSelectZero.value && maxQty !== undefined) {
     if (maxQty <= 0) {
       v = 0;
     } else {

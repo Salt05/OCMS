@@ -122,8 +122,8 @@
                   <!-- Stock Quick Info -->
                   <div v-if="showInventoryHistory" class="d-flex align-center gap-2 flex-wrap mt-1 text-caption text-medium-emphasis">
                     <div class="bg-grey-lighten-4 pa-1 px-2.5 rounded d-flex align-center gap-1.5">
-                      <v-icon size="14" color="success">lucide-package-check</v-icon> 
-                      <span>Tồn thực tế: <strong class="text-success font-weight-bold">{{ currentOnHand }}</strong></span>
+                      <v-icon size="14" :color="currentOnHand < 0 ? 'error' : 'success'">lucide-package-check</v-icon> 
+                      <span>Tồn thực tế: <strong :class="currentOnHand < 0 ? 'text-error font-weight-bold' : 'text-success font-weight-bold'">{{ formattedOnHand }}</strong></span>
                     </div>
                     <div class="bg-grey-lighten-4 pa-1 px-2.5 rounded d-flex align-center gap-1.5">
                       <v-icon size="14" color="info">lucide-shopping-cart</v-icon>
@@ -194,7 +194,7 @@
                <div class="d-flex align-center gap-2">
                  <div>
                    <span class="font-weight-bold mr-1">Thực tế:</span>
-                   <v-chip color="info" size="small" class="font-weight-bold">{{ currentOnHand }}</v-chip>
+                   <v-chip :color="currentOnHand < 0 ? 'error' : 'info'" size="small" class="font-weight-bold">{{ formattedOnHand }}</v-chip>
                  </div>
                  <div>
                    <span class="font-weight-bold mx-1">Giữ:</span>
@@ -202,7 +202,7 @@
                  </div>
                  <div>
                    <span class="font-weight-bold mx-1">Khả dụng:</span>
-                   <v-chip color="success" size="small" class="font-weight-bold">{{ currentAvailable }} {{ pUom || 'Cái' }}</v-chip>
+                   <v-chip :color="currentAvailable < 0 ? 'error' : 'success'" size="small" class="font-weight-bold">{{ formattedAvailable }} {{ pUom || 'Cái' }}</v-chip>
                  </div>
                </div>
                <div>
@@ -481,6 +481,16 @@ const currentSold = computed(() => {
     return inventoryStore.skuStock[sku].soldQuantity;
   }
   return currentProduct.value?.soldQuantity ?? 0;
+});
+
+const formattedOnHand = computed(() => {
+  const val = currentOnHand.value;
+  return val < 0 ? `Thiếu ${Math.abs(val)}` : val.toString();
+});
+
+const formattedAvailable = computed(() => {
+  const val = currentAvailable.value;
+  return val < 0 ? `Thiếu ${Math.abs(val)}` : val.toString();
 });
 
 const hasRichDetails = computed(() => {

@@ -1,0 +1,4 @@
+CÁC NHÓM DEPLOY HỆ THỐNG LÊN INTERNET VÀ KẾT QUẢ LÀ:
+
+LINK FE: https://ocms-pink.vercel.app
+LINK BE (API): https://ocms-backend-gazt.onrender.com/api/v1

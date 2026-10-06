@@ -344,6 +344,7 @@ export function useOdoo() {
     lastProductSync,
     fetchPaymentTerms,
     fetchProducts,
+    revalidateProductsInBackground,
     syncProducts,
     customProductFilter,
     filterProducts,
