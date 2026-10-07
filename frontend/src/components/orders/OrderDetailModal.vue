@@ -57,7 +57,7 @@
 
             <!-- Nút Xác nhận giao hàng (chỉ hiện khi đơn hàng ở trạng thái Đơn hàng) -->
             <v-btn
-              v-if="!isEditing && order && !readOnly && (order.state === 'sale' || order.state === 'done') && order.deliveryStatus !== 'full'"
+              v-if="authStore.isAdmin && !isEditing && order && !readOnly && (order.state === 'sale' || order.state === 'done') && order.deliveryStatus !== 'full'"
               size="small"
               color="teal"
               variant="flat"
@@ -383,7 +383,7 @@
                       </td>
                       <!-- Delivered Qty in Edit Mode -->
                       <td class="text-center">
-                        <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
+                        <div v-if="authStore.isAdmin" class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
                           <input
                             type="text"
                             :value="line.qtyDelivered"
@@ -393,6 +393,15 @@
                             @keyup.enter="onOrderDetailQtyInput(line, 'qtyDelivered', $event)"
                           />
                         </div>
+                        <v-chip
+                          v-else
+                          size="x-small"
+                          :color="(line.qtyDelivered ?? 0) >= (line.quantity ?? 0) ? 'success' : (line.qtyDelivered ?? 0) > 0 ? 'warning' : 'grey'"
+                          variant="tonal"
+                          class="font-weight-bold"
+                        >
+                          {{ line.qtyDelivered ?? 0 }}
+                        </v-chip>
                       </td>
                       <!-- Price Unit Edit -->
                       <td class="text-right">

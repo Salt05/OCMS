@@ -149,12 +149,17 @@ services:
 volumes:
   pg_data:
     name: zalocrm_pg_data
+    external: true
   file_storage:
     name: zalocrm_file_storage
+    external: true
   chatbot_data:
     name: zalocrm_chatbot_data
+    external: true
   redis_data:
     name: zalocrm_redis_data
+    external: true
   router_data:
     name: zalocrm_router_data
+    external: true
 
