@@ -251,7 +251,7 @@ export function useOrders() {
   async function syncOrders() {
     syncing.value = true;
     try {
-      const res = await api.post('/sync/orders');
+      const res = await api.post('/sync/orders', {}, { timeout: 300000 });
       return res.data;
     } catch (err) {
       console.error('[useOrders] syncOrders error:', err);
