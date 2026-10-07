@@ -80,6 +80,8 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+    volumes:
+      - router_data:/app/data
     security_opt:
       - no-new-privileges:true
 
@@ -153,4 +155,6 @@ volumes:
     name: zalocrm_chatbot_data
   redis_data:
     name: zalocrm_redis_data
+  router_data:
+    name: zalocrm_router_data
 

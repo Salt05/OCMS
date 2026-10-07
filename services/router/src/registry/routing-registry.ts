@@ -5,15 +5,47 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const DATA_DIR = path.resolve(process.cwd(), 'data');
+
+// Ensure data directory exists
+if (!fs.existsSync(DATA_DIR)) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (err) {
+    console.error('[RoutingRegistry] Could not create data directory:', err);
+  }
+}
+
 function resolveConfigPath(filename: string): string {
+  const dataPath = path.resolve(DATA_DIR, filename);
+  
+  // If file already exists in data dir, use it
+  if (fs.existsSync(dataPath)) {
+    return dataPath;
+  }
+
+  // Otherwise, find the default config
+  let defaultPath = '';
   const candidate1 = path.resolve(__dirname, filename);
-  if (fs.existsSync(candidate1)) return candidate1;
-
   const candidate2 = path.resolve(process.cwd(), `src/registry/${filename}`);
-  if (fs.existsSync(candidate2)) return candidate2;
-
   const candidate3 = path.resolve(process.cwd(), `dist/registry/${filename}`);
-  return candidate3;
+  
+  if (fs.existsSync(candidate1)) defaultPath = candidate1;
+  else if (fs.existsSync(candidate2)) defaultPath = candidate2;
+  else if (fs.existsSync(candidate3)) defaultPath = candidate3;
+
+  // Copy default config to data dir if found
+  if (defaultPath && fs.existsSync(DATA_DIR)) {
+    try {
+      fs.copyFileSync(defaultPath, dataPath);
+      return dataPath;
+    } catch (err) {
+      console.error(`[RoutingRegistry] Failed to copy default ${filename} to data dir:`, err);
+      return defaultPath;
+    }
+  }
+
+  return defaultPath || dataPath;
 }
 
 const RULES_CONFIG_PATH = resolveConfigPath('routing-rules.json');
