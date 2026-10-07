@@ -319,7 +319,7 @@ class DirectusService {
       const res = await fetch(`${url}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(15000), // Tăng timeout xử lý cold start
         body: JSON.stringify({
           email,
           password,
@@ -392,17 +392,42 @@ class DirectusService {
     if (!url) return null;
 
     try {
-      const token = await this.getAuthToken();
+      let token = await this.getAuthToken();
       const headers: Record<string, string> = {};
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      const res = await fetch(`${url.replace(/\/+$/, '')}/assets/${fileId}`, {
-        headers,
-        signal: AbortSignal.timeout(6000),
-      });
 
-      if (res.ok) {
+      let res: any;
+      let retries = 2;
+
+      for (let i = 0; i <= retries; i++) {
+        try {
+          res = await fetch(`${url.replace(/\/+$/, '')}/assets/${fileId}`, {
+            headers,
+            signal: AbortSignal.timeout(15000), // Tăng timeout cho cold start
+          });
+
+          if (res.ok) break;
+
+          // Xử lý khi token bị hết hạn hoặc không hợp lệ
+          if (res.status === 401 || res.status === 403) {
+            this.accessToken = null;
+            token = await this.getAuthToken();
+            if (token) {
+              headers['Authorization'] = `Bearer ${token}`;
+            }
+          }
+        } catch (err: any) {
+          logger.debug(`[DirectusService] Retry ${i + 1}/${retries} fetchAsset ${fileId}: ${err.message}`);
+        }
+
+        if ((!res || !res.ok) && i < retries) {
+          await new Promise(r => setTimeout(r, 1500)); // Nghỉ 1.5s trước khi retry
+        }
+      }
+
+      if (res && res.ok) {
         const arrayBuf = await res.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
         let contentType = res.headers.get('content-type') || 'image/jpeg';
@@ -467,7 +492,7 @@ class DirectusService {
 
         const collection = directusConfig.productCollection || config.directus.productCollection || 'products';
         const url = `${directusUrl}/items/${collection}?limit=-1&fields=*,images.*,images.directus_files_id.*,product_groups.*,product_groups.product_groups_id.*`;
-        const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(20000) }); // Tăng timeout cho dữ liệu lớn
 
         if (res.ok) {
           const data = (await res.json()) as any;

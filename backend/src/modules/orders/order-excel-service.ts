@@ -36,7 +36,9 @@ export interface ExportColumnDefinition {
 
 export const ALL_EXPORT_COLUMNS: ExportColumnDefinition[] = [
   { key: 'orderCode', label: 'Mã đơn hàng', width: 16, align: 'center' },
+  { key: 'customerId', label: 'ID khách hàng', width: 16, align: 'center' },
   { key: 'customerName', label: 'Tên khách hàng', width: 26, align: 'left' },
+  { key: 'tags', label: 'Thẻ (tag_ids)', width: 24, align: 'left' },
   { key: 'phone', label: 'Số điện thoại', width: 16, align: 'center' },
   { key: 'email', label: 'Email', width: 24, align: 'left' },
   { key: 'zone', label: 'Khu vực / Tỉnh thành', width: 20, align: 'left' },
@@ -394,31 +396,35 @@ export async function generateOrdersExcel(
     orderBy: { dateOrder: 'desc' },
   });
 
-  // Pre-fetch contacts for orders missing customerProfile salesperson or phone
-  const missingPartnerIds = orders
-    .filter((o) => (!o.customerProfile?.salesperson || !o.customerProfile?.phone) && o.odooPartnerId)
-    .map((o) => String(o.odooPartnerId));
+  // Pre-fetch contacts for all orders to ensure we get tags, missing salesperson, and phone
+  const allPartnerIds = Array.from(new Set(orders.map((o) => String(o.odooPartnerId))));
 
-  const contactMap = new Map<string, { salesperson?: string | null; phone?: string | null; address?: string | null; zone?: string | null }>();
-  if (missingPartnerIds.length > 0) {
+  const contactMap = new Map<string, { salesperson?: string | null; phone?: string | null; address?: string | null; zone?: string | null; tags?: string[] }>();
+  if (allPartnerIds.length > 0) {
     const contacts = await prisma.contact.findMany({
-      where: { orgId, customerId: { in: missingPartnerIds } },
+      where: { orgId, customerId: { in: allPartnerIds } },
       select: {
         customerId: true,
         phone: true,
         address: true,
         zone: true,
         salesperson: true,
+        tags: true,
         assignedUser: { select: { fullName: true } },
       },
     });
     for (const c of contacts) {
       if (c.customerId) {
+        let parsedTags: string[] = [];
+        if (Array.isArray(c.tags)) {
+          parsedTags = c.tags as string[];
+        }
         contactMap.set(c.customerId, {
           salesperson: c.salesperson?.trim() || c.assignedUser?.fullName?.trim(),
           phone: c.phone?.trim(),
           address: c.address?.trim(),
           zone: c.zone?.trim(),
+          tags: parsedTags,
         });
       }
     }
@@ -447,7 +453,7 @@ export async function generateOrdersExcel(
   titleRow.height = 32;
 
   const nowFormatted = new Date().toLocaleString('vi-VN');
-  const subtitleRow = sheet.addRow([`Thời gian xuất: ${nowFormatted} | Người xuất: ${exportedBy} | Tổng số đơn: ${orders.length}`]);
+  const subtitleRow = sheet.addRow([`Thời gian xuất: ${nowFormatted} | Tổng số đơn: ${orders.length}`]);
   subtitleRow.font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF64748B' } };
   subtitleRow.height = 20;
 
@@ -518,8 +524,14 @@ export async function generateOrdersExcel(
         case 'orderCode':
           rowValues.push(o.orderCode);
           break;
+        case 'customerId':
+          rowValues.push(o.odooPartnerId || '');
+          break;
         case 'customerName':
           rowValues.push(o.partnerName || o.customerProfile?.name || '—');
+          break;
+        case 'tags':
+          rowValues.push(contactInfo?.tags?.join(', ') || '');
           break;
         case 'phone':
           rowValues.push(customerPhone);

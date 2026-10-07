@@ -277,9 +277,7 @@
                        {{ ['IMPORT', 'ADJUSTMENT_IN', 'RETURN_IN'].includes(order.type) ? '+' : '-' }}{{ order.quantity }}
                      </span>
                    </td>
-                   <td class="text-caption">
-                     {{ order.note || '' }}
-                   </td>
+                   <td class="text-caption note-html-content" v-html="order.note || ''"></td>
                  </tr>
                </tbody>
              </v-table>
@@ -355,7 +353,7 @@
                    <td class="text-right font-weight-bold" :class="tx.quantity > 0 ? 'text-success' : 'text-error'">
                      {{ tx.quantity > 0 ? '+' : '' }}{{ tx.quantity }}
                    </td>
-                   <td class="text-caption text-truncate" style="max-width: 150px;">{{ tx.reason || tx.notes || '' }}</td>
+                   <td class="text-caption text-truncate note-html-content" style="max-width: 150px;" v-html="tx.reason || tx.notes || ''"></td>
                  </tr>
                </tbody>
              </v-table>
@@ -801,5 +799,15 @@ watch(() => props.product, (newProd) => {
 }
 .leading-tight {
   line-height: 1.25;
+}
+
+/* Ẩn margin thừa và cho phép text truncate hoạt động với thẻ p từ HTML */
+:deep(.note-html-content p) {
+  margin-bottom: 0 !important;
+  display: inline;
+}
+:deep(.note-html-content a) {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: underline;
 }
 </style>
