@@ -531,7 +531,7 @@ export async function generateOrdersExcel(
           rowValues.push(o.partnerName || o.customerProfile?.name || '—');
           break;
         case 'tags':
-          rowValues.push(contactInfo?.tags?.join(', ') || '');
+          rowValues.push(o.tagNames || '');
           break;
         case 'phone':
           rowValues.push(customerPhone);
@@ -594,7 +594,7 @@ export async function generateOrdersExcel(
           rowValues.push(o.activitySummary || '');
           break;
         case 'note':
-          rowValues.push(o.note || '');
+          rowValues.push(o.note ? o.note.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim() : '');
           break;
         default:
           rowValues.push('');

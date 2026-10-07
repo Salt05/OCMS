@@ -540,6 +540,7 @@ model OrderHistory {
   activitySummary    String?  @map("activity_summary")
   pickingIds         Json?    @map("picking_ids")
   note               String?  @db.Text
+  tagNames           String?  @map("tag_names")
   pdfSentAt          DateTime? @map("pdf_sent_at")
   writeDate          DateTime? @map("write_date")
   writeUid           Int?      @map("write_uid")

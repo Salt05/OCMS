@@ -20,6 +20,7 @@
         </div>
 
         <v-btn
+          v-if="authStore.isAdmin"
           color="success"
           variant="flat"
           prepend-icon="lucide-file-spreadsheet"
@@ -727,7 +728,9 @@ import { useAppBadges } from '@/composables/use-app-badges';
 import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
 import OrderStaffTable from '@/components/orders/OrderStaffTable.vue';
 import OrderExportModal from '@/components/orders/OrderExportModal.vue';
+import { useAuthStore } from '@/stores/auth';
 
+const authStore = useAuthStore();
 const router = useRouter();
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);

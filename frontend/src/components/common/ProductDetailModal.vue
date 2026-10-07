@@ -37,10 +37,10 @@
         <v-tab value="info" class="text-body-2 text-none font-weight-medium px-4">
           <v-icon size="16" class="mr-2">lucide-info</v-icon> Chi tiết
         </v-tab>
-        <v-tab value="orders" class="text-body-2 text-none font-weight-medium px-4" v-if="showInventoryHistory">
+        <v-tab value="orders" class="text-body-2 text-none font-weight-medium px-4" v-if="canShowInventory">
           <v-icon size="16" class="mr-2">lucide-package</v-icon> Kho
         </v-tab>
-        <v-tab value="history" class="text-body-2 text-none font-weight-medium px-4" v-if="showInventoryHistory">
+        <v-tab value="history" class="text-body-2 text-none font-weight-medium px-4" v-if="canShowInventory">
           <v-icon size="16" class="mr-2">lucide-history</v-icon> Lịch sử
         </v-tab>
       </v-tabs>
@@ -123,7 +123,7 @@
                   </div>
                   
                   <!-- Stock Quick Info -->
-                  <div v-if="showInventoryHistory" class="d-flex align-center gap-2 flex-wrap mt-1 text-caption text-medium-emphasis">
+                  <div v-if="canShowInventory" class="d-flex align-center gap-2 flex-wrap mt-1 text-caption text-medium-emphasis">
                     <div class="bg-grey-lighten-4 pa-1 px-2.5 rounded d-flex align-center gap-1.5">
                       <v-icon size="14" :color="currentOnHand < 0 ? 'error' : 'success'">lucide-package-check</v-icon> 
                       <span>Tồn thực tế: <strong :class="currentOnHand < 0 ? 'text-error font-weight-bold' : 'text-success font-weight-bold'">{{ formattedOnHand }}</strong></span>
@@ -395,7 +395,9 @@ import { useRouter } from 'vue-router';
 import { useInventoryStore } from '@/stores/inventory';
 import { api } from '@/api/index';
 import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
+import { useAuthStore } from '@/stores/auth';
 
+const authStore = useAuthStore();
 const inventoryStore = useInventoryStore();
 const router = useRouter();
 
@@ -421,6 +423,8 @@ const loadingDetails = ref(false);
 const orderSearch = ref('');
 const orderTypeFilter = ref<string | null>(null);
 const orderOperatorFilter = ref<string | null>(null);
+
+const canShowInventory = computed(() => !!props.showInventoryHistory && authStore.isAdmin);
 
 const filteredOrders = computed(() => {
   if (!pSku.value || !inventoryStore.skuOrders[pSku.value]) return [];
@@ -747,7 +751,7 @@ watch(() => props.modelValue, (newVal) => {
     if (sku) {
       fetchFullProductDetails(sku);
     }
-    if (props.showInventoryHistory && sku) {
+    if (canShowInventory.value && sku) {
       loadHistory();
       loadOrders();
     }
@@ -761,7 +765,7 @@ watch(() => props.product, (newProd) => {
     if (sku && (!fetchedProduct.value || (fetchedProduct.value.sku !== sku && fetchedProduct.value.default_code !== sku))) {
       fetchedProduct.value = null;
       fetchFullProductDetails(sku);
-      if (props.showInventoryHistory) {
+      if (canShowInventory.value) {
         loadHistory();
         loadOrders();
       }

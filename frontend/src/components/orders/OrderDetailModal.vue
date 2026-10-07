@@ -1587,23 +1587,28 @@ async function copyOrderCode() {
 function cleanNote(note: string | null | undefined) {
   if (!note) return '';
   let text = note;
-  // Gỡ bỏ liên kết điều khoản điều kiện mặc định
-  text = text.replace(/<a\s+[^>]*href=["'][^"']*terms[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, '');
-  text = text.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*https?:\/\/[^\s<]+/gi, '');
-  text = text.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*/gi, '');
-  // Đổi các thẻ xuống dòng sang ký tự newline
-  text = text.replace(/<br\s*\/?>/gi, '\n');
-  text = text.replace(/<\/p>/gi, '\n');
-  text = text.replace(/<\/div>/gi, '\n');
-  // Lọc sạch toàn bộ thẻ HTML còn lại
-  text = text.replace(/<[^>]+>/g, '');
-  // Giải mã các thực thể HTML phổ biến
+  
+  // Giải mã các thực thể HTML phổ biến trước để dễ regex
   text = text.replace(/&nbsp;/gi, ' ');
   text = text.replace(/&amp;/gi, '&');
   text = text.replace(/&lt;/gi, '<');
   text = text.replace(/&gt;/gi, '>');
   text = text.replace(/&quot;/gi, '"');
   text = text.replace(/&#39;/gi, "'");
+
+  // Gỡ bỏ liên kết điều khoản điều kiện mặc định
+  text = text.replace(/<a\s+[^>]*href=["'][^"']*terms[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, '');
+  text = text.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*https?:\/\/[^\s<]+/gi, '');
+  text = text.replace(/Điều khoản\s*&\s*điều kiện\s*:?\s*/gi, '');
+  
+  // Đổi các thẻ xuống dòng sang ký tự newline
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n');
+  text = text.replace(/<\/div>/gi, '\n');
+  
+  // Lọc sạch toàn bộ thẻ HTML còn lại
+  text = text.replace(/<[^>]+>/g, '');
+  
   // Chuẩn hóa nhiều dòng trắng liên tiếp
   text = text.replace(/\n\s*\n\s*\n+/g, '\n\n');
   return text.trim();

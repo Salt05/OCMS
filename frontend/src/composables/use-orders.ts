@@ -427,6 +427,7 @@ export function useOrders() {
     try {
       const res = await api.post('/orders/export/excel', payload, {
         responseType: 'blob',
+        timeout: 180000, // 3 minutes timeout for large exports
       });
       const url = window.URL.createObjectURL(
         new Blob([res.data], {

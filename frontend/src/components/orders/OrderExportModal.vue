@@ -738,7 +738,7 @@ const orderGroupColumns = computed(() => {
 });
 
 const customerGroupColumns = computed(() => {
-  const keys = ['customerName', 'phone', 'email', 'zone', 'address', 'salesperson'];
+  const keys = ['customerId', 'customerName', 'phone', 'email', 'zone', 'address', 'salesperson', 'tags'];
   return ALL_EXPORT_COLUMNS.value.filter(c => keys.includes(c.key));
 });
 

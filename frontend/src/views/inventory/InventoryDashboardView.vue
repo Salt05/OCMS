@@ -18,6 +18,7 @@
           Làm mới
         </v-btn>
         <v-btn
+          v-if="authStore.isAdmin"
           color="primary"
           variant="flat"
           prepend-icon="lucide-file-plus"
@@ -27,6 +28,7 @@
           Phiếu nhập
         </v-btn>
         <v-btn
+          v-if="authStore.isAdmin"
           color="secondary"
           variant="tonal"
           prepend-icon="lucide-history"
@@ -36,6 +38,7 @@
           Lịch sử xuất nhập
         </v-btn>
         <v-btn
+          v-if="authStore.isAdmin"
           :color="selectionMode ? 'primary' : 'secondary'"
           :variant="selectionMode ? 'flat' : 'outlined'"
           :prepend-icon="selectionMode ? 'lucide-x' : 'lucide-check-square'"
@@ -45,7 +48,7 @@
           {{ selectionMode ? 'Bỏ chọn' : 'Chọn' }}
         </v-btn>
         <v-btn
-          v-if="selectionMode && selectedProducts.length"
+          v-if="authStore.isAdmin && selectionMode && selectedProducts.length"
           color="warning"
           prepend-icon="lucide-bell"
           class="text-none font-weight-medium"
@@ -54,7 +57,7 @@
           Cảnh báo ({{ selectedProducts.length }})
         </v-btn>
         <v-btn
-          v-if="selectionMode && selectedProducts.length"
+          v-if="authStore.isAdmin && selectionMode && selectedProducts.length"
           color="primary"
           prepend-icon="lucide-file-plus"
           class="text-none font-weight-medium"
@@ -156,17 +159,17 @@
               <v-icon size="14" v-if="sortBy === 'available'">{{ sortOrder === 'asc' ? 'lucide-arrow-up' : 'lucide-arrow-down' }}</v-icon>
             </th>
             <th class="text-center text-no-wrap">Trạng thái</th>
-            <th class="text-right text-no-wrap" style="width: 120px;">Thao tác</th>
+            <th v-if="authStore.isAdmin" class="text-right text-no-wrap" style="width: 120px;">Thao tác</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="inventoryStore.loading">
-            <td :colspan="selectionMode ? 11 : 10" class="text-center pa-6">
+            <td :colspan="selectionMode ? (authStore.isAdmin ? 11 : 10) : (authStore.isAdmin ? 10 : 9)" class="text-center pa-6">
               <v-progress-circular indeterminate color="primary" size="32"></v-progress-circular>
             </td>
           </tr>
           <tr v-else-if="items.length === 0">
-            <td :colspan="selectionMode ? 11 : 10" class="text-center pa-8 text-grey">Không có dữ liệu tồn kho</td>
+            <td :colspan="selectionMode ? (authStore.isAdmin ? 11 : 10) : (authStore.isAdmin ? 10 : 9)" class="text-center pa-8 text-grey">Không có dữ liệu tồn kho</td>
           </tr>
           <tr v-else v-for="item in items" :key="item.id" class="align-middle text-body-1 cursor-pointer" @click="openDetail(item)" hover>
             <td v-if="selectionMode" @click.stop>
@@ -206,7 +209,7 @@
                 {{ item.status }}
               </v-chip>
             </td>
-            <td class="text-right text-no-wrap" @click.stop>
+            <td v-if="authStore.isAdmin" class="text-right text-no-wrap" @click.stop>
               <div class="d-flex justify-end align-center">
                 <v-btn
                   icon="lucide-bell"
@@ -345,10 +348,12 @@
 import { ref, computed, onMounted } from 'vue';
 import { api } from '@/api';
 import { useInventoryStore } from '@/stores/inventory';
+import { useAuthStore } from '@/stores/auth';
 import ProductDetailModal from '@/components/common/ProductDetailModal.vue';
 import InventoryTransactionDialog from '@/components/inventory/InventoryTransactionDialog.vue';
 
 const inventoryStore = useInventoryStore();
+const authStore = useAuthStore();
 
 // State
 const search = ref('');

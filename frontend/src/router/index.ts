@@ -52,7 +52,7 @@ const routes = [
     path: '/payments',
     name: 'Payments',
     component: () => import('@/views/PaymentsView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
     path: '/mobile-gateway',
@@ -82,13 +82,13 @@ const routes = [
     path: '/inventory/history',
     name: 'InventoryHistory',
     component: () => import('@/views/inventory/InventoryHistoryView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
     path: '/inventory/purchase',
     name: 'PurchaseOrders',
     component: () => import('@/views/inventory/PurchaseOrdersView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
     path: '/reports',

@@ -322,7 +322,7 @@ class OdooSyncService {
           'state', 'amount_untaxed', 'amount_tax', 'amount_total', 'amount_undiscounted',
           'margin', 'margin_percent', 'invoice_status', 'delivery_status',
           'warehouse_id', 'pricelist_id', 'user_id', 'note',
-          'order_line', 'activity_summary', 'picking_ids', 'write_date', 'write_uid',
+          'order_line', 'activity_summary', 'picking_ids', 'write_date', 'write_uid', 'tag_ids',
         ],
         order: 'write_date asc',
         limit: 5000,
@@ -374,6 +374,20 @@ class OdooSyncService {
           }
         }
         logger.info(`[sync] Batch fetched ${lineMap.size} order lines successfully.`);
+      }
+
+      // Fetch sale order tags mapping
+      const allTagIds = Array.from(new Set(orders.flatMap(o => o.tag_ids || []))).filter(Boolean) as number[];
+      const tagMap = new Map<number, string>();
+      if (allTagIds.length > 0) {
+        try {
+          const tags = await odooService.executeKw<any[]>('crm.tag', 'search_read', [[['id', 'in', allTagIds]]], { fields: ['id', 'name'] });
+          if (tags) {
+            for (const t of tags) tagMap.set(t.id, t.name);
+          }
+        } catch (err) {
+          logger.warn(`[sync] Could not fetch crm.tag for sale.order tags: ${err}`);
+        }
       }
 
       let upsertCount = 0;
@@ -428,6 +442,7 @@ class OdooSyncService {
           writeDate: order.write_date ? new Date(order.write_date) : null,
           writeUid: Array.isArray(order.write_uid) ? order.write_uid[0] : (typeof order.write_uid === 'number' ? order.write_uid : null),
           writeUserName: Array.isArray(order.write_uid) ? order.write_uid[1] : null,
+          tagNames: (order.tag_ids || []).map((tid: number) => tagMap.get(tid)).filter(Boolean).join(', ') || null,
         };
 
         const existing = await prisma.orderHistory.findUnique({
