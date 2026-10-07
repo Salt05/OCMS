@@ -278,9 +278,9 @@
           Thiết lập cảnh báo sắp hết hàng
         </v-card-title>
         <v-card-text>
-          <div class="mb-4 text-body-2 text-grey-darken-1">
-            Sản phẩm: <span class="font-weight-medium text-black">{{ minStockDialog.product?.productName }}</span><br>
-            SKU: <span class="font-weight-medium text-black">{{ minStockDialog.product?.sku }}</span>
+          <div class="mb-4 text-body-2 text-medium-emphasis">
+            Sản phẩm: <span class="font-weight-medium text-high-emphasis">{{ minStockDialog.product?.productName }}</span><br>
+            SKU: <span class="font-weight-medium text-high-emphasis">{{ minStockDialog.product?.sku }}</span>
           </div>
           <v-text-field
             v-model.number="minStockDialog.value"
@@ -310,7 +310,7 @@
         </v-card-title>
         <v-card-text>
           <div class="mb-4 text-body-2 text-grey-darken-1">
-            Bạn đang thiết lập cảnh báo cho <span class="font-weight-bold text-black">{{ bulkMinStockDialog.products.length }}</span> sản phẩm.
+            Bạn đang thiết lập cảnh báo cho <span class="font-weight-bold text-high-emphasis">{{ bulkMinStockDialog.products.length }}</span> sản phẩm.
           </div>
           <v-text-field
             v-model.number="bulkMinStockDialog.value"

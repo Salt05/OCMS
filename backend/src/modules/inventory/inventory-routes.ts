@@ -88,6 +88,148 @@ export async function inventoryRoutes(app: FastifyInstance) {
     }
   });
 
+  // 2b. Get returnable orders for given SKUs
+  app.get('/api/v1/inventory/returnable-orders', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const query = (request.query || {}) as { skus?: string, search?: string };
+    
+    try {
+      if (!query.skus) return { success: true, data: [] };
+      const skus = query.skus.split(',').map(s => s.trim()).filter(Boolean);
+      if (skus.length === 0) return { success: true, data: [] };
+      
+      const lines = await prisma.orderLineHistory.findMany({
+        where: {
+          orderHistory: { 
+            orgId: user.orgId,
+            ...(query.search ? {
+              OR: [
+                { orderCode: { contains: query.search } },
+                { partnerName: { contains: query.search } }
+              ]
+            } : {})
+          },
+          productSku: { in: skus },
+          qtyDelivered: { gt: 0 }
+        },
+        include: { orderHistory: true },
+        take: 20
+      });
+      
+      // Deduplicate by orderHistory.id
+      const ordersMap = new Map();
+      for (const line of lines) {
+        if (!ordersMap.has(line.orderHistory.id)) {
+          ordersMap.set(line.orderHistory.id, line.orderHistory);
+        }
+      }
+      
+      return { success: true, data: Array.from(ordersMap.values()) };
+    } catch (err: any) {
+      logger.error('[inventory-routes] get returnable orders error:', err);
+      return reply.status(500).send({ error: 'Lỗi lấy đơn trả hàng' });
+    }
+  });
+
+  // 2c. Get Orders (Sale/Purchase) by SKU
+  app.get('/api/v1/inventory/stock-orders/:sku', async (request: FastifyRequest<{ Params: { sku: string } }>, reply: FastifyReply) => {
+    const user = request.user!;
+    const { sku } = request.params;
+    
+    try {
+      const product = await prisma.productCache.findFirst({
+        where: { orgId: user.orgId, sku }
+      });
+      const odooId = product?.odooId;
+
+      const salesLines = await prisma.orderLineHistory.findMany({
+        where: {
+          orderHistory: { orgId: user.orgId },
+          OR: [
+            { productSku: sku },
+            ...(odooId ? [{ odooProductId: odooId }] : [])
+          ]
+        },
+        include: { orderHistory: true }
+      });
+
+      let purchaseLines: any[] = [];
+      if (odooId) {
+        purchaseLines = await prisma.purchaseOrderLine.findMany({
+          where: {
+            purchaseOrder: { orgId: user.orgId },
+            productId: odooId
+          },
+          include: { 
+            purchaseOrder: {
+              include: { createdBy: true }
+            } 
+          }
+        });
+      }
+
+      const salesOrders = salesLines.map(line => ({
+        id: line.orderHistory.id,
+        orderCode: line.orderHistory.orderCode,
+        partnerName: line.orderHistory.partnerName || 'Khách hàng',
+        dateOrder: line.orderHistory.dateOrder,
+        state: line.orderHistory.state,
+        type: 'SALE',
+        quantity: line.quantity,
+        priceUnit: line.priceUnit,
+        priceSubtotal: line.priceSubtotal,
+        note: line.orderHistory.note || line.orderHistory.activitySummary || ''
+      }));
+
+      const purchaseOrders = purchaseLines.map(line => ({
+        id: line.purchaseOrder.id,
+        orderCode: line.purchaseOrder.purchaseCode || line.purchaseOrder.id.substring(0,8),
+        partnerName: line.purchaseOrder.createdBy?.fullName || line.purchaseOrder.createdBy?.email || 'Hệ thống',
+        dateOrder: line.purchaseOrder.orderDeadline || line.purchaseOrder.createdAt,
+        state: line.purchaseOrder.state,
+        type: 'IMPORT',
+        quantity: line.quantity,
+        priceUnit: line.priceUnit,
+        priceSubtotal: line.priceSubtotal,
+        note: line.purchaseOrder.notes || line.purchaseOrder.activitySummary || ''
+      }));
+
+      const stockTakeLines = await prisma.stockTakeItem.findMany({
+        where: {
+          sku: sku,
+          stockTake: { orgId: user.orgId }
+        },
+        include: { 
+          stockTake: {
+            include: { performedBy: true }
+          } 
+        }
+      });
+
+      const adjustmentOrders = stockTakeLines.map(line => ({
+        id: line.stockTake.id,
+        orderCode: line.stockTake.code,
+        partnerName: line.stockTake.performedBy?.fullName || line.stockTake.performedBy?.email || 'Hệ thống (Kiểm kho)',
+        dateOrder: line.stockTake.completedAt || line.stockTake.createdAt,
+        state: line.stockTake.status,
+        type: line.difference && line.difference > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT',
+        quantity: Math.abs(line.difference || 0),
+        priceUnit: 0,
+        priceSubtotal: 0,
+        note: line.stockTake.notes || line.reason || ''
+      }));
+
+      const allOrders = [...salesOrders, ...purchaseOrders, ...adjustmentOrders].sort((a, b) => 
+        new Date(b.dateOrder).getTime() - new Date(a.dateOrder).getTime()
+      );
+
+      return { success: true, data: allOrders };
+    } catch (err: any) {
+      logger.error('[inventory-routes] get stock orders error:', err);
+      return reply.status(500).send({ error: 'Lỗi khi lấy danh sách đơn hàng của sản phẩm' });
+    }
+  });
+
   // 3. Get Transactions History
   app.get('/api/v1/inventory/transactions', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
@@ -209,16 +351,27 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // Search delivered orders for the customer-return form.
   app.get('/api/v1/inventory/return-orders', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
-    const { search = '' } = (request.query || {}) as { search?: string };
+    const { search = '', skus = '' } = (request.query || {}) as { search?: string, skus?: string };
     const normalizedSearch = search.trim();
-    if (!normalizedSearch) return { success: true, data: [] };
+    const skuList = skus.split(',').map(s => s.trim()).filter(Boolean);
+    
+    // Nếu không có search và cũng không có skus thì bỏ qua
+    if (!normalizedSearch && skuList.length === 0) return { success: true, data: [] };
 
     try {
       const orders = await prisma.orderHistory.findMany({
         where: {
           orgId: user.orgId,
           state: { in: ['sale', 'done'] },
-          orderCode: { contains: normalizedSearch, mode: 'insensitive' },
+          ...(normalizedSearch ? { orderCode: { contains: normalizedSearch, mode: 'insensitive' } } : {}),
+          ...(skuList.length > 0 ? {
+            lines: {
+              some: {
+                productSku: { in: skuList },
+                qtyDelivered: { gt: 0 }
+              }
+            }
+          } : {})
         },
         select: {
           id: true,

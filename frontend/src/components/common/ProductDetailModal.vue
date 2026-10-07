@@ -2,11 +2,11 @@
   <v-dialog
     :model-value="modelValue"
     @update:model-value="(val) => $emit('update:modelValue', val)"
-    :max-width="detailTab === 'history' ? 960 : 640"
+    max-width="960"
     scrollable
     transition="dialog-bottom-transition"
   >
-    <v-card v-if="product" class="rounded-xl overflow-hidden elevation-8 bg-surface d-flex flex-column" style="max-height: 85vh;">
+    <v-card v-if="product" class="rounded-xl overflow-hidden elevation-8 bg-surface d-flex flex-column" style="max-height: 85vh; min-height: 600px;">
       <!-- Loading bar for catalog details -->
       <v-progress-linear v-if="loadingDetails" indeterminate color="primary" height="2" class="flex-shrink-0" />
 
@@ -37,8 +37,11 @@
         <v-tab value="info" class="text-body-2 text-none font-weight-medium px-4">
           <v-icon size="16" class="mr-2">lucide-info</v-icon> Chi tiết
         </v-tab>
+        <v-tab value="orders" class="text-body-2 text-none font-weight-medium px-4" v-if="showInventoryHistory">
+          <v-icon size="16" class="mr-2">lucide-package</v-icon> Kho
+        </v-tab>
         <v-tab value="history" class="text-body-2 text-none font-weight-medium px-4" v-if="showInventoryHistory">
-          <v-icon size="16" class="mr-2">lucide-history</v-icon> Kho / Lịch sử
+          <v-icon size="16" class="mr-2">lucide-history</v-icon> Lịch sử
         </v-tab>
       </v-tabs>
 
@@ -188,6 +191,100 @@
             </div>
           </v-window-item>
 
+          <!-- TAB: ORDERS (KHO) -->
+          <v-window-item value="orders" class="pa-0 h-100">
+             <div class="pa-3 d-flex flex-wrap gap-3 align-center border-b bg-grey-lighten-4">
+               <v-select
+                 v-model="orderOperatorFilter"
+                 :items="orderOperators"
+                 label="Người thao tác"
+                 variant="outlined"
+                 density="compact"
+                 hide-details
+                 clearable
+                 style="max-width: 200px;"
+                 class="bg-white"
+               ></v-select>
+               <v-select
+                 v-model="orderTypeFilter"
+                 :items="orderTypes"
+                 item-title="title"
+                 item-value="value"
+                 label="Loại giao dịch"
+                 variant="outlined"
+                 density="compact"
+                 hide-details
+                 clearable
+                 style="max-width: 180px;"
+                 class="bg-white"
+               ></v-select>
+               <v-text-field
+                 v-model="orderSearch"
+                 placeholder="Tìm tên, mã đơn..."
+                 variant="outlined"
+                 density="compact"
+                 hide-details
+                 clearable
+                 prepend-inner-icon="lucide-search"
+                 style="min-width: 200px; max-width: 300px;"
+                 class="flex-grow-1 bg-white"
+               ></v-text-field>
+               <v-btn size="small" variant="tonal" prepend-icon="lucide-rotate-cw" class="ml-auto" @click="loadOrders" :loading="inventoryStore.skuLoading[`orders_${pSku}`]">Tải lại</v-btn>
+             </div>
+             
+             <v-table hover density="compact" class="text-body-2">
+               <thead>
+                 <tr>
+                   <th class="font-weight-bold">Thời gian</th>
+                   <th class="font-weight-bold">Người thao tác</th>
+                   <th class="font-weight-bold">Loại giao dịch</th>
+                   <th class="font-weight-bold">Mã tham chiếu</th>
+                   <th class="text-right font-weight-bold">Số lượng</th>
+                   <th class="font-weight-bold">Lý do/Ghi chú</th>
+                 </tr>
+               </thead>
+               <tbody>
+                 <tr v-if="inventoryStore.skuLoading[`orders_${pSku}`]">
+                   <td colspan="6" class="text-center pa-4">
+                     <v-progress-circular indeterminate color="primary" size="24"></v-progress-circular>
+                   </td>
+                 </tr>
+                 <tr v-else-if="!filteredOrders || filteredOrders.length === 0">
+                   <td colspan="6" class="text-center pa-8 text-medium-emphasis">Không có đơn hàng nào khớp điều kiện</td>
+                 </tr>
+                 <tr
+                   v-else
+                   v-for="order in filteredOrders"
+                   :key="order.id"
+                   class="cursor-pointer hover-row"
+                   @click="openOrderDetail(order.orderCode, order.type)"
+                 >
+                   <td class="text-caption">{{ new Date(order.dateOrder).toLocaleDateString('vi-VN') }}</td>
+                   <td class="text-caption">{{ order.partnerName }}</td>
+                   <td>
+                     <v-chip size="x-small" :color="getTxColor(order.type)" variant="flat">
+                       {{ getTxName(order.type) }}
+                     </v-chip>
+                   </td>
+                   <td>
+                     <span class="text-primary font-weight-bold text-decoration-underline d-inline-flex align-center" style="gap: 4px;">
+                       {{ order.orderCode }}
+                       <v-icon size="12">lucide-external-link</v-icon>
+                     </span>
+                   </td>
+                   <td class="text-right font-weight-bold">
+                     <span :class="['IMPORT', 'ADJUSTMENT_IN', 'RETURN_IN'].includes(order.type) ? 'text-success' : 'text-primary'">
+                       {{ ['IMPORT', 'ADJUSTMENT_IN', 'RETURN_IN'].includes(order.type) ? '+' : '-' }}{{ order.quantity }}
+                     </span>
+                   </td>
+                   <td class="text-caption">
+                     {{ order.note || '' }}
+                   </td>
+                 </tr>
+               </tbody>
+             </v-table>
+          </v-window-item>
+
           <!-- TAB: HISTORY -->
           <v-window-item value="history" class="pa-0 h-100">
              <div class="pa-4 d-flex justify-space-between align-center border-b bg-grey-lighten-4">
@@ -235,7 +332,7 @@
                    v-for="tx in sortedSkuTransactions"
                    :key="tx.id"
                    :class="{ 'cursor-pointer hover-row': !!tx.referenceCode }"
-                   @click="tx.referenceCode && openOrderDetail(tx.referenceCode)"
+                   @click="tx.referenceCode && openOrderDetail(tx.referenceCode, tx.type)"
                  >
                    <td class="text-caption">{{ new Date(tx.displayTime || tx.performedAt).toLocaleString('vi-VN') }}</td>
                    <td class="text-caption">{{ tx.operatorName || 'Hệ thống' }}</td>
@@ -296,11 +393,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { useInventoryStore } from '@/stores/inventory';
 import { api } from '@/api/index';
 import OrderDetailModal from '@/components/orders/OrderDetailModal.vue';
 
 const inventoryStore = useInventoryStore();
+const router = useRouter();
 
 const props = defineProps<{
   modelValue: boolean;
@@ -320,6 +419,38 @@ const imageError = ref(false);
 const detailTab = ref('info');
 const fetchedProduct = ref<any>(null);
 const loadingDetails = ref(false);
+
+const orderSearch = ref('');
+const orderTypeFilter = ref<string | null>(null);
+const orderOperatorFilter = ref<string | null>(null);
+
+const filteredOrders = computed(() => {
+  if (!pSku.value || !inventoryStore.skuOrders[pSku.value]) return [];
+  let items = inventoryStore.skuOrders[pSku.value];
+  if (orderTypeFilter.value) {
+    items = items.filter(i => i.type === orderTypeFilter.value);
+  }
+  if (orderOperatorFilter.value) {
+    items = items.filter(i => i.partnerName === orderOperatorFilter.value);
+  }
+  if (orderSearch.value) {
+    const s = orderSearch.value.toLowerCase();
+    items = items.filter(i => (i.partnerName || '').toLowerCase().includes(s) || (i.orderCode || '').toLowerCase().includes(s));
+  }
+  return items;
+});
+
+const orderTypes = computed(() => {
+  if (!pSku.value || !inventoryStore.skuOrders[pSku.value]) return [];
+  const types = new Set(inventoryStore.skuOrders[pSku.value].map(i => i.type));
+  return Array.from(types).map(t => ({ value: t, title: getTxName(t) }));
+});
+
+const orderOperators = computed(() => {
+  if (!pSku.value || !inventoryStore.skuOrders[pSku.value]) return [];
+  const ops = new Set(inventoryStore.skuOrders[pSku.value].map(i => i.partnerName).filter(Boolean));
+  return Array.from(ops);
+});
 
 // Combined product from props and fetched catalog details
 const currentProduct = computed(() => {
@@ -523,8 +654,19 @@ const sortedSkuTransactions = computed(() => {
   });
 });
 
-async function openOrderDetail(orderCode?: string) {
+async function openOrderDetail(orderCode?: string, type?: string) {
   if (!orderCode) return;
+
+  if (type === 'IMPORT' || orderCode.startsWith('PO')) {
+    emit('update:modelValue', false);
+    router.push({ name: 'PurchaseOrders', query: { open: orderCode } });
+    return;
+  }
+
+  if (type === 'ADJUSTMENT_IN' || type === 'ADJUSTMENT_OUT' || orderCode.startsWith('KK')) {
+    return;
+  }
+
   orderLoading.value = true;
   showOrderDetail.value = true;
   try {
@@ -553,6 +695,7 @@ function getTxColor(type: string) {
     case 'DAMAGE':
     case 'ADJUSTMENT_OUT': return 'error';
     case 'INITIAL_STOCK': return 'info';
+    case 'RESERVE': return 'warning';
     default: return 'grey';
   }
 }
@@ -566,6 +709,7 @@ function getTxName(type: string) {
     case 'ADJUSTMENT_IN': return 'Điều chỉnh (+)';
     case 'ADJUSTMENT_OUT': return 'Điều chỉnh (-)';
     case 'DAMAGE': return 'Hư hỏng';
+    case 'RESERVE': return 'Báo giá';
     default: return type;
   }
 }
@@ -574,6 +718,11 @@ async function loadHistory() {
   if (!pSku.value) return;
   await inventoryStore.fetchStockBySku(pSku.value);
   await inventoryStore.fetchTransactionsBySku(pSku.value, { limit: 100 });
+}
+
+async function loadOrders() {
+  if (!pSku.value) return;
+  await inventoryStore.fetchSkuOrders(pSku.value);
 }
 
 async function fetchFullProductDetails(sku: string) {
@@ -602,6 +751,7 @@ watch(() => props.modelValue, (newVal) => {
     }
     if (props.showInventoryHistory && sku) {
       loadHistory();
+      loadOrders();
     }
   }
 }, { immediate: true });
@@ -613,6 +763,10 @@ watch(() => props.product, (newProd) => {
     if (sku && (!fetchedProduct.value || (fetchedProduct.value.sku !== sku && fetchedProduct.value.default_code !== sku))) {
       fetchedProduct.value = null;
       fetchFullProductDetails(sku);
+      if (props.showInventoryHistory) {
+        loadHistory();
+        loadOrders();
+      }
     }
   }
 });

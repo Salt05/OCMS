@@ -372,11 +372,12 @@
                       <td class="text-center">
                         <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
                           <input
-                            type="number"
-                            v-model.number="line.quantity"
-                            min="1"
+                            type="text"
+                            :value="line.quantity"
                             style="width: 55px; text-align: center; font-weight: 600; outline: none; border: none;"
                             class="text-caption"
+                            @change="onOrderDetailQtyInput(line, 'quantity', $event)"
+                            @keyup.enter="onOrderDetailQtyInput(line, 'quantity', $event)"
                           />
                         </div>
                       </td>
@@ -384,11 +385,12 @@
                       <td class="text-center">
                         <div class="d-inline-flex align-center border rounded-lg overflow-hidden bg-surface px-1 py-0.5" style="border-color: rgba(var(--v-border-color), 0.25);">
                           <input
-                            type="number"
-                            v-model.number="line.qtyDelivered"
-                            min="0"
+                            type="text"
+                            :value="line.qtyDelivered"
                             style="width: 55px; text-align: center; font-weight: 700; outline: none; border: none;"
                             class="text-caption text-success"
+                            @change="onOrderDetailQtyInput(line, 'qtyDelivered', $event)"
+                            @keyup.enter="onOrderDetailQtyInput(line, 'qtyDelivered', $event)"
                           />
                         </div>
                       </td>
@@ -964,6 +966,15 @@ import { useOrders } from '@/composables/use-orders';
 import type { OrderItem } from '@/composables/use-orders';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
 import { useOdoo } from '@/composables/use-odoo';
+import { parseQuantityInput } from '@/utils/math-evaluator';
+
+function onOrderDetailQtyInput(line: any, field: 'quantity' | 'qtyDelivered', event: Event) {
+  const target = event.target as HTMLInputElement;
+  const currentVal = Number(line[field]) || 0;
+  const evaluated = parseQuantityInput(target.value, currentVal);
+  line[field] = Math.max(0, evaluated);
+  target.value = String(line[field]);
+}
 
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);

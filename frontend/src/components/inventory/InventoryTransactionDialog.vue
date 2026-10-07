@@ -8,36 +8,27 @@
       <v-divider></v-divider>
       <v-card-text class="transaction-card-body pa-5 d-flex flex-column">
         <div class="text-subtitle-2 mb-2">Sản phẩm cần biến động</div>
-        <v-btn v-if="form.type !== 'RETURN_IN'" block variant="outlined" color="primary" prepend-icon="lucide-plus" class="product-picker-button mb-3" @click="openProductPicker">
+        <v-btn block variant="outlined" color="primary" prepend-icon="lucide-plus" class="product-picker-button mb-3" @click="openProductPicker">
           {{ selectedProducts.length ? 'Thêm sản phẩm' : 'Chọn sản phẩm' }}
         </v-btn>
         <div v-if="form.type === 'RETURN_IN'" class="return-order-picker mb-3">
-          <v-text-field
-            v-model="returnOrderSearch"
-            label="Tìm đơn hàng theo mã"
-            placeholder="Nhập mã đơn rồi bấm tìm"
+          <v-autocomplete
+            v-model="selectedReturnOrderId"
+            v-model:search="returnOrderSearch"
+            label="Tìm và chọn đơn hàng trả lại"
+            placeholder="Nhập mã đơn, hoặc chọn từ danh sách..."
             variant="outlined"
             density="comfortable"
             clearable
             hide-details
             prepend-inner-icon="lucide-search"
-            append-inner-icon="lucide-search"
             :loading="returnOrderLoading"
-            @keyup.enter="searchOrders"
-            @click:append-inner="searchOrders"
-          ></v-text-field>
-          <v-select
-            v-if="returnOrders.length"
-            v-model="selectedReturnOrderId"
-            class="mt-3"
-            label="Chọn đơn hàng"
             :items="returnOrders"
             item-title="displayTitle"
             item-value="id"
-            variant="outlined"
-            hide-details
+            @update:search="onReturnSearchInput"
             @update:modelValue="selectReturnOrder"
-          ></v-select>
+          ></v-autocomplete>
           <div v-if="selectedReturnOrder" class="text-caption text-medium-emphasis mt-2">
             Đơn {{ selectedReturnOrder.orderCode }} - {{ selectedReturnOrder.partnerName || 'Không có tên khách' }}
           </div>
@@ -69,21 +60,19 @@
                 <button
                   type="button"
                   class="stepper-btn"
-                  :disabled="product.quantity <= 1"
                   @click="changeQuantity(product, -1)"
                 >
                   <v-icon size="14">lucide-minus</v-icon>
                 </button>
                 <input
-                  v-model.number="product.quantity"
-                  type="number"
-                  min="1"
-                  :max="product.maxQuantity || undefined"
+                  :value="product.quantity"
+                  type="text"
                   class="stepper-input text-center font-weight-bold"
                   aria-label="Số lượng sản phẩm"
-                  @change="normalizeQuantity(product)"
+                  @change="onQuantityInput(product, $event)"
+                  @keyup.enter="onQuantityInput(product, $event)"
                 >
-                <button type="button" class="stepper-btn" :disabled="!!product.maxQuantity && product.quantity >= product.maxQuantity" @click="changeQuantity(product, 1)">
+                <button type="button" class="stepper-btn" @click="changeQuantity(product, 1)">
                   <v-icon size="14">lucide-plus</v-icon>
                 </button>
               </div>
@@ -130,6 +119,7 @@
 import { computed, ref, watch } from 'vue';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
 import { useInventoryStore } from '@/stores/inventory';
+import { parseQuantityInput } from '@/utils/math-evaluator';
 
 interface Product {
   id: string;
@@ -195,17 +185,21 @@ function addProduct(product: any, quantity = 1) {
     sku: product.sku || product.default_code || null,
     name: product.name || product.display_name || 'Sản phẩm',
     imageUrl: product.image_url || product.imageUrl || null,
-    quantity: Math.max(1, Number(quantity) || 1),
+    quantity: Number.isFinite(Number(quantity)) ? Math.round(Number(quantity)) || 1 : 1,
   });
 }
 
 function changeQuantity(product: Product, amount: number) {
-  product.quantity = Math.max(1, product.quantity + amount);
+  const next = Math.round(Number(product.quantity) || 0) + amount;
+  product.quantity = Math.max(1, next);
 }
 
-function normalizeQuantity(product: Product) {
-  const maxQuantity = product.maxQuantity || Number.MAX_SAFE_INTEGER;
-  product.quantity = Math.min(maxQuantity, Math.max(1, Math.floor(Number(product.quantity) || 1)));
+function onQuantityInput(product: Product, event: Event) {
+  const target = event.target as HTMLInputElement;
+  const evaluated = parseQuantityInput(target.value, product.quantity || 1);
+  const validQty = Math.max(1, evaluated);
+  product.quantity = validQty;
+  target.value = String(validQty);
 }
 
 function removeProduct(id: string) {
@@ -216,22 +210,29 @@ function closeDialog() {
   if (!saving.value) dialog.value = false;
 }
 
-async function searchOrders() {
-  const search = returnOrderSearch.value.trim();
-  if (!search) return showMessage('Nhập mã đơn hàng để tìm kiếm', 'error');
+async function fetchReturnOrders(searchStr: string) {
   returnOrderLoading.value = true;
   try {
-    const orders = await inventoryStore.searchReturnOrders(search);
+    const skus = selectedProducts.value.map(p => p.sku).filter(Boolean).join(',');
+    const orders = await inventoryStore.searchReturnOrders(searchStr, skus);
     returnOrders.value = orders.map((order: any) => ({
       ...order,
       displayTitle: `${order.orderCode} - ${order.partnerName || 'Không có tên khách'}`,
     }));
-    if (!returnOrders.value.length) showMessage('Không tìm thấy đơn hàng phù hợp', 'warning');
   } catch (err: any) {
-    showMessage(err.response?.data?.error || 'Không thể tìm đơn hàng', 'error');
+    // ignore
   } finally {
     returnOrderLoading.value = false;
   }
+}
+
+let searchTimeout: any;
+function onReturnSearchInput(val: string) {
+  if (val === null || val === undefined) return;
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    fetchReturnOrders(val);
+  }, 300);
 }
 
 function selectReturnOrder(orderId: string) {
@@ -260,7 +261,9 @@ function selectReturnOrder(orderId: string) {
 }
 
 function onTypeChanged(type: string) {
-  if (type !== 'RETURN_IN') {
+  if (type === 'RETURN_IN') {
+    fetchReturnOrders('');
+  } else {
     returnOrders.value = [];
     selectedReturnOrderId.value = null;
     selectedReturnOrder.value = null;
@@ -271,6 +274,9 @@ function onTypeChanged(type: string) {
 async function submit() {
   if (!selectedProducts.value.length) return showMessage('Vui lòng chọn ít nhất một sản phẩm', 'error');
   if (selectedProducts.value.some(product => !product.sku)) return showMessage('Sản phẩm được chọn phải có SKU', 'error');
+  if (selectedProducts.value.some(product => product.quantity < 1)) {
+    return showMessage('Số lượng tối thiểu của 1 dòng sản phẩm là 1', 'error');
+  }
   if (form.value.type === 'RETURN_IN' && !selectedReturnOrder.value) {
     return showMessage('Vui lòng tìm và chọn đơn hàng trả hàng', 'error');
   }
@@ -289,11 +295,13 @@ async function submit() {
 
     const isDecrease = ['ADJUSTMENT_OUT', 'DAMAGE'].includes(form.value.type);
     for (const product of selectedProducts.value) {
+      const rawQty = Number(product.quantity) || 0;
+      const quantity = isDecrease ? (rawQty > 0 ? -rawQty : rawQty) : rawQty;
       await inventoryStore.createTransaction({
-        sku: product.sku,
+        sku: product.sku!,
         productName: product.name,
         type: form.value.type,
-        quantity: isDecrease ? -product.quantity : product.quantity,
+        quantity,
         notes: form.value.notes.trim() || undefined,
       });
     }

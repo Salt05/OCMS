@@ -65,15 +65,9 @@ export class InventoryService {
         });
       }
 
-      // 2. Validate quantity for OUT transactions (optional strict check, but usually allowed to go negative if needed, though better to prevent if strict)
-      // Let's allow negative for now, but in UI we will warn. 
-      // If type is SALE or OUT, quantity should be passed as negative.
-      
+      // 2. Calculate new stock on hand (allows negative stock for unconstrained adjustments)
       const quantityBefore = item.onHand;
       const quantityAfter = quantityBefore + quantity;
-      if (quantityAfter < 0) {
-        throw new Error(`Không thể tạo biến động: tồn kho của ${sku} không đủ`);
-      }
 
       // 3. Update the item
       const updatedItem = await tx.inventoryItem.update({
@@ -265,7 +259,8 @@ export class InventoryService {
           where: { id: item.id },
           data: {
             onHand: newOnHand,
-            reserved: Math.max(0, item.reserved - reservedToDeduct)
+            reserved: Math.max(0, item.reserved - reservedToDeduct),
+            soldQuantity: { increment: qtyToShip }, // Cập nhật số đã bán thực tế
           }
         });
 
@@ -334,7 +329,8 @@ export class InventoryService {
           where: { id: item.id },
           data: {
             onHand: newOnHand,
-            reserved: Math.max(0, item.reserved - reservedReleased)
+            reserved: Math.max(0, item.reserved - reservedReleased),
+            soldQuantity: { decrement: line.quantity }, // Giảm số đã bán khi khách trả hàng
           }
         });
 

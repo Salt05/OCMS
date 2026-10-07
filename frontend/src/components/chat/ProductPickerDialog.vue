@@ -334,13 +334,12 @@
                       <v-icon size="12">lucide-minus</v-icon>
                     </button>
                     <input
-                      type="number"
+                      type="text"
                       :value="getQty(prod.id)"
-                      min="1"
-                      :max="allowSelectZero ? undefined : prod.available_quantity"
                       class="stepper-input text-center font-weight-bold text-high-emphasis"
                       aria-label="Số lượng sản phẩm"
-                      @input="onQtyInput(prod.id, $event, allowSelectZero ? undefined : prod.available_quantity)"
+                      @change="onQtyInput(prod.id, $event, allowSelectZero ? undefined : prod.available_quantity)"
+                      @keyup.enter="onQtyInput(prod.id, $event, allowSelectZero ? undefined : prod.available_quantity)"
                       @click.stop
                     />
                     <button
@@ -410,6 +409,7 @@ import { ref, computed, watch } from 'vue';
 import { useDisplay } from 'vuetify';
 import ProductDetailModal from '@/components/common/ProductDetailModal.vue';
 import { useOdoo, type OdooProduct } from '@/composables/use-odoo';
+import { parseQuantityInput } from '@/utils/math-evaluator';
 
 const display = useDisplay();
 const isMobile = computed(() => display.smAndDown.value);
@@ -465,7 +465,7 @@ function getQty(id: number | string): number {
 }
 
 function setQty(id: number | string, val: number, maxQty?: number) {
-  let v = Math.max(1, Math.floor(val) || 1);
+  let v = Math.max(1, Math.round(val) || 1);
   if (!allowSelectZero.value && maxQty !== undefined) {
     if (maxQty <= 0) {
       v = 0;
@@ -486,8 +486,9 @@ function decrementQty(id: number | string) {
 
 function onQtyInput(id: number | string, event: Event, maxQty?: number) {
   const target = event.target as HTMLInputElement;
-  const val = parseInt(target.value, 10);
-  setQty(id, isNaN(val) ? 1 : val, maxQty);
+  const currentVal = getQty(id);
+  const evaluated = parseQuantityInput(target.value, currentVal);
+  setQty(id, evaluated, maxQty);
   target.value = getQty(id).toString();
 }
 

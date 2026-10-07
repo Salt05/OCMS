@@ -335,8 +335,8 @@
                             <v-icon v-else size="18" color="grey-darken-1">lucide-package</v-icon>
                           </v-avatar>
                           <div class="overflow-hidden">
-                            <div class="font-weight-medium text-body-2 text-high-emphasis text-truncate" :title="line.productName">
-                              {{ line.productName }}
+                            <div class="font-weight-medium text-body-2 text-high-emphasis text-truncate" :title="formatProductName(line.productName)">
+                              {{ formatProductName(line.productName) }}
                             </div>
                             <div class="text-caption text-primary font-weight-medium" v-if="getLineSku(line)">
                               SKU: {{ getLineSku(line) }}
@@ -346,14 +346,14 @@
                       </td>
                       <td class="py-1.5 px-2 text-center">
                         <v-text-field
-                          v-model.number="line.quantity"
-                          type="number"
-                          min="1"
+                          :model-value="line.quantity"
+                          type="text"
                           density="compact"
                           variant="plain"
                           hide-details
                           class="qty-field mx-auto"
                           style="max-width: 75px;"
+                          @update:model-value="onPoQtyInput(line, $event)"
                         ></v-text-field>
                       </td>
                       <td class="py-1.5 px-2 text-right">
@@ -659,8 +659,8 @@
                       <v-icon v-else size="18" color="grey-darken-1">lucide-package</v-icon>
                     </v-avatar>
                     <div class="overflow-hidden">
-                      <div class="text-subtitle-2 font-weight-medium text-high-emphasis text-truncate" :title="line.productName || line.selectedProduct?.name">
-                        {{ line.productName || line.selectedProduct?.name }}
+                      <div class="text-subtitle-2 font-weight-medium text-high-emphasis text-truncate" :title="formatProductName(line.productName || line.selectedProduct?.name)">
+                        {{ formatProductName(line.productName || line.selectedProduct?.name) }}
                       </div>
                       <div class="text-caption text-primary font-weight-medium" v-if="getLineSku(line)">
                         SKU: {{ getLineSku(line) }}
@@ -672,14 +672,14 @@
                 <!-- Cột Số lượng -->
                 <div style="width: 130px;" class="text-center px-2">
                   <v-text-field
-                    v-model.number="line.quantity"
-                    type="number"
-                    min="1"
+                    :model-value="line.quantity"
+                    type="text"
                     density="compact"
                     variant="plain"
                     hide-details
                     class="qty-field mx-auto"
                     style="max-width: 75px;"
+                    @update:model-value="onPoQtyInput(line, $event)"
                   ></v-text-field>
                 </div>
 
@@ -779,11 +779,20 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { api } from '@/api';
 import { useInventoryStore } from '@/stores/inventory';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
+import { parseQuantityInput } from '@/utils/math-evaluator';
+
+function onPoQtyInput(line: any, val: any) {
+  const currentVal = Number(line.quantity) || 1;
+  const evaluated = parseQuantityInput(val, currentVal);
+  line.quantity = Math.max(1, evaluated);
+}
 
 const inventoryStore = useInventoryStore();
+const route = useRoute();
 
 // State
 const loading = ref(false);
@@ -1067,6 +1076,11 @@ function getLineSku(line: any): string {
   }
   
   return '';
+}
+
+function formatProductName(name?: string): string {
+  if (!name) return '';
+  return name.replace(/^\[.*?\]\s*/, '');
 }
 
 function getLineImage(line: any): string {
@@ -1474,6 +1488,15 @@ onMounted(() => {
   loadOdooData();
   if (inventoryStore.productList.length === 0) {
     inventoryStore.fetchProductList();
+  }
+  if (route.query.open) {
+    openDetailDialog({ id: route.query.open });
+  }
+});
+
+watch(() => route.query.open, (newOpen) => {
+  if (newOpen) {
+    openDetailDialog({ id: newOpen });
   }
 });
 </script>

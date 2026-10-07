@@ -92,6 +92,7 @@ export const useInventoryStore = defineStore('inventory', () => {
   // For product detail popup
   const skuStock = ref<Record<string, StockInfo>>({});
   const skuTransactions = ref<Record<string, InventoryTransaction[]>>({});
+  const skuOrders = ref<Record<string, any[]>>({});
   const skuTransactionTotal = ref<Record<string, number>>({});
   const skuLoading = ref<Record<string, boolean>>({});
 
@@ -167,8 +168,8 @@ export const useInventoryStore = defineStore('inventory', () => {
     }
   }
 
-  async function searchReturnOrders(search: string) {
-    const res = await api.get('/inventory/return-orders', { params: { search } });
+  async function searchReturnOrders(search: string, skus: string = '') {
+    const res = await api.get('/inventory/return-orders', { params: { search, skus } });
     return res.data.data || [];
   }
 
@@ -214,6 +215,18 @@ export const useInventoryStore = defineStore('inventory', () => {
     }
   }
 
+  async function fetchSkuOrders(sku: string) {
+    skuLoading.value[`orders_${sku}`] = true;
+    try {
+      const res = await api.get(`/inventory/stock-orders/${encodeURIComponent(sku)}`);
+      skuOrders.value[sku] = res.data.data;
+    } catch (err) {
+      console.error(err);
+    } finally {
+      skuLoading.value[`orders_${sku}`] = false;
+    }
+  }
+
   return {
     items,
     totalItems,
@@ -225,6 +238,7 @@ export const useInventoryStore = defineStore('inventory', () => {
     loading,
     skuStock,
     skuTransactions,
+    skuOrders,
     skuTransactionTotal,
     skuLoading,
     fetchDashboardStats,
@@ -237,5 +251,6 @@ export const useInventoryStore = defineStore('inventory', () => {
     fetchProductList,
     fetchStockBySku,
     fetchTransactionsBySku,
+    fetchSkuOrders,
   };
 });

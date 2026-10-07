@@ -1671,25 +1671,39 @@ export async function orderRoutes(app: FastifyInstance) {
         where: { id: line.id },
         data: { qtyDelivered: targetQty, shippedQuantity: targetQty },
       });
-      if (line.odooLineId) {
-        await odooService.executeKw('sale.order.line', 'write', [
-          [line.odooLineId],
-          { qty_delivered: targetQty },
-        ]).catch(e => logger.warn(`[deliver-all] Error writing Odoo line #${line.odooLineId}:`, e.message));
-      }
     }
 
     const activityText = typeof body.activitySummary === 'string' ? body.activitySummary.trim() : null;
 
-    if (existingOrder.odooOrderId && activityText) {
+    if (existingOrder.odooOrderId) {
+      const lineDeliveries = existingOrder.lines
+        .filter(l => l.odooLineId)
+        .map(l => ({ odoo_line_id: l.odooLineId, qty_delivered: Number(l.quantity) || 0 }));
+
       try {
-        await routerClient.manageActivity({
+        await routerClient.deliverOrder({
           odoo_order_id: existingOrder.odooOrderId,
-          action: 'update',
-          summary: activityText,
+          activity_summary: activityText || undefined,
+          lines: lineDeliveries,
         });
-      } catch (actErr: any) {
-        logger.warn(`[deliver-all] Lỗi đồng bộ ghi chú giao việc Odoo:`, actErr.message);
+      } catch (routerErr: any) {
+        logger.warn(`[deliver-all] Router delivery call failed (${routerErr.message}), fallbacking to direct Odoo write...`);
+        for (const line of existingOrder.lines) {
+          const targetQty = Number(line.quantity) || 0;
+          if (line.odooLineId) {
+            await odooService.executeKw('sale.order.line', 'write', [
+              [line.odooLineId],
+              { qty_delivered: targetQty },
+            ]).catch(e => logger.warn(`[deliver-all] Error writing Odoo line #${line.odooLineId}:`, e.message));
+          }
+        }
+        if (activityText) {
+          await routerClient.manageActivity({
+            odoo_order_id: existingOrder.odooOrderId,
+            action: 'update',
+            summary: activityText,
+          }).catch(e => logger.warn(`[deliver-all] Error managing activity:`, e.message));
+        }
       }
     }
 

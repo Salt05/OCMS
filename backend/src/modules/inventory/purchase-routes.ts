@@ -105,7 +105,13 @@ export async function purchaseRoutes(app: FastifyInstance) {
 
       const { id } = request.params;
       const po = await prisma.purchaseOrder.findFirst({
-        where: { id, orgId },
+        where: {
+          orgId,
+          OR: [
+            { id },
+            { purchaseCode: id }
+          ]
+        },
         include: {
           lines: true,
           createdBy: { select: { fullName: true } }

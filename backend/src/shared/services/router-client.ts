@@ -453,6 +453,45 @@ export class RouterClient {
       throw err;
     }
   }
+
+  /**
+   * Điều phối xác nhận giao hàng (Cập nhật qty_delivered các dòng sản phẩm + Hoạt động Odoo) qua Router Gateway
+   */
+  async deliverOrder(payload: {
+    odoo_order_id: number;
+    activity_summary?: string;
+    lines?: Array<{ odoo_line_id: number; qty_delivered: number }>;
+  }): Promise<{
+    success: boolean;
+    odoo_order_id?: number;
+    message?: string;
+    target?: string;
+    target_name?: string;
+    error?: string;
+  }> {
+    const url = `${this.getRouterBaseUrl()}/api/v1/router/odoo/deliver-order`;
+
+    try {
+      logger.info(`[RouterClient] 🚚 Gửi lệnh GIAO HÀNG đơn #${payload.odoo_order_id} sang Universal Router Gateway...`);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(35000),
+        body: JSON.stringify(payload),
+      });
+
+      const json = (await res.json()) as any;
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Router trả về lỗi khi giao hàng');
+      }
+
+      logger.info(`[RouterClient] ✅ Đã giao hàng đơn #${payload.odoo_order_id} thành công qua Router trên [${json.target_name || json.target}]`);
+      return json;
+    } catch (err: any) {
+      logger.error(`[RouterClient] Lỗi giao hàng qua Router Gateway: ${err.message}`);
+      throw err;
+    }
+  }
 }
 
 export const routerClient = new RouterClient();

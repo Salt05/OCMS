@@ -374,12 +374,12 @@
                     <v-icon size="12">lucide-minus</v-icon>
                   </button>
                   <input
-                    type="number"
-                    v-model.number="line.qty"
-                    min="0"
+                    type="text"
+                    :value="line.qty"
                     class="stepper-input text-center font-weight-bold text-high-emphasis"
                     aria-label="Số lượng sản phẩm"
-                    @change="onQtyChange(line)"
+                    @change="onQtyInput(line, $event)"
+                    @keyup.enter="onQtyInput(line, $event)"
                   />
                   <button
                     type="button"
@@ -520,6 +520,7 @@ import { io, Socket } from 'socket.io-client';
 import type { Contact } from '@/composables/use-contacts';
 import { useOdoo, type OdooProduct } from '@/composables/use-odoo';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
+import { parseQuantityInput } from '@/utils/math-evaluator';
 
 const props = defineProps<{
   contact: Contact | null;
@@ -617,21 +618,22 @@ function onUnitPriceInput(line: OrderLineItem, event: Event) {
 
 // Quantity controls
 function incrementQty(line: OrderLineItem) {
-  line.qty = (Number(line.qty) || 0) + 1;
+  line.qty = Math.round(Number(line.qty) || 0) + 1;
 }
 
 function decrementQty(line: OrderLineItem) {
-  if ((line.qty || 0) > 0) {
-    line.qty -= 1;
+  const current = Math.round(Number(line.qty) || 0);
+  if (current > 0) {
+    line.qty = current - 1;
   }
 }
 
-function onQtyChange(line: OrderLineItem) {
-  if (line.qty === null || line.qty === undefined || line.qty < 0 || isNaN(line.qty)) {
-    line.qty = 0;
-  } else {
-    line.qty = Math.floor(line.qty);
-  }
+function onQtyInput(line: OrderLineItem, event: Event) {
+  const target = event.target as HTMLInputElement;
+  const currentVal = Number(line.qty) || 0;
+  const evaluated = parseQuantityInput(target.value, currentVal);
+  line.qty = Math.max(0, evaluated);
+  target.value = String(line.qty);
 }
 
 // When product is clicked in the picker dialog
