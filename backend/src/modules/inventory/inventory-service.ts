@@ -65,9 +65,15 @@ export class InventoryService {
         });
       }
 
-      // 2. Calculate new stock on hand (allows negative stock for unconstrained adjustments)
+      // 2. Calculate new stock on hand (ensure physical stock onHand cannot be negative)
       const quantityBefore = item.onHand;
       const quantityAfter = quantityBefore + quantity;
+
+      if (quantityAfter < 0) {
+        throw new Error(
+          `Tồn kho thực tế của sản phẩm ${sku} không đủ (Tồn hiện có: ${quantityBefore}, yêu cầu giảm: ${Math.abs(quantity)})`
+        );
+      }
 
       // 3. Update the item
       const updatedItem = await tx.inventoryItem.update({
@@ -255,6 +261,12 @@ export class InventoryService {
         const reservedToDeduct = Math.min(currentReserved, qtyToShip);
         const newOnHand = item.onHand - qtyToShip;
 
+        if (newOnHand < 0) {
+          throw new Error(
+            `Tồn kho thực tế của sản phẩm ${line.sku} không đủ để xuất giao (Tồn hiện có: ${item.onHand}, xuất giao: ${qtyToShip})`
+          );
+        }
+
         await tx.inventoryItem.update({
           where: { id: item.id },
           data: {
@@ -293,7 +305,15 @@ export class InventoryService {
   /**
    * Trả hàng và cộng lại kho
    */
-  async returnStock(orgId: string, orderId: string, orderCode: string, lines: { id: string, sku: string, quantity: number }[], userId?: string) {
+  async returnStock(
+    orgId: string,
+    orderId: string,
+    orderCode: string,
+    lines: { id: string; sku: string; quantity: number }[],
+    userId?: string,
+    reason?: string,
+    notes?: string
+  ) {
     this.clearCache();
     return await prisma.$transaction(async (tx) => {
       for (const line of lines) {
@@ -354,7 +374,9 @@ export class InventoryService {
               quantityBefore: item.onHand,
               quantityAfter: newOnHand,
               referenceType: 'ORDER', referenceId: orderId, referenceCode: orderCode,
-              performedByUserId: userId, reason: 'Khách trả hàng',
+              performedByUserId: userId,
+              reason: reason || notes || 'Khách trả hàng',
+              notes: (notes && notes !== reason) ? notes : undefined,
               idempotencyKey
             }
           });
@@ -796,6 +818,10 @@ export class InventoryService {
         });
 
         if (!invItem) continue;
+
+        if (reqItem.actualQuantity < 0) {
+          throw new Error(`Số lượng thực tế khi kiểm kê sản phẩm ${reqItem.sku} không được bé hơn 0`);
+        }
 
         const systemQty = invItem.onHand;
         const diff = reqItem.actualQuantity - systemQty;

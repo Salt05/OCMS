@@ -1669,7 +1669,7 @@ export async function orderRoutes(app: FastifyInstance) {
       const targetQty = Number(line.quantity) || 0;
       await prisma.orderLineHistory.update({
         where: { id: line.id },
-        data: { qtyDelivered: targetQty, shippedQuantity: targetQty },
+        data: { qtyDelivered: targetQty },
       });
     }
 
@@ -1705,6 +1705,17 @@ export async function orderRoutes(app: FastifyInstance) {
           }).catch(e => logger.warn(`[deliver-all] Error managing activity:`, e.message));
         }
       }
+    }
+
+    const shippedLinesForDomain = existingOrder.lines
+      .filter(l => l.productSku)
+      .map(l => ({
+        id: l.id,
+        sku: l.productSku!,
+        quantity: Number(l.quantity) || 0
+      }));
+    if (shippedLinesForDomain.length > 0) {
+      await orderDomainService.handleOrderShipped(user.orgId, existingOrder.id, existingOrder.orderCode, shippedLinesForDomain, user.id);
     }
 
     const updated = await prisma.orderHistory.update({
@@ -1851,6 +1862,7 @@ export async function orderRoutes(app: FastifyInstance) {
       });
 
       const reservationLines: { id: string; sku: string; quantity: number }[] = [];
+      const shippedLines: { id: string; sku: string; quantity: number }[] = [];
       let totalOrderedQty = 0;
       let totalDeliveredQty = 0;
 
@@ -1881,7 +1893,7 @@ export async function orderRoutes(app: FastifyInstance) {
             uomName: line.uomName || 'Units',
             quantity: qty,
             qtyDelivered: deliveredQty,
-            shippedQuantity: deliveredQty,
+            shippedQuantity: existingLine?.shippedQuantity || 0,
             priceUnit: price,
             discount: discount,
             priceSubtotal: subtotal,
@@ -1901,6 +1913,10 @@ export async function orderRoutes(app: FastifyInstance) {
         if (line.productSku && (qty > 0 || existingLine?.reservedQuantity)) {
           reservationLines.push({ id: savedLine.id, sku: line.productSku, quantity: qty });
         }
+        
+        if (line.productSku && deliveredQty > 0) {
+          shippedLines.push({ id: savedLine.id, sku: line.productSku, quantity: deliveredQty });
+        }
       }
 
       if (totalOrderedQty > 0) {
@@ -1919,6 +1935,16 @@ export async function orderRoutes(app: FastifyInstance) {
           existingOrder.id,
           existingOrder.orderCode,
           reservationLines,
+          user.id,
+        );
+      }
+
+      if (shippedLines.length > 0) {
+        await orderDomainService.handleOrderShipped(
+          user.orgId,
+          existingOrder.id,
+          existingOrder.orderCode,
+          shippedLines,
           user.id,
         );
       }

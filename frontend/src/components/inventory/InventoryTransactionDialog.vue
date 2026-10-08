@@ -1,105 +1,211 @@
 <template>
-  <v-dialog v-model="dialog" max-width="620">
-    <v-card class="transaction-card d-flex flex-column">
-      <v-card-title class="d-flex justify-space-between align-center pa-5">
-        <span class="text-h6 font-weight-bold">Tạo biến động kho</span>
-        <v-btn icon="lucide-x" variant="text" @click="closeDialog"></v-btn>
+  <v-dialog v-model="dialog" max-width="920" width="100%" scrollable>
+    <v-card class="transaction-card d-flex flex-column rounded-xl overflow-hidden">
+      <!-- Dialog Header -->
+      <v-card-title class="d-flex justify-space-between align-center pa-4 px-5 border-b bg-surface flex-shrink-0">
+        <div class="d-flex align-center ga-2">
+          <v-avatar color="primary" variant="tonal" size="36" class="rounded-lg">
+            <v-icon size="20" color="primary">lucide-arrow-left-right</v-icon>
+          </v-avatar>
+          <div>
+            <div class="text-h6 font-weight-bold leading-tight">Tạo biến động kho</div>
+            <div class="text-caption text-medium-emphasis">Tạo phiếu nhập, xuất hoặc điều chỉnh số lượng tồn kho</div>
+          </div>
+        </div>
+        <v-btn icon="lucide-x" variant="text" density="comfortable" @click="closeDialog"></v-btn>
       </v-card-title>
-      <v-divider></v-divider>
-      <v-card-text class="transaction-card-body pa-5 d-flex flex-column">
-        <div class="text-subtitle-2 mb-2">Sản phẩm cần biến động</div>
-        <v-btn block variant="outlined" color="primary" prepend-icon="lucide-plus" class="product-picker-button mb-3" @click="openProductPicker">
-          {{ selectedProducts.length ? 'Thêm sản phẩm' : 'Chọn sản phẩm' }}
-        </v-btn>
-        <div v-if="form.type === 'RETURN_IN'" class="return-order-picker mb-3">
-          <v-autocomplete
-            v-model="selectedReturnOrderId"
-            v-model:search="returnOrderSearch"
-            label="Tìm và chọn đơn hàng trả lại"
-            placeholder="Nhập mã đơn, hoặc chọn từ danh sách..."
+
+      <!-- Dialog Body (2 Columns Layout) -->
+      <v-card-text class="transaction-card-body pa-0 d-flex flex-column flex-md-row overflow-hidden flex-grow-1">
+        <!-- Left Pane: Configuration & Note (Form) -->
+        <div class="form-pane pa-5 d-flex flex-column ga-4 border-e-md bg-grey-lighten-5 flex-shrink-0">
+          <div class="text-subtitle-2 font-weight-bold text-high-emphasis">1. Thông tin biến động</div>
+
+          <!-- Transaction Type -->
+          <v-select
+            v-model="form.type"
+            :items="typeOptions"
+            label="Loại biến động *"
             variant="outlined"
             density="comfortable"
-            clearable
             hide-details
-            prepend-inner-icon="lucide-search"
-            :loading="returnOrderLoading"
-            :items="returnOrders"
-            item-title="displayTitle"
-            item-value="id"
-            @update:search="onReturnSearchInput"
-            @update:modelValue="selectReturnOrder"
-          ></v-autocomplete>
-          <div v-if="selectedReturnOrder" class="text-caption text-medium-emphasis mt-2">
-            Đơn {{ selectedReturnOrder.orderCode }} - {{ selectedReturnOrder.partnerName || 'Không có tên khách' }}
+            bg-color="white"
+            @update:modelValue="onTypeChanged"
+          ></v-select>
+
+          <!-- Return Order Picker (shown when type is RETURN_IN) -->
+          <div v-if="form.type === 'RETURN_IN'" class="return-order-picker">
+            <v-autocomplete
+              v-model="selectedReturnOrderId"
+              v-model:search="returnOrderSearch"
+              label="Tìm đơn hàng trả lại *"
+              placeholder="Nhập mã đơn hoặc tên khách..."
+              variant="outlined"
+              density="comfortable"
+              clearable
+              hide-details
+              bg-color="white"
+              prepend-inner-icon="lucide-search"
+              :loading="returnOrderLoading"
+              :items="returnOrders"
+              item-title="displayTitle"
+              item-value="id"
+              @update:search="onReturnSearchInput"
+              @update:modelValue="selectReturnOrder"
+            ></v-autocomplete>
+            <div v-if="selectedReturnOrder" class="text-caption text-medium-emphasis mt-1">
+              Đơn {{ selectedReturnOrder.orderCode }} - {{ selectedReturnOrder.partnerName || 'Khách hàng' }}
+            </div>
+          </div>
+
+          <!-- Notes -->
+          <v-textarea
+            v-model="form.notes"
+            label="Lý do / Ghi chú"
+            placeholder="Nhập lý do điều chỉnh hoặc ghi chú thêm..."
+            variant="outlined"
+            density="comfortable"
+            rows="3"
+            auto-grow
+            hide-details
+            bg-color="white"
+          ></v-textarea>
+
+          <!-- Select Product Button -->
+          <div class="mt-auto pt-2">
+            <v-btn
+              block
+              color="primary"
+              variant="tonal"
+              prepend-icon="lucide-plus"
+              class="product-picker-btn text-none font-weight-bold"
+              size="large"
+              @click="openProductPicker"
+            >
+              {{ selectedProducts.length ? 'Thêm sản phẩm khác' : 'Chọn sản phẩm' }}
+            </v-btn>
           </div>
         </div>
-        <div v-if="selectedProducts.length" class="selected-products mb-5 d-flex flex-column ga-3">
-          <div v-for="product in selectedProducts" :key="product.id" class="product-card border rounded-xl pa-2">
-            <div class="d-flex align-start ga-2">
-              <div class="product-image-box rounded-lg border flex-shrink-0 overflow-hidden">
-                <img v-if="product.imageUrl" :src="product.imageUrl" :alt="product.name" class="product-image">
-                <v-icon v-else color="grey" size="24">lucide-image</v-icon>
-              </div>
-              <div class="flex-grow-1 overflow-hidden">
-                <div class="font-weight-bold text-high-emphasis text-truncate">{{ product.name }}</div>
-                <div class="text-caption text-medium-emphasis mt-1">
-                  SKU: {{ product.sku || 'Chưa có SKU' }}
+
+        <!-- Right Pane: Selected Products List ("bên đó") -->
+        <div class="products-pane pa-5 d-flex flex-column flex-grow-1 overflow-hidden bg-white">
+          <div class="d-flex align-center justify-space-between mb-3 flex-shrink-0">
+            <div class="text-subtitle-2 font-weight-bold text-high-emphasis d-flex align-center ga-2">
+              <span>2. Danh sách sản phẩm</span>
+              <v-chip size="x-small" color="primary" variant="tonal" class="font-weight-bold">
+                {{ selectedProducts.length }}
+              </v-chip>
+            </div>
+            <v-btn
+              v-if="selectedProducts.length"
+              size="small"
+              variant="text"
+              color="error"
+              class="px-1 text-caption text-none"
+              prepend-icon="lucide-trash-2"
+              @click="selectedProducts = []"
+            >
+              Xóa tất cả
+            </v-btn>
+          </div>
+
+          <!-- Empty State -->
+          <div
+            v-if="!selectedProducts.length"
+            class="empty-products-box d-flex flex-column align-center justify-center rounded-xl border border-dashed pa-6 text-center my-auto flex-grow-1"
+          >
+            <v-avatar color="primary" variant="tonal" size="56" class="mb-3">
+              <v-icon size="28" color="primary">lucide-package-plus</v-icon>
+            </v-avatar>
+            <div class="text-body-1 font-weight-medium text-high-emphasis mb-1">Chưa có sản phẩm nào</div>
+            <div class="text-caption text-medium-emphasis mb-4" style="max-width: 260px;">
+              Nhấn nút <strong>"Chọn sản phẩm"</strong> ở cột bên trái để chọn sản phẩm cần biến động.
+            </div>
+            <v-btn color="primary" variant="outlined" prepend-icon="lucide-plus" size="small" class="text-none" @click="openProductPicker">
+              Chọn sản phẩm ngay
+            </v-btn>
+          </div>
+
+          <!-- Selected Products Cards List -->
+          <div v-else class="selected-products-list d-flex flex-column ga-2.5 overflow-y-auto pr-1 flex-grow-1">
+            <div
+              v-for="product in selectedProducts"
+              :key="product.id"
+              class="product-card border rounded-lg pa-3 bg-surface"
+            >
+              <div class="d-flex align-center ga-3">
+                <div class="product-image-box rounded-md border flex-shrink-0 overflow-hidden bg-grey-lighten-4">
+                  <img v-if="product.imageUrl" :src="product.imageUrl" :alt="product.name" class="product-image">
+                  <v-icon v-else color="grey" size="20">lucide-image</v-icon>
+                </div>
+
+                <div class="flex-grow-1 overflow-hidden">
+                  <div class="font-weight-medium text-body-2 text-high-emphasis text-truncate" :title="product.name">
+                    {{ product.name }}
+                  </div>
+                  <div class="text-caption text-medium-emphasis mt-0.5 d-flex align-center ga-2">
+                    <span>SKU: <strong class="text-high-emphasis">{{ product.sku || 'Chưa có' }}</strong></span>
+                    <span v-if="product.maxQuantity" class="text-warning">
+                      (Tối đa: {{ product.maxQuantity }})
+                    </span>
+                  </div>
+                </div>
+
+                <div class="d-flex align-center ga-2 flex-shrink-0">
+                  <!-- Stepper -->
+                  <div class="quantity-stepper d-inline-flex align-center border rounded-lg overflow-hidden bg-white">
+                    <button
+                      type="button"
+                      class="stepper-btn"
+                      :disabled="product.quantity <= 1"
+                      @click="changeQuantity(product, -1)"
+                    >
+                      <v-icon size="14">lucide-minus</v-icon>
+                    </button>
+                    <input
+                      :value="product.quantity"
+                      type="text"
+                      class="stepper-input text-center font-weight-bold text-body-2"
+                      aria-label="Số lượng sản phẩm"
+                      @change="onQuantityInput(product, $event)"
+                      @keyup.enter="onQuantityInput(product, $event)"
+                    >
+                    <button
+                      type="button"
+                      class="stepper-btn"
+                      :disabled="!!(product.maxQuantity && product.quantity >= product.maxQuantity)"
+                      @click="changeQuantity(product, 1)"
+                    >
+                      <v-icon size="14">lucide-plus</v-icon>
+                    </button>
+                  </div>
+
+                  <!-- Remove Button -->
+                  <v-btn
+                    icon="lucide-trash-2"
+                    size="small"
+                    variant="text"
+                    color="grey-darken-1"
+                    density="comfortable"
+                    aria-label="Xóa sản phẩm"
+                    @click="removeProduct(product.id)"
+                  ></v-btn>
                 </div>
               </div>
-              <v-btn
-                icon="lucide-trash-2"
-                size="small"
-                variant="text"
-                color="error"
-                aria-label="Xóa sản phẩm"
-                @click="removeProduct(product.id)"
-              ></v-btn>
-            </div>
-            <div class="product-calc-bar mt-1 pt-1 border-t d-flex justify-end">
-              <div class="quantity-stepper d-inline-flex align-center border rounded-lg overflow-hidden">
-                <button
-                  type="button"
-                  class="stepper-btn"
-                  @click="changeQuantity(product, -1)"
-                >
-                  <v-icon size="14">lucide-minus</v-icon>
-                </button>
-                <input
-                  :value="product.quantity"
-                  type="text"
-                  class="stepper-input text-center font-weight-bold"
-                  aria-label="Số lượng sản phẩm"
-                  @change="onQuantityInput(product, $event)"
-                  @keyup.enter="onQuantityInput(product, $event)"
-                >
-                <button type="button" class="stepper-btn" @click="changeQuantity(product, 1)">
-                  <v-icon size="14">lucide-plus</v-icon>
-                </button>
-              </div>
             </div>
           </div>
         </div>
-        <v-select
-          v-model="form.type"
-          :items="typeOptions"
-          label="Loại biến động"
-          variant="outlined"
-          class="mb-5"
-          @update:modelValue="onTypeChanged"
-        ></v-select>
-        <v-textarea
-          v-model="form.notes"
-          label="Ghi chú"
-          variant="outlined"
-          rows="3"
-          auto-grow
-        ></v-textarea>
       </v-card-text>
-      <v-card-actions class="pa-5 pt-0">
-        <span v-if="selectedProducts.length" class="text-caption text-grey">{{ selectedProducts.length }} sản phẩm</span>
+
+      <v-divider></v-divider>
+      <!-- Dialog Actions Footer -->
+      <v-card-actions class="pa-4 px-5 bg-surface flex-shrink-0">
+        <span v-if="selectedProducts.length" class="text-caption text-medium-emphasis">
+          Đã chọn <strong>{{ selectedProducts.length }}</strong> sản phẩm
+        </span>
         <v-spacer></v-spacer>
-        <v-btn variant="text" @click="closeDialog">Hủy</v-btn>
-        <v-btn color="primary" :loading="saving" @click="submit">Tạo phiếu</v-btn>
+        <v-btn variant="outlined" color="grey" class="text-none" @click="closeDialog">Hủy</v-btn>
+        <v-btn color="primary" class="text-none px-5 font-weight-bold" :loading="saving" @click="submit">Tạo phiếu</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -287,6 +393,7 @@ async function submit() {
       await inventoryStore.processReturn({
         orderId: selectedReturnOrder.value.id,
         lines: selectedProducts.value.map(product => ({ id: product.id, quantity: product.quantity })),
+        reason: form.value.notes.trim() || undefined,
       });
       dialog.value = false;
       emit('saved');
@@ -320,19 +427,76 @@ function showMessage(text: string, color: string) {
 </script>
 
 <style scoped>
-.transaction-card { height: 720px; max-height: calc(100vh - 32px); }
-.transaction-card-body { min-height: 0; overflow: hidden; }
-.product-picker-button { min-height: 56px; border-style: dashed; }
-.selected-products { flex: 1 1 auto; min-height: 80px; overflow-y: auto; }
-.product-card { border-color: rgba(var(--v-border-color), 0.22) !important; }
-.product-image-box { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: rgb(var(--v-theme-surface)); }
-.product-image { width: 100%; height: 100%; object-fit: cover; }
-.border-t { border-top: 1px dashed rgba(var(--v-border-color), 0.3); }
-.quantity-stepper { height: 30px; }
-.stepper-btn { width: 30px; height: 28px; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.stepper-btn:hover:not(:disabled) { background: rgba(var(--v-theme-primary), 0.08); }
-.stepper-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.stepper-input { width: 46px; height: 28px; border: 0; border-left: 1px solid rgba(var(--v-border-color), 0.2); border-right: 1px solid rgba(var(--v-border-color), 0.2); outline: none; }
+.transaction-card {
+  height: 640px;
+  max-height: calc(100vh - 40px);
+}
+.transaction-card-body {
+  min-height: 0;
+}
+.form-pane {
+  width: 350px;
+}
+@media (max-width: 768px) {
+  .form-pane {
+    width: 100%;
+  }
+}
+.product-picker-btn {
+  min-height: 44px;
+}
+.selected-products-list {
+  min-height: 0;
+}
+.empty-products-box {
+  min-height: 220px;
+  background-color: rgba(var(--v-theme-surface-variant), 0.25);
+}
+.product-card {
+  border-color: rgba(var(--v-border-color), 0.18) !important;
+}
+.product-image-box {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.product-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.quantity-stepper {
+  height: 32px;
+}
+.stepper-btn {
+  width: 32px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+}
+.stepper-btn:hover:not(:disabled) {
+  background: rgba(var(--v-theme-primary), 0.08);
+  color: rgb(var(--v-theme-primary));
+}
+.stepper-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.stepper-input {
+  width: 48px;
+  height: 30px;
+  border: 0;
+  border-left: 1px solid rgba(var(--v-border-color), 0.15);
+  border-right: 1px solid rgba(var(--v-border-color), 0.15);
+  outline: none;
+}
 .stepper-input::-webkit-outer-spin-button,
 .stepper-input::-webkit-inner-spin-button {
   -webkit-appearance: none;

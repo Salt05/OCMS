@@ -173,7 +173,7 @@ export const useInventoryStore = defineStore('inventory', () => {
     return res.data.data || [];
   }
 
-  async function processReturn(data: { orderId: string; lines: { id: string; quantity: number }[] }) {
+  async function processReturn(data: { orderId: string; lines: { id: string; quantity: number }[]; notes?: string; reason?: string }) {
     await api.post('/inventory/returns', data);
     await fetchDashboardStats();
   }

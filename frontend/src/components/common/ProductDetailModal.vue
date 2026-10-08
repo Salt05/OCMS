@@ -267,14 +267,15 @@
                      </v-chip>
                    </td>
                    <td>
-                     <span class="text-primary font-weight-bold text-decoration-underline d-inline-flex align-center" style="gap: 4px;">
+                     <span v-if="!order.orderCode" class="text-medium-emphasis">—</span>
+                     <span v-else class="text-primary font-weight-bold text-decoration-underline d-inline-flex align-center" style="gap: 4px;">
                        {{ order.orderCode }}
                        <v-icon size="12">lucide-external-link</v-icon>
                      </span>
                    </td>
                    <td class="text-right font-weight-bold">
-                     <span :class="['IMPORT', 'ADJUSTMENT_IN', 'RETURN_IN'].includes(order.type) ? 'text-success' : 'text-primary'">
-                       {{ ['IMPORT', 'ADJUSTMENT_IN', 'RETURN_IN'].includes(order.type) ? '+' : '-' }}{{ order.quantity }}
+                     <span :class="isInbound(order) ? 'text-success' : 'text-primary'">
+                       {{ isInbound(order) ? '+' : '-' }}{{ order.quantity }}
                      </span>
                    </td>
                    <td class="text-caption note-html-content" v-html="order.note || ''"></td>
@@ -712,8 +713,14 @@ function getTxName(type: string) {
     case 'ADJUSTMENT_OUT': return 'Điều chỉnh (-)';
     case 'DAMAGE': return 'Hư hỏng';
     case 'RESERVE': return 'Báo giá';
+    case 'OTHER': return 'Khác';
     default: return type;
   }
+}
+
+function isInbound(order: any) {
+  if (typeof order?.signedQuantity === 'number') return order.signedQuantity > 0;
+  return ['IMPORT', 'ADJUSTMENT_IN', 'RETURN_IN', 'INITIAL_STOCK'].includes(order?.type);
 }
 
 async function loadHistory() {

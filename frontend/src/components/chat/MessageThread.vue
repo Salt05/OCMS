@@ -3422,14 +3422,19 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
     href = (msg as any).mediaUrl;
   }
 
-  // If there is no download link and this is not a known file with a filename extension, do not treat as file
   if (title === 'sendBubbleMessage') return null;
-  if (!href && (!title || !title.includes('.'))) return null;
 
   const isDoc =
     msg.contentType === 'file' ||
     msg.contentType === 'document' ||
     Boolean(href && (href.includes('dlf1.vn') || href.includes('zfcloud.zdn.vn') || href.includes('dlfl.vn') || href.includes('zdn.vn')));
+
+  // If there is no download link and this is not explicitly a document type, ensure it has a valid file extension
+  if (!isDoc && !href) {
+    if (!title || !/\.(pdf|docx?|xlsx?|pptx?|zip|rar|csv|txt)$/i.test(title)) {
+      return null;
+    }
+  }
 
   if (!isDoc && !href && !title) return null;
 

@@ -219,7 +219,33 @@ export async function inventoryRoutes(app: FastifyInstance) {
         note: line.stockTake.notes || line.reason || ''
       }));
 
-      const allOrders = [...salesOrders, ...purchaseOrders, ...adjustmentOrders].sort((a, b) => 
+      // Manual / other stock movements (popup "Tạo biến động kho", customer returns, damage, ...)
+      // SALE / IMPORT / stock-take adjustments are already represented by their source documents above.
+      const manualTxs = await prisma.inventoryTransaction.findMany({
+        where: {
+          orgId: user.orgId,
+          sku,
+          type: { notIn: ['SALE', 'IMPORT', 'RESERVE'] },
+          OR: [{ referenceType: null }, { referenceType: { not: 'STOCK_TAKE' } }]
+        },
+        include: { performedBy: true }
+      });
+
+      const manualOrders = manualTxs.map(tx => ({
+        id: tx.id,
+        orderCode: tx.referenceCode || '',
+        partnerName: tx.performedBy?.fullName || tx.performedBy?.email || 'Hệ thống',
+        dateOrder: tx.performedAt,
+        state: 'done',
+        type: tx.type,
+        quantity: Math.abs(tx.quantity),
+        signedQuantity: tx.quantity,
+        priceUnit: 0,
+        priceSubtotal: 0,
+        note: Array.from(new Set([tx.reason, tx.notes].map(s => s?.trim()).filter(Boolean))).join(' - ')
+      }));
+
+      const allOrders = [...salesOrders, ...purchaseOrders, ...adjustmentOrders, ...manualOrders].sort((a, b) => 
         new Date(b.dateOrder).getTime() - new Date(a.dateOrder).getTime()
       );
 
@@ -452,6 +478,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
         order.orderCode,
         lines,
         user.id,
+        body.reason || body.notes,
+        body.notes
       );
       return { success: true, data: result };
     } catch (err: any) {
