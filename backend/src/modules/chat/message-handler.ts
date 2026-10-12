@@ -10,6 +10,7 @@ import { pendingReplies, pendingSenders } from './chat-routes.js';
 import { chatbotService, isRecentAiMessage } from '../chatbot/chatbot-service.js';
 import { chatbotStateMachine } from '../chatbot/chatbot-state-machine.js';
 import { findMatchingContact } from '../contacts/contact-merge-service.js';
+import { mediaService } from '../media/media-service.js';
 
 export interface IncomingMessage {
   accountId: string;
@@ -297,6 +298,16 @@ export async function handleIncomingMessage(
         where: { id: contactId, firstContactDate: null },
         data: { firstContactDate: new Date(msg.timestamp) },
       }).catch(() => {});
+    }
+
+    // Background local media archiving (fire-and-forget, non-blocking)
+    if (
+      ['image', 'file', 'video', 'voice'].includes(msg.contentType) ||
+      (Array.isArray(attachments) && attachments.length > 0)
+    ) {
+      mediaService.downloadMessageAttachments(message.id).catch((err) => {
+        logger.warn(`[chat] Background media download failed for message ${message.id}:`, err);
+      });
     }
 
     // Emit webhook for message event (fire-and-forget)

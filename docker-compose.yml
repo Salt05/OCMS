@@ -21,6 +21,7 @@ services:
         condition: service_healthy
     volumes:
       - file_storage:/var/lib/ocms/files
+      - /data/ocms-media:/app/media_store:rw
     tmpfs:
       - /tmp
     security_opt:

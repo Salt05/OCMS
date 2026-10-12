@@ -22,6 +22,9 @@ docker/logs/
 # Uploads & Temp
 uploads/
 backend/uploads/
+media_store/
+backend/media_store/
+scratch/
 
 # Prisma & Databases
 backend/prisma/migrations/

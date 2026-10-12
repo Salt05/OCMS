@@ -56,6 +56,7 @@ import { odooSyncService } from './modules/sync/odoo-sync-service.js';
 import { internalRoutes } from './modules/internal/internal-routes.js';
 import { inventoryRoutes } from './modules/inventory/inventory-routes.js';
 import { purchaseRoutes } from './modules/inventory/purchase-routes.js';
+import { mediaRoutes } from './modules/media/media-routes.js';
 import cron from 'node-cron';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -208,6 +209,7 @@ async function bootstrap() {
   await app.register(internalRoutes);
   await app.register(inventoryRoutes);
   await app.register(purchaseRoutes);
+  await app.register(mediaRoutes);
 
   // Directus asset proxy endpoint (public for <img> tags)
   app.get('/api/v1/directus/assets/:fileId', async (request, reply) => {

@@ -39,6 +39,7 @@ export const config = {
   encryptionKey: process.env.ENCRYPTION_KEY || 'dev-key-change-me-16b',
   databaseUrl: process.env.DATABASE_URL || '',
   uploadDir: path.resolve(process.env.UPLOAD_DIR || './uploads'),
+  mediaStorageDir: path.resolve(process.env.MEDIA_STORAGE_DIR || './media_store'),
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   routerUrl: process.env.ROUTER_API_URL || 'http://localhost:3001',
   isProduction: process.env.NODE_ENV === 'production',

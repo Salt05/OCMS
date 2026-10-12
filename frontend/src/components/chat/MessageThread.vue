@@ -629,7 +629,7 @@
                     class="chat-image"
                     :class="{'chat-image-with-caption': !!getImageCaption(msg)}"
                     loading="lazy"
-                    @error="onMessageImageError(msg.id)"
+                    @error="onMessageImageError(msg, $event)"
                     @click="openMessageImage(msg)"
                   />
                   <!-- Optimistic uploading overlay for images -->
@@ -725,7 +725,7 @@
                   :src="getParsedContent(msg)?.href"
                   alt="GIF"
                   style="max-width: 200px; border-radius: 8px; cursor: pointer;"
-                  @error="onMessageImageError(msg.id)"
+                  @error="onMessageImageError(msg, $event)"
                   @click="openMessageImage(msg)"
                 />
               </div>
@@ -2798,10 +2798,43 @@ const activeViewerIndex = ref(0);
 const standaloneViewerImages = ref<any[]>([]);
 const failedImages = ref<Record<string, boolean>>({});
 
-function onMessageImageError(msgId: string) {
-  if (msgId) {
-    failedImages.value[msgId] = true;
+function getOriginalRemoteImageUrl(msg: Message): string | null {
+  if (isVideoMessage(msg) || isContactCardMessage(msg)) return null;
+  const atts = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
+  for (const a of atts) {
+    if (a && typeof a === 'object') {
+      const u = a.originalUrl || a.url || a.href;
+      if (u && typeof u === 'string' && u.startsWith('http')) return u;
+    }
   }
+  if ((msg as any).fileInfo?.url?.startsWith('http')) return (msg as any).fileInfo.url;
+  if ((msg as any).mediaUrl?.startsWith('http')) return (msg as any).mediaUrl;
+  if (msg.content?.startsWith('{')) {
+    try {
+      const p = JSON.parse(msg.content);
+      const u = p.hdUrl || p.hd || p.href || p.url || p.thumb;
+      if (u && typeof u === 'string' && u.startsWith('http')) return u;
+    } catch {}
+  }
+  if (msg.content?.startsWith('http')) return msg.content;
+  return null;
+}
+
+function onMessageImageError(msg: Message | string, event?: Event) {
+  const msgId = typeof msg === 'string' ? msg : msg?.id;
+  if (!msgId) return;
+
+  // Resilient Fallback: If failed loading from local storage, try original remote CDN URL!
+  if (event && event.target && typeof msg === 'object') {
+    const imgEl = event.target as HTMLImageElement;
+    const remoteUrl = getOriginalRemoteImageUrl(msg);
+    if (remoteUrl && imgEl.src !== remoteUrl && !imgEl.src.endsWith(remoteUrl)) {
+      imgEl.src = remoteUrl;
+      return;
+    }
+  }
+
+  failedImages.value[msgId] = true;
 }
 
 const conversationImages = computed(() => {
@@ -3266,14 +3299,22 @@ function getImageUrl(msg: Message): string | null {
   if (isVideoMessage(msg) || isContactCardMessage(msg)) return null;
   if (isLinkPreviewMessage(msg)) return null;
 
-  // 1. Check attachments array (used by bulk mode & custom attachments)
-  if (Array.isArray((msg as any).attachments) && (msg as any).attachments.length > 0) {
-    const att = (msg as any).attachments[0];
-    const url = typeof att === 'string' ? att : att?.url;
-    if (url && (msg.contentType === 'image' || att?.type === 'image' || isImageUrlPath(url))) {
-      return url;
-    }
+  // 1. Check attachments array
+  const atts = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
+  const mediaAttIndex = atts.findIndex((a: any) =>
+    a && typeof a === 'object' && (a.localKey || a.url || a.href || a.type === 'image' || isImageUrlPath(a.url || a.href))
+  );
+  const mediaAtt = mediaAttIndex !== -1 ? atts[mediaAttIndex] : null;
+
+  // If localKey exists on attachment, serve locally!
+  if (mediaAtt?.localKey && msg.id) {
+    const token = localStorage.getItem('token') || '';
+    return `/api/v1/media/messages/${msg.id}/attachment/${mediaAttIndex}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   }
+
+  // If remote URL exists on attachment, return remote URL directly!
+  if (mediaAtt?.url) return mediaAtt.url;
+  if (mediaAtt?.href) return mediaAtt.href;
 
   // 2. Check fileInfo
   if ((msg as any).fileInfo?.url) {
@@ -3409,13 +3450,19 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
     } catch {}
   }
 
-  // 2. Check attachments or fileInfo (safely search for item with url)
+  // 2. Check attachments or fileInfo (safely search for item with url or localKey)
   const attList = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
-  const att = attList.find((a: any) => a && typeof a === 'object' && (a.url || a.href)) || (msg as any).fileInfo || attList[0];
+  const attIndex = attList.findIndex((a: any) => a && typeof a === 'object' && (a.localKey || a.url || a.href));
+  const att = attIndex !== -1 ? attList[attIndex] : ((msg as any).fileInfo || attList[0]);
   if (att && typeof att === 'object') {
-    if (!href) href = att.url || att.href || (msg as any).mediaUrl || '';
+    if (att.localKey && msg.id) {
+      const token = localStorage.getItem('token') || '';
+      href = `/api/v1/media/messages/${msg.id}/attachment/${attIndex}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    } else {
+      if (!href) href = att.url || att.href || (msg as any).mediaUrl || '';
+    }
     if (!title) title = att.title || att.fileName || att.name || '';
-    if (!bytes) bytes = parseInt(att.size || att.fileSize || '0') || 0;
+    if (!bytes) bytes = parseInt(att.size || att.fileSize || att.sizeBytes || '0') || 0;
   }
 
   if (!href && (msg as any).mediaUrl) {
