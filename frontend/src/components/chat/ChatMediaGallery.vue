@@ -652,26 +652,34 @@ const mediaItems = computed(() => {
       }
 
       // Attachments array check
-      if (!imgUrl && m.attachments) {
+      if (m.attachments) {
         const atts = Array.isArray(m.attachments) ? m.attachments : parseJsonSafe(m.attachments);
         if (Array.isArray(atts) && atts.length > 0) {
-          for (const att of atts) {
-            const u = att.url || att.thumbUrl;
-            const attExt = getFileExtension(att.title || u || '');
+          for (let attIdx = 0; attIdx < atts.length; attIdx++) {
+            const att = atts[attIdx];
+            const u = att.url || att.thumbUrl || att.href;
+            const attExt = getFileExtension(att.title || att.name || u || '');
             if (u && !DOC_EXTENSIONS.includes(attExt)) {
+              const token = localStorage.getItem('token') || '';
+              const resolvedUrl = (att.localKey && m.id)
+                ? `/api/v1/media/messages/${m.id}/attachment/${attIdx}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+                : u;
               list.push({
                 id: `${m.id}-${list.length}`,
                 isImage: att.type !== 'video',
                 isVideo: att.type === 'video',
-                url: u,
-                thumbUrl: att.thumbUrl || u,
-                name: sanitizeFileName(att.title, att.type === 'video' ? 'Video' : 'Ảnh'),
+                url: resolvedUrl,
+                rawUrl: u,
+                thumbUrl: resolvedUrl,
+                name: sanitizeFileName(att.title || att.name, att.type === 'video' ? 'Video' : 'Ảnh'),
                 date,
                 fullDate,
               });
             }
           }
-          continue;
+          if (list.some(item => item.id.startsWith(m.id))) {
+            continue;
+          }
         }
       }
 
@@ -753,6 +761,33 @@ const docItems = computed(() => {
       fileUrl = rawContent;
       fileExt = urlExt.toUpperCase();
       fileName = sanitizeFileName(rawContent.split('/').pop()?.split('?')[0] || '', `Tài liệu.${urlExt}`);
+    }
+
+    // Attachments array check for docs
+    if (m.attachments) {
+      const atts = Array.isArray(m.attachments) ? m.attachments : parseJsonSafe(m.attachments);
+      if (Array.isArray(atts) && atts.length > 0) {
+        for (let attIdx = 0; attIdx < atts.length; attIdx++) {
+          const att = atts[attIdx];
+          const u = att.url || att.href || att.downloadUrl;
+          const attExt = getFileExtension(att.title || att.name || att.fileName || u || '');
+          if (u && (DOC_EXTENSIONS.includes(attExt) || m.contentType === 'file' || m.contentType === 'document')) {
+            const token = localStorage.getItem('token') || '';
+            const resolvedUrl = (att.localKey && m.id)
+              ? `/api/v1/media/messages/${m.id}/attachment/${attIdx}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+              : u;
+            list.push({
+              id: `${m.id}-doc-${attIdx}`,
+              url: resolvedUrl,
+              rawUrl: u,
+              name: sanitizeFileName(att.title || att.name || att.fileName, `Tài liệu.${attExt || 'file'}`),
+              ext: (attExt || 'FILE').toUpperCase(),
+              size: att.size || att.sizeBytes || null,
+              date,
+            });
+          }
+        }
+      }
     }
 
     if (isDoc && fileUrl && !fileUrl.startsWith('{')) {
