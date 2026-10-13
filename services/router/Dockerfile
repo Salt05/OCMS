@@ -21,7 +21,7 @@ COPY --from=builder /app/dist ./dist
 
 EXPOSE 3001
 
-RUN chown -R node:node /app
+RUN mkdir -p /app/data && chown -R node:node /app /app/data
 
 USER node
 

@@ -418,7 +418,7 @@ export async function chatRoutes(app: FastifyInstance) {
                 conversation.externalThreadId,
                 conversation.threadType as any,
               ),
-              new Promise((r) => setTimeout(r, 1500)),
+              new Promise((r) => setTimeout(r, 4000)),
             ]);
           } catch (err) {
             logger.warn(`[chat-routes] On-demand sync error for ${conversation.externalThreadId}:`, err);
@@ -1421,7 +1421,13 @@ export async function chatRoutes(app: FastifyInstance) {
             where: { id: user.id },
             select: { fullName: true },
           });
-          const reactionSenderName = dbUser?.fullName || user.email;
+          const reactionSenderName = conversation.zaloAccount?.displayName || dbUser?.fullName || user.email;
+          const reactionAvatarUrl = conversation.zaloAccount?.avatarUrl || undefined;
+
+          let ownUid = conversation.zaloAccount?.zaloUid || '';
+          try {
+            if (instance?.api?.getOwnId) ownUid = await instance.api.getOwnId();
+          } catch {}
 
           const reactionResult = await handleMessageReaction({
             accountId: conversation.zaloAccountId,
@@ -1431,8 +1437,9 @@ export async function chatRoutes(app: FastifyInstance) {
             isGroup: conversation.threadType === 'group',
             icon,
             rType,
-            senderUid: user.id,
+            senderUid: ownUid || user.id,
             senderName: reactionSenderName,
+            avatarUrl: reactionAvatarUrl,
             isSelf: true,
           });
           if (reactionResult) {

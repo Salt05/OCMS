@@ -403,8 +403,10 @@
         >
           <img
             :src="img"
-            class="rounded border elevation-1"
-            style="width: 48px; height: 48px; object-fit: cover; display: block;"
+            class="rounded border elevation-1 cursor-pointer"
+            style="width: 48px; height: 48px; object-fit: cover; display: block; cursor: pointer;"
+            title="Nhấn để phóng to ảnh"
+            @click="openImageModal(img)"
           />
           <button
             type="button"
@@ -585,17 +587,11 @@
       </v-card>
     </v-dialog>
 
-    <!-- Image Zoom Modal Dialog -->
-    <v-dialog v-model="showImageModal" max-width="800" width="90vw">
-      <v-card class="pa-2 rounded-lg text-center bg-surface">
-        <div class="d-flex justify-end mb-1">
-          <v-btn icon size="small" variant="text" @click="showImageModal = false">
-            <v-icon size="18">lucide-x</v-icon>
-          </v-btn>
-        </div>
-        <img :src="modalImageUrl" style="max-width: 100%; max-height: 80vh; object-fit: contain; margin: 0 auto; border-radius: 8px;" />
-      </v-card>
-    </v-dialog>
+    <!-- Image Viewer Modal (Zoom, Pan, Rotate, Download) -->
+    <ImageViewerModal
+      v-model="showImageModal"
+      :images="modalImageUrl"
+    />
 
     <!-- Product Picker Modal Dialog for Chat Order Form -->
     <ProductPickerDialog
@@ -622,6 +618,7 @@ import { useAuthStore } from '@/stores/auth';
 import { api } from '@/api';
 import { useOdoo, type OdooProduct } from '@/composables/use-odoo';
 import ProductPickerDialog from '@/components/chat/ProductPickerDialog.vue';
+import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
 
 // Declare Plotly from global window
 declare const Plotly: any;

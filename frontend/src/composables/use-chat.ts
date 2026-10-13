@@ -796,9 +796,10 @@ export function useChat() {
       const currentUserName = authStore.user?.fullName || authStore.user?.email || 'Bạn';
 
       let currentReactions = Array.isArray(msg.reactions) ? [...msg.reactions] : [];
-      currentReactions = currentReactions.filter(r => !r.isSelf);
 
-      if (icon) {
+      if (!icon) {
+        currentReactions = currentReactions.filter(r => !r.isSelf);
+      } else {
         const emojiMap: Record<string, string> = {
           '/-heart': '❤️',
           '/-strong': '👍',
@@ -821,16 +822,25 @@ export function useChat() {
           '/-loveu': '🤟',
         };
         const emoji = emojiMap[icon] || icon;
-        currentReactions.push({
-          icon,
-          emoji,
-          rType: 0,
-          uid: currentUserId,
-          userName: currentUserName,
-          isSelf: true,
-          count: 1,
-          updatedAt: new Date().toISOString(),
-        });
+        const selfName = selectedConv.value?.zaloAccount?.displayName || currentUserName;
+        const selfAvatar = selectedConv.value?.zaloAccount?.avatarUrl;
+
+        const existingSelfEmoji = currentReactions.find(r => r.isSelf && (r.emoji === emoji || r.icon === icon));
+        if (existingSelfEmoji) {
+          existingSelfEmoji.count = (existingSelfEmoji.count || 1) + 1;
+        } else {
+          currentReactions.push({
+            icon,
+            emoji,
+            rType: 0,
+            uid: selectedConv.value?.zaloAccount?.id || currentUserId,
+            userName: selfName,
+            avatarUrl: selfAvatar || undefined,
+            isSelf: true,
+            count: 1,
+            updatedAt: new Date().toISOString(),
+          });
+        }
       }
       msg.reactions = currentReactions;
       messages.value = [...messages.value];

@@ -235,13 +235,13 @@
                 {{ msg.senderName || 'Khách Hàng (Giả lập)' }}
               </div>
               <div v-if="getImageUrl(msg)" class="mb-1">
-                <a :href="getImageUrl(msg)!" target="_blank" rel="noopener noreferrer">
-                  <img
-                    :src="getImageUrl(msg)!"
-                    alt="Ảnh gửi từ khách"
-                    class="test-chat-image"
-                  />
-                </a>
+                <img
+                  :src="getImageUrl(msg)!"
+                  alt="Ảnh gửi từ khách"
+                  class="test-chat-image cursor-pointer"
+                  style="cursor: pointer;"
+                  @click="openImagePreview(getImageUrl(msg)!, 'Ảnh gửi từ khách')"
+                />
               </div>
               <div v-if="msg.content && msg.content !== getImageUrl(msg)" class="customer-bubble pa-3 rounded-xl rounded-ts-0 text-body-2">
                 {{ msg.content }}
@@ -266,13 +266,13 @@
                 </v-chip>
               </div>
               <div v-if="getImageUrl(msg)" class="mb-1 d-flex justify-end">
-                <a :href="getImageUrl(msg)!" target="_blank" rel="noopener noreferrer">
-                  <img
-                    :src="getImageUrl(msg)!"
-                    alt="Ảnh đính kèm"
-                    class="test-chat-image"
-                  />
-                </a>
+                <img
+                  :src="getImageUrl(msg)!"
+                  alt="Ảnh đính kèm"
+                  class="test-chat-image cursor-pointer"
+                  style="cursor: pointer;"
+                  @click="openImagePreview(getImageUrl(msg)!, 'Ảnh đính kèm')"
+                />
               </div>
               <div v-if="msg.content && msg.content !== getImageUrl(msg)" class="bot-bubble pa-3 rounded-xl rounded-te-0 text-body-2 text-left">
                 {{ msg.content }}
@@ -331,7 +331,7 @@
 
         <!-- Image Preview if selected -->
         <div v-if="selectedImagePreview" class="d-flex align-center gap-2 mb-2 pa-2 bg-surface-light rounded-lg border">
-          <img :src="selectedImagePreview" class="rounded" style="width: 44px; height: 44px; object-fit: cover;" />
+          <img :src="selectedImagePreview" class="rounded cursor-pointer" style="width: 44px; height: 44px; object-fit: cover; cursor: pointer;" title="Nhấn để phóng to ảnh" @click="openImagePreview(selectedImagePreview!, selectedImageFile?.name || 'Ảnh đính kèm')" />
           <div class="flex-grow-1 text-truncate">
             <div class="text-caption font-weight-medium text-truncate">{{ selectedImageFile?.name || 'Ảnh đính kèm' }}</div>
             <div class="text-caption text-medium-emphasis" style="font-size: 10px">
@@ -412,6 +412,13 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Lightbox Image Viewer Modal -->
+    <ImageViewerModal
+      v-model="showImageViewer"
+      :images="viewerImages"
+      :initial-index="activeViewerIndex"
+    />
   </div>
 </template>
 
@@ -419,6 +426,17 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { useChatbotTest, type TestConversation, type TestMessage } from '@/composables/use-chatbot-test';
 import TestDebugPanel from '@/components/chatbot-test/TestDebugPanel.vue';
+import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
+
+const showImageViewer = ref(false);
+const viewerImages = ref<{ url: string; title?: string; name?: string; rawUrl?: string }[]>([]);
+const activeViewerIndex = ref(0);
+
+function openImagePreview(url: string, title = 'Xem ảnh') {
+  viewerImages.value = [{ url, title, name: `${title}.jpg`, rawUrl: url }];
+  activeViewerIndex.value = 0;
+  showImageViewer.value = true;
+}
 
 const {
   conversations,

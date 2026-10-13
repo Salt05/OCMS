@@ -130,19 +130,29 @@ export function extractUrlsFromContent(content: string | null): string[] {
 
 export class MediaService {
   private baseDir: string;
+  private nasDir: string;
 
   constructor() {
     this.baseDir = config.mediaStorageDir;
-    this.ensureBaseDir();
+    this.nasDir = config.nasMediaStorageDir;
+    this.ensureDirs();
   }
 
-  private ensureBaseDir(): void {
+  private ensureDirs(): void {
     try {
       if (!fs.existsSync(this.baseDir)) {
         fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o755 });
       }
     } catch (err) {
       logger.error(`[MediaService] Failed to create media directory at ${this.baseDir}:`, err);
+    }
+
+    try {
+      if (this.nasDir && fs.existsSync(this.nasDir)) {
+        logger.info(`[MediaService] NAS storage is accessible at ${this.nasDir}`);
+      }
+    } catch (err) {
+      logger.warn(`[MediaService] NAS storage directory check failed at ${this.nasDir}:`, err);
     }
   }
 
@@ -240,18 +250,58 @@ export class MediaService {
 
     // Fast check: If file was already downloaded for this exact URL, reuse it instantly (unless forceDownload)!
     try {
-      if (!forceDownload && fs.existsSync(targetDir)) {
-        const existingFiles = fs.readdirSync(targetDir);
-        const matched = existingFiles.find((f) => f.startsWith(urlHash));
-        if (matched) {
-          const fullPath = path.join(targetDir, matched);
-          const stats = fs.statSync(fullPath);
+      if (!forceDownload) {
+        let matched = '';
+        let matchedFullPath = '';
+
+        // 1. Check local VM directory
+        if (fs.existsSync(targetDir)) {
+          const existingFiles = fs.readdirSync(targetDir);
+          const found = existingFiles.find((f) => f.startsWith(urlHash));
+          if (found) {
+            matched = found;
+            matchedFullPath = path.join(targetDir, found);
+          }
+        }
+
+        // 2. Check NAS directory if not found on VM
+        if (!matched && this.nasDir) {
+          try {
+            const nasTargetDir = path.join(this.nasDir, subDir);
+            if (fs.existsSync(nasTargetDir)) {
+              const existingNasFiles = fs.readdirSync(nasTargetDir);
+              const foundNas = existingNasFiles.find((f) => f.startsWith(urlHash));
+              if (foundNas) {
+                matched = foundNas;
+                matchedFullPath = path.join(nasTargetDir, foundNas);
+              }
+            }
+          } catch {}
+        }
+
+        if (matched && matchedFullPath) {
+          const stats = fs.statSync(matchedFullPath);
           const localKey = `${year}/${month}/${matched}`.replace(/\\/g, '/');
-          const mimeType = resolveStandardMimeType(fullPath);
+          const mimeType = resolveStandardMimeType(matchedFullPath);
           const fileName = originalFileName || `attachment_${urlHash.slice(0, 8)}${path.extname(matched)}`;
+
+          // If found on VM but missing on NAS, mirror it
+          if (this.nasDir && !matchedFullPath.startsWith(path.resolve(this.nasDir))) {
+            try {
+              const nasTargetDir = path.join(this.nasDir, subDir);
+              const nasFullPath = path.join(nasTargetDir, matched);
+              if (!fs.existsSync(nasFullPath)) {
+                if (!fs.existsSync(nasTargetDir)) {
+                  fs.mkdirSync(nasTargetDir, { recursive: true, mode: 0o755 });
+                }
+                fs.copyFileSync(matchedFullPath, nasFullPath);
+              }
+            } catch {}
+          }
+
           return {
             localKey,
-            fullPath,
+            fullPath: matchedFullPath,
             fileName,
             mimeType,
             sizeBytes: stats.size,
@@ -326,6 +376,22 @@ export class MediaService {
 
       if (!fs.existsSync(fullPath)) {
         await fs.promises.writeFile(fullPath, buffer);
+      }
+
+      // ── Mirror to NAS Storage in parallel ──
+      try {
+        if (this.nasDir && fs.existsSync(this.nasDir)) {
+          const nasTargetDir = path.join(this.nasDir, subDir);
+          if (!fs.existsSync(nasTargetDir)) {
+            await fs.promises.mkdir(nasTargetDir, { recursive: true, mode: 0o755 });
+          }
+          const nasFullPath = path.join(nasTargetDir, filename);
+          if (!fs.existsSync(nasFullPath)) {
+            await fs.promises.writeFile(nasFullPath, buffer);
+          }
+        }
+      } catch (nasErr) {
+        logger.warn(`[MediaService] Failed to mirror ${localKey} to NAS:`, nasErr);
       }
 
       const sizeBytes = buffer.length;
@@ -482,6 +548,23 @@ export class MediaService {
     if (!absolutePath.startsWith(path.resolve(this.baseDir))) {
       logger.warn(`[MediaService] Path traversal attempt detected: ${localKey}`);
       return null;
+    }
+
+    // 1. Tier 1: Check if file exists on local VM disk (fastest)
+    if (fs.existsSync(absolutePath)) {
+      return absolutePath;
+    }
+
+    // 2. Tier 2: Check if file exists on NAS storage (for archived files > 15 days)
+    if (this.nasDir) {
+      try {
+        const nasPath = path.resolve(this.nasDir, safeKey);
+        if (nasPath.startsWith(path.resolve(this.nasDir)) && fs.existsSync(nasPath)) {
+          return nasPath;
+        }
+      } catch (err) {
+        logger.warn(`[MediaService] Error checking NAS storage for ${localKey}:`, err);
+      }
     }
 
     return absolutePath;

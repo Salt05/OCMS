@@ -246,6 +246,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
       const targetCliMsgId = rMsg?.cMsgID ? String(rMsg.cMsgID) : String(reactionData.data?.cliMsgId || '');
       const rIcon = reactionData.data?.content?.rIcon ?? '';
       const rType = Number(reactionData.data?.content?.rType ?? -1);
+      const incomingCount = Number(reactionData.data?.content?.count ?? reactionData.data?.content?.total ?? reactionData.data?.count ?? 1);
 
       let senderUid = String(reactionData.data?.uidFrom || '');
       let ownUid = '';
@@ -279,6 +280,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
         isGroup: Boolean(reactionData.isGroup || reactionData.type === 1),
         icon: rIcon,
         rType,
+        count: incomingCount,
         senderUid,
         senderName,
         avatarUrl,

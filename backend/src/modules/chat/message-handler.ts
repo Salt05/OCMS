@@ -666,6 +666,7 @@ export interface IncomingReaction {
   isGroup: boolean;
   icon: string;
   rType: number;
+  count?: number;
   senderUid: string;
   senderName?: string;
   avatarUrl?: string;
@@ -784,29 +785,47 @@ export async function handleMessageReaction(
 
     const isRemove = !reaction.icon || reaction.icon === '' || reaction.rType === -1;
 
-    // Helper to identify if a reaction belongs to the current reacting user
-    const isUserReaction = (r: MessageReactionItem) => {
-      if (reaction.isSelf && r.isSelf) return true;
-      if (reaction.senderUid && r.uid && r.uid === reaction.senderUid) return true;
-      return false;
-    };
-
-    // Remove any existing reaction from this user (each user has at most 1 reaction on a message)
-    existingReactions = existingReactions.filter((r) => !isUserReaction(r));
-
-    if (!isRemove) {
+    if (isRemove) {
+      // Remove all reactions of this user (or self)
+      if (reaction.isSelf) {
+        existingReactions = existingReactions.filter((r) => !r.isSelf);
+      } else {
+        existingReactions = existingReactions.filter((r) => !(r.uid && r.uid === reaction.senderUid));
+      }
+    } else {
       const emoji = getEmojiFromReactionIcon(reaction.icon);
-      existingReactions.push({
-        icon: reaction.icon,
-        emoji,
-        rType: reaction.rType,
-        uid: reaction.senderUid,
-        userName: reaction.senderName || (reaction.isSelf ? 'Bạn' : 'Người dùng'),
-        avatarUrl: reaction.avatarUrl,
-        isSelf: reaction.isSelf,
-        count: 1,
-        updatedAt: new Date().toISOString(),
+      const incomingCount = typeof reaction.count === 'number' && reaction.count > 0 ? reaction.count : 1;
+
+      // Find if this user already has this specific emoji
+      const existingIdx = existingReactions.findIndex((r) => {
+        const isSameUser = reaction.isSelf ? r.isSelf : (r.uid && r.uid === reaction.senderUid);
+        return isSameUser && (r.emoji === emoji || r.icon === reaction.icon);
       });
+
+      if (existingIdx >= 0) {
+        // Increment count for this emoji (or set if incomingCount > 1)
+        if (incomingCount > 1) {
+          existingReactions[existingIdx].count = incomingCount;
+        } else {
+          existingReactions[existingIdx].count = (existingReactions[existingIdx].count || 1) + 1;
+        }
+        existingReactions[existingIdx].updatedAt = new Date().toISOString();
+        if (reaction.avatarUrl) existingReactions[existingIdx].avatarUrl = reaction.avatarUrl;
+        if (reaction.senderName) existingReactions[existingIdx].userName = reaction.senderName;
+      } else {
+        // New emoji for this user: add it to their reactions, keeping existing ones!
+        existingReactions.push({
+          icon: reaction.icon,
+          emoji,
+          rType: reaction.rType,
+          uid: reaction.senderUid,
+          userName: reaction.senderName || (reaction.isSelf ? 'Bạn' : 'Người dùng'),
+          avatarUrl: reaction.avatarUrl,
+          isSelf: reaction.isSelf,
+          count: incomingCount,
+          updatedAt: new Date().toISOString(),
+        });
+      }
     }
 
     await prisma.message.update({

@@ -459,23 +459,11 @@
       </v-card>
     </v-dialog>
 
-    <!-- Large Image Preview Dialog -->
-    <v-dialog v-model="largeImageDialogOpen" max-width="700">
-      <v-card class="rounded-lg">
-        <div class="pa-2 d-flex justify-end border-b">
-          <v-btn icon size="small" variant="text" @click="largeImageDialogOpen = false">
-            <v-icon>lucide-x</v-icon>
-          </v-btn>
-        </div>
-        <div class="pa-4 text-center bg-grey-lighten-4">
-          <img
-            :src="largeImageUrl"
-            style="max-width: 100%; max-height: 70vh; object-fit: contain; border-radius: 8px;"
-            alt="Preview lớn"
-          />
-        </div>
-      </v-card>
-    </v-dialog>
+    <!-- Image Viewer Modal (Zoom, Pan, Rotate, Download) -->
+    <ImageViewerModal
+      v-model="largeImageDialogOpen"
+      :images="largeImageUrl"
+    />
   </div>
 </template>
 
@@ -483,6 +471,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { api } from '@/api/index';
 import { useAuthStore } from '@/stores/auth';
+import ImageViewerModal from '@/components/common/ImageViewerModal.vue';
 
 const authStore = useAuthStore();
 

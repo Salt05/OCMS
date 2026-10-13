@@ -198,10 +198,21 @@ class RoutingRegistry {
 
   // ── 2. ECOSYSTEM SYSTEMS REGISTRY (DANH BẠ HỆ SINH THÁI & ĐÍCH ĐẾN) ────
   private loadSystemsConfig(): SystemsRegistryConfig {
+    const envOdooTarget = process.env.ACTIVE_ODOO_TARGET;
+
     try {
       if (fs.existsSync(SYSTEMS_CONFIG_PATH)) {
         const raw = fs.readFileSync(SYSTEMS_CONFIG_PATH, 'utf-8');
-        return JSON.parse(raw) as SystemsRegistryConfig;
+        const config = JSON.parse(raw) as SystemsRegistryConfig;
+
+        // If ACTIVE_ODOO_TARGET environment variable is explicitly specified, enforce it
+        if (envOdooTarget && (envOdooTarget === 'odoo_prod' || envOdooTarget === 'odoo_test')) {
+          config.active_odoo_target = envOdooTarget;
+        } else if (!config.active_odoo_target) {
+          config.active_odoo_target = 'odoo_prod';
+        }
+
+        return config;
       }
     } catch (err) {
       console.error('[RoutingRegistry] Error loading systems-registry.json, falling back to default:', err);
@@ -210,7 +221,7 @@ class RoutingRegistry {
     return {
       version: '1.0.0',
       updated_at: new Date().toISOString(),
-      active_odoo_target: 'odoo_test',
+      active_odoo_target: (envOdooTarget as any) || 'odoo_prod',
       systems: {
         ocms: {
           id: 'ocms',
@@ -259,13 +270,17 @@ class RoutingRegistry {
   }
 
   public getActiveOdooConfig(): SystemItem {
-    const activeTargetKey = this.systemsConfig.active_odoo_target || 'odoo_test';
+    const envOdooTarget = process.env.ACTIVE_ODOO_TARGET;
+    const activeTargetKey = (envOdooTarget === 'odoo_prod' || envOdooTarget === 'odoo_test')
+      ? envOdooTarget
+      : (this.systemsConfig.active_odoo_target || 'odoo_prod');
+
     const system = this.systemsConfig.systems[activeTargetKey];
     if (system && system.status === 'active') {
       return system;
     }
-    // Fallback to test or prod
-    return this.systemsConfig.systems['odoo_test'] || this.systemsConfig.systems['odoo_prod'];
+    // Fallback to prod or test
+    return this.systemsConfig.systems['odoo_prod'] || this.systemsConfig.systems['odoo_test'];
   }
 
   public switchOdooEnvironment(targetKey: 'odoo_test' | 'odoo_prod' | string): { success: boolean; active_target: string; system?: SystemItem } {

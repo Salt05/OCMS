@@ -177,6 +177,22 @@ function getRecentMessageCursor(message: any): string {
   return String(message.data?.cliMsgId ?? '').trim();
 }
 
+function getOldestRecentMessage(messages: any[]): any {
+  let oldest: any = null;
+  for (const message of messages) {
+    if (!oldest) {
+      oldest = message;
+      continue;
+    }
+    const ts = parseInt(message.data?.ts || '0', 10);
+    const oldestTs = parseInt(oldest.data?.ts || '0', 10);
+    if (ts > 0 && (oldestTs === 0 || ts < oldestTs)) {
+      oldest = message;
+    }
+  }
+  return oldest;
+}
+
 function getNewestRecentMessage(messages: any[]): any {
   let newest: any = null;
   for (const message of messages) {
@@ -202,9 +218,12 @@ function getRecentPageCursors(messages: any[]): string[] {
     seen.add(cursor);
     cursors.push(cursor);
   };
-  addCursor(getRecentMessageCursor(getNewestRecentMessage(messages)));
+  // Zalo's requestOldMessages(threadType, lastMsgId) fetches messages older than lastMsgId.
+  // We must cursor from the OLDEST message to paginate backward into history.
+  addCursor(getRecentMessageCursor(getOldestRecentMessage(messages)));
   addCursor(getRecentMessageCursor(messages[messages.length - 1] ?? null));
   addCursor(getRecentMessageCursor(messages[0] ?? null));
+  addCursor(getRecentMessageCursor(getNewestRecentMessage(messages)));
   return cursors;
 }
 

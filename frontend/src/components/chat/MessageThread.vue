@@ -2329,21 +2329,57 @@ const showReactionModal = ref(false);
 const selectedReactionMsg = ref<Message | null>(null);
 const activeReactionTab = ref('all');
 
+function getNormalizedReactions(reactions: MessageReactionItem[] | undefined): MessageReactionItem[] {
+  if (!reactions || reactions.length === 0) return [];
+  const result: MessageReactionItem[] = [];
+  const selfEmojiMap = new Map<string, MessageReactionItem>();
+
+  const selfName = props.conversation?.zaloAccount?.displayName || 'Bạn';
+  const selfAvatar = props.conversation?.zaloAccount?.avatarUrl;
+
+  for (const r of reactions) {
+    if (r.isSelf) {
+      const emoji = r.emoji || '❤️';
+      const count = typeof r.count === 'number' && r.count > 0 ? r.count : 1;
+      const existing = selfEmojiMap.get(emoji);
+      if (existing) {
+        // If there are multiple entries for the same emoji (e.g. Admin + Zalo account), merge count
+        existing.count = Math.max(existing.count ?? 1, count);
+        if (!existing.avatarUrl && (r.avatarUrl || selfAvatar)) {
+          existing.avatarUrl = r.avatarUrl || selfAvatar || undefined;
+        }
+      } else {
+        selfEmojiMap.set(emoji, {
+          ...r,
+          userName: selfName,
+          avatarUrl: r.avatarUrl || selfAvatar || undefined,
+          count,
+        });
+      }
+    } else {
+      result.push(r);
+    }
+  }
+
+  for (const selfItem of selfEmojiMap.values()) {
+    result.push(selfItem);
+  }
+
+  return result;
+}
+
 function getDistinctReactions(msg: Message | null): { emoji: string; icon: string; count: number }[] {
-  if (!msg?.reactions || msg.reactions.length === 0) return [];
+  const normReactions = getNormalizedReactions(msg?.reactions);
+  if (normReactions.length === 0) return [];
   const map: Record<string, { emoji: string; icon: string; count: number }> = {};
-  const seenUsers = new Set<string>();
 
-  for (const r of msg.reactions) {
-    const userKey = r.isSelf ? 'self' : (r.uid || r.userName || 'unknown');
-    if (seenUsers.has(userKey)) continue;
-    seenUsers.add(userKey);
-
+  for (const r of normReactions) {
     const e = r.emoji || '❤️';
+    const count = typeof r.count === 'number' && r.count > 0 ? r.count : 1;
     if (!map[e]) {
       map[e] = { emoji: e, icon: r.icon, count: 0 };
     }
-    map[e].count += 1;
+    map[e].count += count;
   }
   return Object.values(map);
 }
@@ -2355,13 +2391,9 @@ const modalDistinctReactions = computed(() => {
 });
 
 function getTotalReactionsCount(msg: Message | null): number {
-  if (!msg?.reactions || msg.reactions.length === 0) return 0;
-  const seenUsers = new Set<string>();
-  for (const r of msg.reactions) {
-    const userKey = r.isSelf ? 'self' : (r.uid || r.userName || 'unknown');
-    seenUsers.add(userKey);
-  }
-  return seenUsers.size;
+  const normReactions = getNormalizedReactions(msg?.reactions);
+  if (normReactions.length === 0) return 0;
+  return normReactions.reduce((sum, r) => sum + (typeof r.count === 'number' && r.count > 0 ? r.count : 1), 0);
 }
 
 function getUserReaction(msg: Message): MessageReactionItem | undefined {
@@ -2389,32 +2421,55 @@ interface GroupedUserReaction {
 }
 
 const groupedReactionUsers = computed(() => {
-  if (!selectedReactionMsg.value?.reactions) return [];
+  const normReactions = getNormalizedReactions(selectedReactionMsg.value?.reactions);
+  if (normReactions.length === 0) return [];
   const usersMap: Record<string, GroupedUserReaction> = {};
 
-  for (const r of selectedReactionMsg.value.reactions) {
-    const key = r.isSelf ? 'self' : (r.uid || 'unknown');
+  for (const r of normReactions) {
+    const key = r.isSelf ? 'self' : (r.uid || r.userName || 'unknown');
     const fallbackAvatar = r.isSelf ? props.conversation?.zaloAccount?.avatarUrl : props.conversation?.contact?.avatarUrl;
     const fallbackName = r.isSelf ? (props.conversation?.zaloAccount?.displayName || 'Bạn') : getContactDisplayName(props.conversation);
-    usersMap[key] = {
-      uid: r.uid || key,
-      userName: r.userName || fallbackName,
-      avatarUrl: r.avatarUrl || fallbackAvatar || undefined,
-      isSelf: r.isSelf,
-      totalCount: 1,
-      reactions: [{ emoji: r.emoji, count: 1 }],
-      displayCount: 1,
-    };
+    const emoji = r.emoji || '❤️';
+    const count = typeof r.count === 'number' && r.count > 0 ? r.count : 1;
+
+    if (!usersMap[key]) {
+      usersMap[key] = {
+        uid: r.uid || key,
+        userName: (r.isSelf && props.conversation?.zaloAccount?.displayName) ? props.conversation.zaloAccount.displayName : (r.userName || fallbackName),
+        avatarUrl: r.avatarUrl || fallbackAvatar || undefined,
+        isSelf: r.isSelf,
+        totalCount: 0,
+        reactions: [],
+        displayCount: 0,
+      };
+    }
+
+    const userObj = usersMap[key];
+    userObj.totalCount += count;
+    const existingEmoji = userObj.reactions.find((item) => item.emoji === emoji);
+    if (existingEmoji) {
+      existingEmoji.count += count;
+    } else {
+      userObj.reactions.push({ emoji, count });
+    }
   }
 
   const allUsers = Object.values(usersMap);
 
   if (activeReactionTab.value === 'all') {
+    for (const u of allUsers) {
+      u.displayCount = u.totalCount;
+    }
     return allUsers;
   }
 
   // Filter users who reacted with the active emoji
-  return allUsers.filter(u => u.reactions.some(re => re.emoji === activeReactionTab.value));
+  const filtered = allUsers.filter(u => u.reactions.some(re => re.emoji === activeReactionTab.value));
+  for (const u of filtered) {
+    const matched = u.reactions.find(re => re.emoji === activeReactionTab.value);
+    u.displayCount = matched ? matched.count : 0;
+  }
+  return filtered;
 });
 
 function removeSelfReactionInModal() {
@@ -2842,31 +2897,62 @@ const conversationImages = computed(() => {
   if (!props.messages) return list;
   for (const m of props.messages) {
     if (isUndoSyncMessage(m)) continue;
-    const url = getImageUrl(m);
-    if (url) {
-      list.push({
-        id: m.id,
-        url,
-        caption: getImageCaption(m) || '',
-        sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
-        date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
-        title: getImageCaption(m) || `Ảnh ${list.length + 1}`,
-        name: `image_${m.id || list.length + 1}.jpg`,
-        rawUrl: url,
-      });
-    } else if (m.contentType === 'gif') {
-      const parsed = getParsedContent(m);
-      if (parsed?.href) {
+
+    // Check if message has multiple image attachments
+    const atts = Array.isArray((m as any).attachments) ? (m as any).attachments : [];
+    const imageAttIndices = atts
+      .map((a: any, idx: number) => ({ a, idx }))
+      .filter(({ a }: { a: any; idx: number }) => a && typeof a === 'object' && (a.localKey || a.url || a.href || a.type === 'image' || isImageUrlPath(a.url || a.href)));
+
+    if (imageAttIndices.length > 1) {
+      for (const { a, idx } of imageAttIndices) {
+        let attUrl = '';
+        if (a.localKey && m.id) {
+          const token = localStorage.getItem('token') || '';
+          attUrl = `/api/v1/media/messages/${m.id}/attachment/${idx}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+        } else {
+          attUrl = a.url || a.href || '';
+        }
+        if (attUrl) {
+          list.push({
+            id: `${m.id}_${idx}`,
+            url: attUrl,
+            caption: a.title || getImageCaption(m) || '',
+            sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
+            date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+            title: a.title || getImageCaption(m) || `Ảnh ${list.length + 1}`,
+            name: a.fileName || a.name || `image_${m.id}_${idx}.jpg`,
+            rawUrl: a.originalUrl || a.url || a.href || attUrl,
+          });
+        }
+      }
+    } else {
+      const url = getImageUrl(m);
+      if (url) {
         list.push({
           id: m.id,
-          url: parsed.href,
-          caption: 'Ảnh động (GIF)',
+          url,
+          caption: getImageCaption(m) || '',
           sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
           date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
-          title: 'Ảnh GIF',
-          name: `gif_${m.id || list.length + 1}.gif`,
-          rawUrl: parsed.href,
+          title: getImageCaption(m) || `Ảnh ${list.length + 1}`,
+          name: `image_${m.id || list.length + 1}.jpg`,
+          rawUrl: getOriginalRemoteImageUrl(m) || url,
         });
+      } else if (m.contentType === 'gif') {
+        const parsed = getParsedContent(m);
+        if (parsed?.href) {
+          list.push({
+            id: m.id,
+            url: parsed.href,
+            caption: 'Ảnh động (GIF)',
+            sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
+            date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+            title: 'Ảnh GIF',
+            name: `gif_${m.id || list.length + 1}.gif`,
+            rawUrl: parsed.href,
+          });
+        }
       }
     }
   }
@@ -3971,9 +4057,21 @@ function getStickerUrl(msg: Message): string | null {
 
 /** Extract video URL from message content */
 function getVideoUrl(msg: Message): string | null {
+  // 1. Check attachments for local storage or remote URL
+  const attList = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
+  const attIndex = attList.findIndex((a: any) =>
+    a && typeof a === 'object' && (a.localKey || a.url || a.href || a.type === 'video' || /\.(mp4|mov|webm|avi|mkv|3gp|m4v|ogv)$/i.test((a.url || a.href || '').split('?')[0]))
+  );
+  const att = attIndex !== -1 ? attList[attIndex] : ((msg as any).fileInfo || attList[0]);
+
+  // If localKey exists on attachment, serve via local backend proxy
+  if (att?.localKey && msg.id) {
+    const token = localStorage.getItem('token') || '';
+    return `/api/v1/media/messages/${msg.id}/attachment/${attIndex}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  }
+
   let rawUrl: string | null = null;
-  const att = Array.isArray((msg as any).attachments) ? (msg as any).attachments[0] : null;
-  const candidate = (msg as any).mediaUrl || (msg as any).fileInfo?.url || (typeof att === 'string' ? att : att?.url);
+  const candidate = (msg as any).mediaUrl || (msg as any).fileInfo?.url || (typeof att === 'string' ? att : (att?.url || att?.href));
   if (candidate && (candidate.startsWith('http') || candidate.startsWith('/'))) {
     rawUrl = candidate;
   } else if (msg.content?.startsWith('http') || msg.content?.startsWith('/')) {
@@ -4293,6 +4391,8 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   bottom: -11px;
   display: inline-flex;
   align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
   gap: 3px;
   background: #ffffff;
   padding: 2px 8px;
@@ -4303,6 +4403,7 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   z-index: 5;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   user-select: none;
+  max-width: max-content;
 }
 
 .reaction-summary-pill:hover {
@@ -4321,6 +4422,9 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
 .pill-emoji {
   font-size: 0.95rem;
   line-height: 1;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
 }
 
 .pill-count {
@@ -4328,6 +4432,10 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   color: #4b4c4f;
   margin-left: 2px;
   line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-block;
+  word-break: keep-all;
 }
 
 /* ── Reaction Detail Dialog ── */

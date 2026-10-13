@@ -22,6 +22,7 @@ services:
     volumes:
       - file_storage:/var/lib/ocms/files
       - /data/ocms-media:/app/media_store:rw
+      - /mnt/nas-media/ocms-media:/app/nas_media_store:rw
     tmpfs:
       - /tmp
     security_opt:
@@ -59,6 +60,8 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3001"
+    env_file:
+      - .env
     environment:
       - NODE_ENV=production
       - PORT=3001
@@ -67,6 +70,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - OCMS_BACKEND_URL=http://app:3000
+      - ACTIVE_ODOO_TARGET=${ACTIVE_ODOO_TARGET:-odoo_prod}
     depends_on:
       redis:
         condition: service_healthy
