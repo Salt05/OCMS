@@ -64,6 +64,7 @@
               cover
               aspect-ratio="1"
               class="bg-grey-lighten-4 w-100 h-100"
+              @error="handleThumbnailError(item)"
             >
               <template #placeholder>
                 <div class="d-flex align-center justify-center fill-height">
@@ -655,17 +656,21 @@ const mediaItems = computed(() => {
       if (m.attachments) {
         const atts = Array.isArray(m.attachments) ? m.attachments : parseJsonSafe(m.attachments);
         if (Array.isArray(atts) && atts.length > 0) {
+          let hasValidAttachment = false;
           for (let attIdx = 0; attIdx < atts.length; attIdx++) {
             const att = atts[attIdx];
+            if (!att || typeof att !== 'object') continue;
             const u = att.url || att.thumbUrl || att.href;
             const attExt = getFileExtension(att.title || att.name || u || '');
             if (u && !DOC_EXTENSIONS.includes(attExt)) {
               const token = localStorage.getItem('token') || '';
-              const resolvedUrl = (att.localKey && m.id)
+              // 3-Tier Protection URL: ALWAYS route through internal endpoint if message ID exists
+              // Tier 1: Local VM -> Tier 2: NAS Archive -> Tier 3: Zalo CDN 302 Redirect + Background Auto-Save
+              const resolvedUrl = m.id
                 ? `/api/v1/media/messages/${m.id}/attachment/${attIdx}${token ? `?token=${encodeURIComponent(token)}` : ''}`
                 : u;
               list.push({
-                id: `${m.id}-${list.length}`,
+                id: `${m.id}-att-${attIdx}`,
                 isImage: att.type !== 'video',
                 isVideo: att.type === 'video',
                 url: resolvedUrl,
@@ -675,21 +680,28 @@ const mediaItems = computed(() => {
                 date,
                 fullDate,
               });
+              hasValidAttachment = true;
             }
           }
-          if (list.some(item => item.id.startsWith(m.id))) {
+          if (hasValidAttachment) {
             continue;
           }
         }
       }
 
       if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http') && !imgUrl.startsWith('{')) {
+        const token = localStorage.getItem('token') || '';
+        const fallback = imgThumb || imgUrl;
+        const resolvedUrl = m.id
+          ? `/api/v1/media/messages/${m.id}/attachment/0${token ? `?token=${encodeURIComponent(token)}` : ''}`
+          : fallback;
         list.push({
           id: m.id,
           isImage: true,
           isVideo: false,
-          url: imgUrl,
-          thumbUrl: imgThumb || imgUrl,
+          url: resolvedUrl,
+          rawUrl: fallback,
+          thumbUrl: resolvedUrl,
           name: imgTitle || 'Ảnh',
           date,
           fullDate,
@@ -698,7 +710,19 @@ const mediaItems = computed(() => {
     }
   }
 
-  return list.reverse();
+  // Deduplicate items that have identical clean URL or rawUrl
+  const seenUrls = new Set<string>();
+  const deduplicatedList: any[] = [];
+  for (const item of list) {
+    const rawClean = (item.rawUrl || item.url || '').split('?')[0];
+    const key = rawClean || item.id;
+    if (!seenUrls.has(key)) {
+      seenUrls.add(key);
+      deduplicatedList.push(item);
+    }
+  }
+
+  return deduplicatedList.reverse();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -806,7 +830,19 @@ const docItems = computed(() => {
     }
   }
 
-  return list.reverse();
+  // Deduplicate docItems
+  const seenDocUrls = new Set<string>();
+  const deduplicatedDocs: any[] = [];
+  for (const item of list) {
+    const rawClean = (item.rawUrl || item.url || '').split('?')[0];
+    const key = rawClean || item.id;
+    if (!seenDocUrls.has(key)) {
+      seenDocUrls.add(key);
+      deduplicatedDocs.push(item);
+    }
+  }
+
+  return deduplicatedDocs.reverse();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -920,6 +956,17 @@ const galleryImages = computed(() => {
       rawUrl: item.rawUrl || item.url,
     }));
 });
+
+function handleThumbnailError(item: any) {
+  if (item && item.rawUrl) {
+    if (item.thumbUrl !== item.rawUrl) {
+      item.thumbUrl = item.rawUrl;
+    }
+    if (item.url !== item.rawUrl) {
+      item.url = item.rawUrl;
+    }
+  }
+}
 
 function openLightbox(item: any) {
   lightboxImageError.value = false;

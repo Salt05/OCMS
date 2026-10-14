@@ -291,7 +291,18 @@
                 :class="{ 'active': idx === currentIndex }"
                 @click.stop="selectImage(idx)"
               >
-                <img :src="img.thumb || img.url" :alt="img.title || `Thumbnail ${idx + 1}`" loading="lazy" @error="(e: any) => { e.target.style.opacity = '0.35'; }" />
+                <img
+                  :src="img.thumb || img.url"
+                  :alt="img.title || `Thumbnail ${idx + 1}`"
+                  loading="lazy"
+                  @error="(e: any) => {
+                    if (img.rawUrl && e.target.src !== img.rawUrl) {
+                      e.target.src = img.rawUrl;
+                    } else {
+                      e.target.style.opacity = '0.35';
+                    }
+                  }"
+                />
                 <div v-if="idx === currentIndex" class="thumb-indicator"></div>
               </div>
             </div>
@@ -349,8 +360,16 @@ const normalizedImages = computed<ViewerImageItem[]>(() => {
 });
 
 const currentIndex = ref(0);
+const failedUrls = ref<Record<string, boolean>>({});
 const currentItem = computed(() => normalizedImages.value[currentIndex.value] || null);
-const currentImageUrl = computed(() => currentItem.value?.url || '');
+const currentImageUrl = computed(() => {
+  const item = currentItem.value;
+  if (!item) return '';
+  if (item.url && failedUrls.value[item.url]) {
+    return item.rawUrl || item.url;
+  }
+  return item.url || '';
+});
 
 const canGoPrev = computed(() => currentIndex.value > 0);
 const canGoNext = computed(() => currentIndex.value < normalizedImages.value.length - 1);
@@ -436,6 +455,13 @@ function onImageLoad() {
 }
 
 function onImageError() {
+  const current = currentItem.value;
+  if (current && current.rawUrl && current.url && current.rawUrl !== current.url && !failedUrls.value[current.url]) {
+    failedUrls.value[current.url] = true;
+    imageLoading.value = true;
+    imageError.value = false;
+    return;
+  }
   imageLoading.value = false;
   imageError.value = true;
 }
