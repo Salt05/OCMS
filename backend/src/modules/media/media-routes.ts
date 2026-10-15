@@ -90,14 +90,86 @@ export async function mediaRoutes(app: FastifyInstance) {
           targetAttachment?.href ||
           targetAttachment?.thumbUrl;
 
-        // 5. If target has a local file that exists on disk, serve it immediately!
-        if (targetAttachment?.localKey) {
-          const absolutePath = mediaService.getAbsolutePath(targetAttachment.localKey);
-          if (absolutePath && fs.existsSync(absolutePath)) {
-            const mimeType = resolveStandardMimeType(absolutePath, targetAttachment.mimeType);
-            const fileName = targetAttachment.fileName || targetAttachment.title || `file_${messageId.slice(0, 8)}`;
+        // 5. 3-TIER RETRIEVAL ARCHITECTURE (Tier 1: VM -> Tier 2: NAS -> Tier 3: Zalo CDN)
+        let foundMedia = targetAttachment?.localKey
+          ? mediaService.findMediaInTiers(targetAttachment.localKey, targetAttachment.fileName || targetAttachment.title)
+          : null;
 
-            // Inline viewing for images, videos, audio, and PDF; attachment download for office/zip files
+        // If not found by localKey but remoteFallbackUrl exists, search across all tiers by URL hash
+        if (!foundMedia && remoteFallbackUrl) {
+          foundMedia = mediaService.findMediaInTiers(remoteFallbackUrl, targetAttachment?.fileName || targetAttachment?.title);
+          // If discovered in VM or NAS, update message attachment metadata in DB asynchronously
+          if (foundMedia && targetAttachment) {
+            targetAttachment.localKey = foundMedia.localKey;
+            targetAttachment.mimeType = foundMedia.mimeType;
+            targetAttachment.sizeBytes = foundMedia.sizeBytes;
+            targetAttachment.fileName = targetAttachment.fileName || foundMedia.fileName;
+            prisma.message.update({
+              where: { id: messageId },
+              data: { attachments },
+            }).catch(() => {});
+          }
+        }
+
+        // TIER 1 (Local VM) & TIER 2 (NAS Storage): Serve directly from disk!
+        let isValidDiskFile = false;
+        if (foundMedia && fs.existsSync(foundMedia.fullPath)) {
+          try {
+            const st = fs.statSync(foundMedia.fullPath);
+            if (st.size > 0) {
+              isValidDiskFile = true;
+            } else {
+              // Corrupt 0-byte file: remove so Tier 3 can re-download clean content
+              fs.unlinkSync(foundMedia.fullPath);
+            }
+          } catch {}
+        }
+
+        if (isValidDiskFile && foundMedia) {
+          const mimeType = foundMedia.mimeType || resolveStandardMimeType(foundMedia.fullPath);
+          const fileName = targetAttachment?.fileName || targetAttachment?.title || foundMedia.fileName || `file_${messageId.slice(0, 8)}`;
+
+          const isInline =
+            mimeType.startsWith('image/') ||
+            mimeType.startsWith('video/') ||
+            mimeType.startsWith('audio/') ||
+            mimeType === 'application/pdf';
+
+          const encodedFileName = encodeURIComponent(fileName);
+          const dispositionHeader = isInline
+            ? `inline; filename="${encodedFileName}"; filename*=UTF-8''${encodedFileName}`
+            : `attachment; filename="${encodedFileName}"; filename*=UTF-8''${encodedFileName}`;
+
+          reply.header('Content-Type', mimeType);
+          reply.header('Content-Disposition', dispositionHeader);
+          reply.header('Cache-Control', 'private, max-age=604800');
+          reply.header('X-Storage-Tier', foundMedia.tier); // 'vm' or 'nas'
+
+          return reply.send(fs.createReadStream(foundMedia.fullPath));
+        }
+
+        // TIER 3 (Zalo CDN Fallback + Instant Auto-Archive to VM & NAS)
+        if (remoteFallbackUrl && typeof remoteFallbackUrl === 'string' && remoteFallbackUrl.startsWith('http')) {
+          const preferredName = targetAttachment?.fileName || targetAttachment?.title;
+          const saved = await mediaService.downloadAndSave(remoteFallbackUrl, preferredName, { forceDownload: true });
+
+          if (saved && fs.existsSync(saved.fullPath)) {
+            // Update attachment in message
+            if (targetAttachment) {
+              targetAttachment.localKey = saved.localKey;
+              targetAttachment.mimeType = saved.mimeType;
+              targetAttachment.sizeBytes = saved.sizeBytes;
+              targetAttachment.fileName = saved.fileName;
+              targetAttachment.downloadStatus = 'completed';
+              prisma.message.update({
+                where: { id: messageId },
+                data: { attachments },
+              }).catch(() => {});
+            }
+
+            const mimeType = saved.mimeType || resolveStandardMimeType(saved.fullPath);
+            const fileName = saved.fileName || `file_${messageId.slice(0, 8)}`;
+
             const isInline =
               mimeType.startsWith('image/') ||
               mimeType.startsWith('video/') ||
@@ -111,21 +183,16 @@ export async function mediaRoutes(app: FastifyInstance) {
 
             reply.header('Content-Type', mimeType);
             reply.header('Content-Disposition', dispositionHeader);
-            reply.header('Cache-Control', 'private, max-age=604800'); // Cache privately in browser for 7 days
+            reply.header('X-Storage-Tier', 'zalo-saved');
 
-            return reply.send(fs.createReadStream(absolutePath));
+            return reply.send(fs.createReadStream(saved.fullPath));
           }
-        }
 
-        // 6. If local file is not on disk yet:
-        // Trigger background download so subsequent requests are served locally
-        mediaService.downloadMessageAttachments(messageId).catch((err) => {
-          logger.warn(`[MediaRoutes] Background download failed for message ${messageId}:`, err);
-        });
-
-        // FAIL-SAFE REDIRECT: Redirect browser directly to original remote URL!
-        if (remoteFallbackUrl && typeof remoteFallbackUrl === 'string' && remoteFallbackUrl.startsWith('http')) {
-          return reply.redirect(remoteFallbackUrl, 302);
+          // If downloading failed (link expired on Zalo), check if we can still redirect or return 410 Gone
+          return reply.status(410).send({
+            error: 'Tập tin đã hết hạn trên Zalo và không tìm thấy bản lưu trên Máy ảo hoặc NAS.',
+            expiredUrl: remoteFallbackUrl,
+          });
         }
 
         return reply.status(404).send({ error: 'Media not available' });

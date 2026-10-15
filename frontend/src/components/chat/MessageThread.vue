@@ -377,7 +377,7 @@
               </button>
             </div>
 
-            <div class="message-container position-relative" :class="isBulkMode ? 'ml-auto' : ''" style="max-width: 70%;">
+            <div class="message-container position-relative" :class="isBulkMode ? 'ml-auto' : ''" style="max-width: 70%; min-width: 0;">
               <!-- Floating Reaction Bar on hover (Hidden completely in bulk mode) -->
               <div v-if="!isBulkMode" class="message-action-bar" :class="msg.senderType === 'self' ? 'message-action-bar-self' : 'message-action-bar-contact'">
                 <div class="floating-reaction-bar elevation-2">
@@ -618,17 +618,23 @@
                 <div v-if="failedImages[msg.id]" class="chat-image-error-box pa-3 rounded-lg d-flex align-center gap-2">
                   <v-icon size="20" color="grey">lucide-image-off</v-icon>
                   <div class="text-caption text-grey-darken-1">
-                    <div class="font-weight-medium" style="font-size: 12px; line-height: 1.3;">Ảnh không khả dụng</div>
-                    <div style="font-size: 11px; opacity: 0.8; line-height: 1.2;">Liên kết ảnh Zalo đã hết hạn</div>
+                    <div class="font-weight-medium" style="font-size: 12px; line-height: 1.3;">Không tải được ảnh</div>
+                    <div style="font-size: 11px; opacity: 0.8; line-height: 1.2;">Ảnh không có sẵn trên Zalo, Máy chủ hoặc NAS</div>
                   </div>
                 </div>
                 <div v-else class="chat-image-wrapper position-relative">
+                  <!-- Đang tải ảnh placeholder -->
+                  <div v-if="imageLoading[msg.id] !== false" class="chat-image-loading-placeholder d-flex align-center justify-center">
+                    <v-progress-circular indeterminate size="22" width="2" color="primary" class="mr-2" />
+                    <span class="text-caption font-weight-medium text-grey-darken-1">Đang tải ảnh...</span>
+                  </div>
                   <img
                     :src="getImageUrl(msg)!"
                     alt="Hình ảnh"
                     class="chat-image"
-                    :class="{'chat-image-with-caption': !!getImageCaption(msg)}"
+                    :class="{'chat-image-with-caption': !!getImageCaption(msg), 'image-is-loading': imageLoading[msg.id] !== false}"
                     loading="lazy"
+                    @load="onMessageImageLoad(msg)"
                     @error="onMessageImageError(msg, $event)"
                     @click="openMessageImage(msg)"
                   />
@@ -675,34 +681,52 @@
                 </div>
               </div>
 
-              <!-- File/PDF/Document -->
+              <!-- File/PDF/Document Card with Rich UI & 3-Tier Storage Badge -->
               <div
                 v-else-if="getFileInfo(msg) && !isLinkMessage(msg)"
-                class="file-card"
+                class="file-card-modern"
                 :class="{ 'file-card-clickable': !!getFileInfo(msg)!.href }"
                 @click="getFileInfo(msg)!.href && downloadFile(getFileInfo(msg)!.href, getFileInfo(msg)!.name)"
                 :title="getFileInfo(msg)!.href ? 'Bấm để tải về: ' + getFileInfo(msg)!.name : ''"
               >
-                <v-icon size="24" class="mr-2.5 flex-shrink-0" :color="getFileColor(getFileInfo(msg)!.name)">
-                  {{ getFileIcon(getFileInfo(msg)!.name) }}
-                </v-icon>
-                <div class="flex-grow-1 min-w-0 pr-2">
-                  <div class="text-body-2 font-weight-medium text-truncate" :title="getFileInfo(msg)!.name">
-                    {{ truncateFileName(getFileInfo(msg)!.name, 26) }}
+                <!-- File Logo / Icon Box with Format Badge -->
+                <div
+                  class="file-icon-box flex-shrink-0"
+                  :style="{
+                    backgroundColor: getFileTheme(getFileInfo(msg)!.name, getFileInfo(msg)!.ext).bg,
+                    color: getFileTheme(getFileInfo(msg)!.name, getFileInfo(msg)!.ext).color,
+                  }"
+                >
+                  <v-icon size="22">{{ getFileTheme(getFileInfo(msg)!.name, getFileInfo(msg)!.ext).icon }}</v-icon>
+                  <span
+                    class="file-badge-ext"
+                    :style="{
+                      backgroundColor: getFileTheme(getFileInfo(msg)!.name, getFileInfo(msg)!.ext).badgeBg,
+                      color: getFileTheme(getFileInfo(msg)!.name, getFileInfo(msg)!.ext).badgeColor,
+                    }"
+                  >
+                    {{ getFileBadgeText(getFileInfo(msg)!.name, getFileInfo(msg)!.ext) }}
+                  </span>
+                </div>
+
+                <!-- File Info (Name + Size) -->
+                <div class="file-details-box flex-grow-1 min-w-0 pr-2">
+                  <div class="file-name-text text-truncate font-weight-medium" :title="getFileInfo(msg)!.name">
+                    {{ truncateFileName(getFileInfo(msg)!.name, 28) }}
                   </div>
-                  <div class="text-caption text-grey-darken-1 d-flex align-center gap-1" style="font-size: 11px;">
-                    <span>{{ getFileInfo(msg)!.size }}</span>
-                    <span v-if="getFileInfo(msg)!.href" class="text-primary font-weight-medium ml-1">• Tải về</span>
+                  <div class="file-meta-sub d-flex align-center gap-1.5 mt-0.5">
+                    <span class="file-size-badge">{{ getFileInfo(msg)!.size }}</span>
                   </div>
                 </div>
+
+                <!-- Download Action Button -->
                 <v-btn
                   v-if="getFileInfo(msg)!.href"
                   icon="lucide-download"
                   size="small"
-                  variant="tonal"
-                  color="primary"
-                  class="flex-shrink-0"
-                  title="Tải về"
+                  variant="flat"
+                  class="file-download-btn flex-shrink-0"
+                  title="Tải tập tin về máy"
                   @click.stop="downloadFile(getFileInfo(msg)!.href, getFileInfo(msg)!.name)"
                 />
               </div>
@@ -729,17 +753,27 @@
                   @click="openMessageImage(msg)"
                 />
               </div>
-              <!-- Web link -->
-              <a
+              <!-- Web link / Link Card -->
+              <div
                 v-else-if="isLinkMessage(msg)"
-                :href="getLinkUrl(msg)!"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="message-link"
+                class="link-card-bubble"
                 @click.stop
               >
-                {{ getLinkUrl(msg) }}
-              </a>
+                <div v-if="getParsedContent(msg)?.title && getParsedContent(msg).title !== getLinkUrl(msg)" class="link-card-title font-weight-bold text-body-2 mb-1">
+                  {{ getParsedContent(msg).title }}
+                </div>
+                <div v-if="getParsedContent(msg)?.description" class="link-card-desc text-caption text-grey-darken-1 mb-1.5">
+                  {{ getParsedContent(msg).description }}
+                </div>
+                <a
+                  :href="getLinkUrl(msg)!"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="message-link"
+                >
+                  <v-icon size="14" class="inline-link-icon mr-1" color="primary">lucide-globe</v-icon><span class="link-url-text">{{ getLinkUrl(msg) }}</span><v-icon size="12" class="inline-link-icon ml-1 text-grey">lucide-external-link</v-icon>
+                </a>
+              </div>
               <!-- Reminder/Calendar -->
               <div v-else-if="isReminderMessage(msg)" class="reminder-card">
                 <div class="d-flex align-center mb-1">
@@ -2668,6 +2702,62 @@ interface QuickAttachmentItem {
   name: string;
 }
 
+const DOC_EXTENSIONS = new Set([
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+  'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'txt', 'csv',
+  'json', 'xml', 'html', 'exe', 'apk', 'dmg', 'iso', 'bin'
+]);
+
+const IMAGE_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'heic', 'heif', 'ico', 'tif', 'tiff'
+]);
+
+function getFileExtension(pathOrUrl: string): string {
+  if (!pathOrUrl || typeof pathOrUrl !== 'string') return '';
+  const clean = pathOrUrl.split('?')[0].split('#')[0];
+  const parts = clean.split('.');
+  return parts.length > 1 ? parts.pop()!.toLowerCase() : '';
+}
+
+function isImageAttachment(a: any): boolean {
+  if (!a || typeof a !== 'object') return false;
+  if (a.type && a.type !== 'image' && a.type !== 'photo') return false;
+  if (a.mimeType && !a.mimeType.startsWith('image/')) return false;
+
+  const fileName = a.fileName || a.name || a.title || '';
+  const extFromName = getFileExtension(fileName);
+  if (extFromName && DOC_EXTENSIONS.has(extFromName)) return false;
+
+  const url = a.url || a.href || a.originalUrl || a.localKey || '';
+  if (isZaloFileUrl(url)) return false;
+
+  const extFromUrl = getFileExtension(url);
+  if (extFromUrl && DOC_EXTENSIONS.has(extFromUrl)) return false;
+
+  const cleanUrl = url.toLowerCase();
+  const isZaloPhoto = cleanUrl.includes('zdn.vn') && (cleanUrl.includes('/jpg/') || cleanUrl.includes('/png/') || cleanUrl.includes('/webp/') || cleanUrl.includes('photo-'));
+  const hasImageExt = (extFromName && IMAGE_EXTENSIONS.has(extFromName)) || (extFromUrl && IMAGE_EXTENSIONS.has(extFromUrl));
+
+  // If the attachment points to an HTTP web link that doesn't have an image extension and isn't on Zalo CDN, it's NOT an image!
+  if (/^https?:\/\//i.test(url) && !isZaloPhoto && !hasImageExt) {
+    return false;
+  }
+  if (a.originalUrl && /^https?:\/\//i.test(a.originalUrl) && !isZaloPhoto && !hasImageExt) {
+    return false;
+  }
+  if (fileName.startsWith('attachment_') && !isZaloPhoto && !hasImageExt) {
+    return false;
+  }
+
+  if (a.type === 'image' || a.type === 'photo') return true;
+  if (a.mimeType && a.mimeType.startsWith('image/')) return true;
+  if (extFromName && IMAGE_EXTENSIONS.has(extFromName)) return true;
+  if (extFromUrl && IMAGE_EXTENSIONS.has(extFromUrl)) return true;
+  if (isZaloPhoto) return true;
+
+  return false;
+}
+
 function isImageUrlPath(url: string): boolean {
   if (!url) return false;
   const clean = url.split('?')[0].toLowerCase();
@@ -2707,7 +2797,26 @@ function getLinkUrl(msg: Message): string | null {
   return typeof candidate === 'string' && /^https?:\/\//i.test(candidate) ? candidate : null;
 }
 
+function isZaloFileUrl(url: string | null | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const clean = url.trim().toLowerCase();
+  return (
+    clean.includes('dlfl.vn') ||
+    clean.includes('dlf1.vn') ||
+    clean.includes('zfcloud.zdn.vn') ||
+    clean.includes('dl.zdn.vn') ||
+    clean.includes('d1.zdn.vn') ||
+    clean.includes('dlmd.me') ||
+    /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|tar|gz|txt|csv)(\?|$)/i.test(clean)
+  );
+}
+
 function isLinkMessage(msg: Message): boolean {
+  const url = getLinkUrl(msg);
+  // Zalo file CDN links and document files must be rendered as File Cards, NOT raw text links!
+  if (url && isZaloFileUrl(url)) {
+    return false;
+  }
   const parsed = getParsedContent(msg);
   const attachments = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
   const fileInfo = (msg as any).fileInfo;
@@ -2718,7 +2827,6 @@ function isLinkMessage(msg: Message): boolean {
     fileInfo?.title,
     ...attachments.flatMap((item: any) => [item?.name, item?.fileName, item?.title]),
   ].some((value) => normalizeLinkTitle(value)));
-  const url = getLinkUrl(msg);
   const isWebUrl = Boolean(url && !isImageUrlPath(url) && !/\.(pdf|docx?|xlsx?|zip|rar)(\?|$)/i.test(url));
   return Boolean(url && (isLinkPreviewMessage(msg) || hasUrlTitle || !msg.content?.startsWith('{') || (msg.contentType === 'file' && isWebUrl)));
 }
@@ -2852,43 +2960,113 @@ const showImageViewer = ref(false);
 const activeViewerIndex = ref(0);
 const standaloneViewerImages = ref<any[]>([]);
 const failedImages = ref<Record<string, boolean>>({});
+const imageDisplayUrls = ref<Record<string, string>>({});
+const imageLoading = ref<Record<string, boolean>>({});
+const imageFallbackStage = ref<Record<string, number>>({}); // 1: Zalo CDN, 2: Máy chủ (VM) / NAS
 
-function getOriginalRemoteImageUrl(msg: Message): string | null {
+/** Extract direct Zalo CDN image URL (Lớp 1: Siêu tốc từ CDN Zalo) */
+function getZaloCdnImageUrl(msg: Message): string | null {
+  if (!msg) return null;
   if (isVideoMessage(msg) || isContactCardMessage(msg)) return null;
+  if (isLinkMessage(msg) || isLinkPreviewMessage(msg)) return null;
+  if (msg.contentType === 'file' || msg.contentType === 'document' || msg.contentType === 'link') return null;
+
+  // 1. Check attachments array for genuine image attachments with remote URLs
   const atts = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
   for (const a of atts) {
-    if (a && typeof a === 'object') {
+    if (isImageAttachment(a)) {
       const u = a.originalUrl || a.url || a.href;
-      if (u && typeof u === 'string' && u.startsWith('http')) return u;
+      if (u && typeof u === 'string' && u.startsWith('http') && !isZaloFileUrl(u)) {
+        return u;
+      }
     }
   }
-  if ((msg as any).fileInfo?.url?.startsWith('http')) return (msg as any).fileInfo.url;
-  if ((msg as any).mediaUrl?.startsWith('http')) return (msg as any).mediaUrl;
-  if (msg.content?.startsWith('{')) {
+
+  // 2. Check fileInfo
+  if ((msg as any).fileInfo?.url) {
+    const u = (msg as any).fileInfo.url;
+    if ((msg.contentType === 'image' || (msg as any).fileInfo?.type === 'image') && isImageUrlPath(u) && !isZaloFileUrl(u)) {
+      return u;
+    }
+  }
+
+  // 3. Check mediaUrl
+  if ((msg as any).mediaUrl) {
+    const u = (msg as any).mediaUrl as string;
+    if (msg.contentType === 'image' && isImageUrlPath(u) && !isZaloFileUrl(u)) {
+      return u;
+    }
+  }
+
+  // 4. Check content
+  if (msg.contentType === 'image' && msg.content) {
+    if (msg.content.startsWith('http') && isImageUrlPath(msg.content) && !isZaloFileUrl(msg.content)) return msg.content;
     try {
       const p = JSON.parse(msg.content);
-      const u = p.hdUrl || p.hd || p.href || p.url || p.thumb;
-      if (u && typeof u === 'string' && u.startsWith('http')) return u;
+      const u = p.hdUrl || p.href || p.url || p.thumb;
+      if (u && typeof u === 'string' && u.startsWith('http') && !isZaloFileUrl(u)) return u;
     } catch {}
   }
-  if (msg.content?.startsWith('http')) return msg.content;
+
   return null;
+}
+
+/** Extract internal server image endpoint (Lớp 2: Máy chủ VM & Lớp 3: Kho lưu NAS) */
+function getServerImageUrl(msg: Message): string | null {
+  if (!msg) return null;
+  if (isVideoMessage(msg) || isContactCardMessage(msg)) return null;
+  if (isLinkMessage(msg) || isLinkPreviewMessage(msg)) return null;
+  if (msg.contentType === 'file' || msg.contentType === 'document' || msg.contentType === 'link') return null;
+
+  const atts = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
+  const imageAttIndex = atts.findIndex((a: any) => isImageAttachment(a));
+  const mediaAtt = imageAttIndex !== -1 ? atts[imageAttIndex] : null;
+
+  if (msg.id && (mediaAtt || msg.contentType === 'image')) {
+    const token = localStorage.getItem('token') || '';
+    const idx = imageAttIndex !== -1 ? imageAttIndex : 0;
+    return `/api/v1/media/messages/${msg.id}/attachment/${idx}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  }
+
+  if (mediaAtt?.localKey) {
+    const safeKey = mediaAtt.localKey.replace(/^(\.\.[\/\\])+/, '');
+    return `/uploads/${safeKey}`;
+  }
+
+  return null;
+}
+
+function onMessageImageLoad(msg: Message) {
+  if (msg?.id) {
+    imageLoading.value[msg.id] = false;
+  }
 }
 
 function onMessageImageError(msg: Message | string, event?: Event) {
   const msgId = typeof msg === 'string' ? msg : msg?.id;
   if (!msgId) return;
 
-  // Resilient Fallback: If failed loading from local storage, try original remote CDN URL!
-  if (event && event.target && typeof msg === 'object') {
-    const imgEl = event.target as HTMLImageElement;
-    const remoteUrl = getOriginalRemoteImageUrl(msg);
-    if (remoteUrl && imgEl.src !== remoteUrl && !imgEl.src.endsWith(remoteUrl)) {
-      imgEl.src = remoteUrl;
+  const currentStage = imageFallbackStage.value[msgId] || 1;
+  const msgObj = typeof msg === 'object' ? msg : props.messages?.find((m) => m.id === msgId);
+
+  // ── 3-TIER RESILIENT FALLBACK (Link Zalo -> Link Máy chủ -> Link NAS) ──
+  // Nếu Lớp 1 (Zalo CDN) bị lỗi hoặc link hết hạn, tự động chuyển sang Lớp 2 (Máy chủ) & Lớp 3 (NAS)
+  if (currentStage === 1 && msgObj) {
+    const serverUrl = getServerImageUrl(msgObj);
+    const currentUrl = imageDisplayUrls.value[msgId] || getZaloCdnImageUrl(msgObj);
+    if (serverUrl && serverUrl !== currentUrl) {
+      imageFallbackStage.value[msgId] = 2; // Đang thử Máy chủ & NAS
+      imageDisplayUrls.value[msgId] = serverUrl;
+      imageLoading.value[msgId] = true;
+      if (event?.target) {
+        (event.target as HTMLImageElement).src = serverUrl;
+      }
       return;
     }
   }
 
+  // Cả 3 lớp đều không hiển thị được -> Lúc này mới đánh dấu thất bại và hiển thị box không tải được ảnh
+  imageLoading.value[msgId] = false;
   failedImages.value[msgId] = true;
 }
 
@@ -2898,46 +3076,83 @@ const conversationImages = computed(() => {
   for (const m of props.messages) {
     if (isUndoSyncMessage(m)) continue;
 
-    // Check if message has multiple image attachments
-    const atts = Array.isArray((m as any).attachments) ? (m as any).attachments : [];
-    const imageAttIndices = atts
-      .map((a: any, idx: number) => ({ a, idx }))
-      .filter(({ a }: { a: any; idx: number }) => a && typeof a === 'object' && (a.localKey || a.url || a.href || a.type === 'image' || isImageUrlPath(a.url || a.href)));
+    // Strictly exclude document, file, link, video, call, audio, or contact messages
+    if (
+      m.contentType === 'file' ||
+      m.contentType === 'document' ||
+      m.contentType === 'link' ||
+      isVideoMessage(m) ||
+      isContactCardMessage(m) ||
+      isLinkMessage(m) ||
+      m.contentType === 'voice' ||
+      m.contentType === 'call' ||
+      m.contentType === 'bank_card'
+    ) {
+      continue;
+    }
 
-    if (imageAttIndices.length > 1) {
-      for (const { a, idx } of imageAttIndices) {
-        let attUrl = '';
-        if (a.localKey && m.id) {
-          const token = localStorage.getItem('token') || '';
-          attUrl = `/api/v1/media/messages/${m.id}/attachment/${idx}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-        } else {
-          attUrl = a.url || a.href || '';
-        }
-        if (attUrl) {
+    const atts = Array.isArray((m as any).attachments) ? (m as any).attachments : [];
+
+    // Filter ONLY genuine image attachments and deduplicate within the message
+    const validImageAtts: { a: any; idx: number }[] = [];
+    const seenWithinMessage = new Set<string>();
+
+    atts.forEach((a: any, idx: number) => {
+      if (!isImageAttachment(a)) return;
+
+      const cleanUrl = (a.originalUrl || a.url || a.href || '').split('?')[0].split('#')[0];
+      const cleanBase = cleanUrl.split('/').pop() || '';
+      const localKeyBase = (a.localKey || '').split('/').pop() || '';
+      const contentKey = cleanBase || localKeyBase || `${m.id}`;
+
+      if (seenWithinMessage.has(contentKey)) {
+        return; // Đã nhận diện ảnh từ tầng trước, bỏ qua các bản sao còn lại!
+      }
+      seenWithinMessage.add(contentKey);
+      validImageAtts.push({ a, idx });
+    });
+
+    if (validImageAtts.length > 1) {
+      for (const { a, idx } of validImageAtts) {
+        const token = localStorage.getItem('token') || '';
+        const serverUrl = m.id
+          ? `/api/v1/media/messages/${m.id}/attachment/${idx}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+          : (a.url || a.href || '');
+        const zaloUrl = (a.originalUrl || a.url || a.href || '').startsWith('http')
+          ? (a.originalUrl || a.url || a.href)
+          : '';
+        const initialUrl = zaloUrl || serverUrl;
+        if (initialUrl) {
           list.push({
             id: `${m.id}_${idx}`,
-            url: attUrl,
+            url: initialUrl,
+            serverUrl: serverUrl,
             caption: a.title || getImageCaption(m) || '',
             sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
             date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
             title: a.title || getImageCaption(m) || `Ảnh ${list.length + 1}`,
             name: a.fileName || a.name || `image_${m.id}_${idx}.jpg`,
-            rawUrl: a.originalUrl || a.url || a.href || attUrl,
+            rawUrl: zaloUrl || serverUrl,
           });
         }
       }
     } else {
       const url = getImageUrl(m);
       if (url) {
+        const zaloUrl = getZaloCdnImageUrl(m);
+        const serverUrl = getServerImageUrl(m);
+        // Nếu ảnh đã fallback thành công trên giao diện chat, dùng luôn URL máy chủ đang hiển thị
+        const currentActiveUrl = (m.id && imageDisplayUrls.value[m.id]) ? imageDisplayUrls.value[m.id] : (zaloUrl || url);
         list.push({
           id: m.id,
-          url,
+          url: currentActiveUrl,
+          serverUrl: serverUrl || url,
           caption: getImageCaption(m) || '',
           sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
           date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
           title: getImageCaption(m) || `Ảnh ${list.length + 1}`,
           name: `image_${m.id || list.length + 1}.jpg`,
-          rawUrl: getOriginalRemoteImageUrl(m) || url,
+          rawUrl: zaloUrl || url,
         });
       } else if (m.contentType === 'gif') {
         const parsed = getParsedContent(m);
@@ -2945,6 +3160,7 @@ const conversationImages = computed(() => {
           list.push({
             id: m.id,
             url: parsed.href,
+            serverUrl: parsed.href,
             caption: 'Ảnh động (GIF)',
             sender: m.senderName || (m.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
             date: m.sentAt ? new Date(m.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
@@ -2956,28 +3172,62 @@ const conversationImages = computed(() => {
       }
     }
   }
-  return list;
+
+  // Deduplicate items globally across the conversation
+  const seenUrls = new Set<string>();
+  const deduplicatedList: any[] = [];
+  for (const item of list) {
+    // Extra safety: Never allow documents/files into the image viewer list
+    const name = item.name || item.title || '';
+    const ext = getFileExtension(name) || getFileExtension(item.url) || getFileExtension(item.rawUrl || '');
+    if (ext && DOC_EXTENSIONS.has(ext)) {
+      continue;
+    }
+
+    const rawClean = (item.rawUrl || '').split('?')[0].split('#')[0];
+    const cleanBase = rawClean.split('/').pop() || '';
+    const key = cleanBase || rawClean || (item.url || '').split('?')[0] || item.id;
+    if (key && !seenUrls.has(key)) {
+      seenUrls.add(key);
+      deduplicatedList.push(item);
+    }
+  }
+
+  return deduplicatedList;
 });
 
 function openMessageImage(msg: Message) {
-  const url = getImageUrl(msg) || (msg.contentType === 'gif' ? getParsedContent(msg)?.href : null);
+  const url = (msg.id && imageDisplayUrls.value[msg.id]) || getImageUrl(msg) || (msg.contentType === 'gif' ? getParsedContent(msg)?.href : null);
   if (!url) return;
 
   const allImgs = conversationImages.value;
-  const idx = allImgs.findIndex((img) => img.url === url || img.id === msg.id);
+  const cleanUrl = url.split('?')[0];
+  const originalRemote = getZaloCdnImageUrl(msg);
+  const cleanRemote = originalRemote ? originalRemote.split('?')[0] : '';
+  const serverUrl = getServerImageUrl(msg) || url;
+
+  const idx = allImgs.findIndex((img) => {
+    if (img.id === msg.id || img.id?.startsWith(`${msg.id}_`)) return true;
+    if (img.url && img.url.split('?')[0] === cleanUrl) return true;
+    if (cleanRemote && img.rawUrl && img.rawUrl.split('?')[0] === cleanRemote) return true;
+    return false;
+  });
+
   if (idx !== -1) {
     standaloneViewerImages.value = [];
     activeViewerIndex.value = idx;
   } else {
     const isGif = msg.contentType === 'gif';
     standaloneViewerImages.value = [{
+      id: msg.id,
       url,
+      serverUrl,
       caption: getImageCaption(msg) || '',
       sender: msg.senderName || (msg.senderType === 'self' ? 'Bạn' : getContactDisplayName(props.conversation)),
       date: msg.sentAt ? new Date(msg.sentAt).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
       title: getImageCaption(msg) || 'Xem ảnh',
       name: `image_${msg.id}.${isGif ? 'gif' : 'jpg'}`,
-      rawUrl: url,
+      rawUrl: originalRemote || url,
     }];
     activeViewerIndex.value = 0;
   }
@@ -3340,15 +3590,18 @@ function formatMessageTime(d: string) { return new Date(d).toLocaleTimeString('v
 async function downloadFile(url: string, filename: string) {
   if (!url) return;
   let targetName = (filename || '').trim();
-  if (!targetName || !targetName.includes('.')) {
-    targetName = targetName ? `${targetName}.pdf` : 'Tài liệu.pdf';
-  }
-  syncSnack.value = { show: true, text: `Đang tải xuống ${targetName}...`, color: 'info' };
+  syncSnack.value = { show: true, text: `Đang tải xuống ${targetName || 'tập tin'}...`, color: 'info' };
   try {
-    const res = await api.get('/files/download', {
-      params: { url, filename: targetName },
-      responseType: 'blob',
-    });
+    let res;
+    if (url.startsWith('/api/v1/media/')) {
+      res = await api.get(url, { responseType: 'blob', timeout: 0 });
+    } else {
+      res = await api.get('/files/download', {
+        params: { url, filename: targetName },
+        responseType: 'blob',
+        timeout: 0,
+      });
+    }
 
     let finalDownloadName = targetName;
     const disposition = res.headers?.['content-disposition'];
@@ -3368,68 +3621,53 @@ async function downloadFile(url: string, filename: string) {
     const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: mimeType }));
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = finalDownloadName;
+    a.download = finalDownloadName || 'file';
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(blobUrl);
     document.body.removeChild(a);
-    syncSnack.value = { show: true, text: `Tải xuống ${finalDownloadName} thành công`, color: 'success' };
+
+    const displayName = (finalDownloadName || targetName || '').trim();
+    const downloadLabel = displayName
+      ? (displayName.toLowerCase().startsWith('tập tin') ? `Tải xuống ${displayName}` : `Tải xuống Tập tin ${displayName}`)
+      : 'Tải xuống tập tin';
+
+    syncSnack.value = {
+      show: true,
+      text: downloadLabel,
+      color: 'success',
+    };
   } catch (err: any) {
     console.error('Download error:', err);
-    syncSnack.value = { show: true, text: `Tải xuống ${targetName} thất bại`, color: 'error' };
+    const errText = err?.response?.data?.error || err?.message || 'Lỗi kết nối tải file';
+    syncSnack.value = { show: true, text: `Tải xuống ${targetName || 'tập tin'} thất bại: ${errText}`, color: 'error' };
   }
 }
 
-/** Extract image URL from JSON content */
+/** Extract image URL following 3-Tier priority: Zalo CDN -> Máy chủ (VM) -> NAS */
 function getImageUrl(msg: Message): string | null {
+  if (!msg || !msg.id) return null;
   if (isVideoMessage(msg) || isContactCardMessage(msg)) return null;
-  if (isLinkPreviewMessage(msg)) return null;
+  if (isLinkMessage(msg) || isLinkPreviewMessage(msg)) return null;
+  if (msg.contentType === 'file' || msg.contentType === 'document' || msg.contentType === 'link') return null;
 
-  // 1. Check attachments array
-  const atts = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
-  const mediaAttIndex = atts.findIndex((a: any) =>
-    a && typeof a === 'object' && (a.localKey || a.url || a.href || a.type === 'image' || isImageUrlPath(a.url || a.href))
-  );
-  const mediaAtt = mediaAttIndex !== -1 ? atts[mediaAttIndex] : null;
-
-  // If localKey exists on attachment, serve locally!
-  if (mediaAtt?.localKey && msg.id) {
-    const token = localStorage.getItem('token') || '';
-    return `/api/v1/media/messages/${msg.id}/attachment/${mediaAttIndex}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  // Đã giải quyết URL trước đó (hoặc đã chuyển tầng khi fallback)
+  if (imageDisplayUrls.value[msg.id]) {
+    return imageDisplayUrls.value[msg.id];
   }
 
-  // If remote URL exists on attachment, return remote URL directly!
-  if (mediaAtt?.url) return mediaAtt.url;
-  if (mediaAtt?.href) return mediaAtt.href;
-
-  // 2. Check fileInfo
-  if ((msg as any).fileInfo?.url) {
-    const u = (msg as any).fileInfo.url;
-    if (msg.contentType === 'image' || (msg as any).fileInfo?.type === 'image' || isImageUrlPath(u)) {
-      return u;
-    }
+  // ── LỚP 1: LINK ZALO CDN (Tải trực tiếp từ Zalo CDN siêu tốc) ──
+  const zaloUrl = getZaloCdnImageUrl(msg);
+  if (zaloUrl) {
+    return zaloUrl;
   }
 
-  // 3. Check mediaUrl
-  if ((msg as any).mediaUrl) {
-    const u = (msg as any).mediaUrl as string;
-    if (msg.contentType === 'image' || isImageUrlPath(u)) {
-      return u;
-    }
+  // ── LỚP 2: LINK MÁY CHỦ (VM) & LỚP 3: LINK NAS (Lưu trữ lâu dài) ──
+  const serverUrl = getServerImageUrl(msg);
+  if (serverUrl) {
+    return serverUrl;
   }
 
-  if (msg.contentType === 'image' && msg.content) {
-    if (msg.content.startsWith('http') || msg.content.startsWith('/uploads/')) return msg.content;
-    try { const p = JSON.parse(msg.content); return p.href || p.thumb || p.hdUrl || null; } catch {}
-  }
-  if (msg.content?.startsWith('{')) {
-    try {
-      const p = JSON.parse(msg.content);
-      const href = p.href || p.thumb || '';
-      if (href && /\.(jpg|jpeg|png|webp|gif)/i.test(href)) return href;
-      if (href && href.includes('zdn.vn') && !p.params?.includes('fileExt')) return href;
-    } catch {}
-  }
   return null;
 }
 
@@ -3439,10 +3677,17 @@ function getImageCaption(msg: Message): string | null {
   if (!msg.content?.startsWith('{')) return null;
   try {
     const p = JSON.parse(msg.content);
+    const genericWords = new Set(['hình ảnh', 'ảnh', 'image', 'photo', 'picture', 'photo message']);
     // Zalo usually puts the caption in description
-    if (p.description) return p.description;
-    // Fallback to title if it doesn't look like a raw filename
-    if (p.title && !/\.(jpg|jpeg|png|webp|gif)$/i.test(p.title)) return p.title;
+    if (p.description && typeof p.description === 'string' && p.description.trim()) {
+      const descTrim = p.description.trim();
+      if (!genericWords.has(descTrim.toLowerCase())) return descTrim;
+    }
+    // Fallback to title if it doesn't look like a raw filename and not a generic placeholder
+    if (p.title && typeof p.title === 'string' && !/\.(jpg|jpeg|png|webp|gif)$/i.test(p.title)) {
+      const titleTrim = p.title.trim();
+      if (!genericWords.has(titleTrim.toLowerCase())) return titleTrim;
+    }
   } catch {}
   return null;
 }
@@ -3501,8 +3746,36 @@ function isVideoMessage(msg: Message): boolean {
   return false;
 }
 
-/** Extract file info from JSON content (PDF, docs, etc.) */
-function getFileInfo(msg: Message): { name: string; size: string; href: string } | null {
+export interface ChatFileInfo {
+  name: string;
+  size: string;
+  href: string;
+  ext: string;
+  tier?: 'vm' | 'nas' | 'zalo';
+  rawBytes?: number;
+}
+
+const fileMetaCache = ref<Record<string, { fileName?: string; sizeBytes?: number; tier?: 'vm' | 'nas' | 'zalo'; mimeType?: string }>>({});
+const pendingMetaUrls = new Set<string>();
+
+async function fetchFileMetadata(url: string) {
+  if (!url || pendingMetaUrls.has(url) || fileMetaCache.value[url]) return;
+  pendingMetaUrls.add(url);
+  try {
+    const res = await api.get('/files/resolve-info', { params: { url } });
+    if (res.data) {
+      fileMetaCache.value[url] = {
+        fileName: res.data.fileName,
+        sizeBytes: res.data.sizeBytes,
+        tier: res.data.tier,
+        mimeType: res.data.mimeType,
+      };
+    }
+  } catch {}
+}
+
+/** Extract file info from message (PDF, docs, Zalo dlfl links, etc.) */
+function getFileInfo(msg: Message): ChatFileInfo | null {
   if (isVideoMessage(msg)) return null;
   if (getImageUrl(msg)) return null;
   if (isCallMessage(msg)) return null;
@@ -3515,8 +3788,15 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
   let href = '';
   let bytes = 0;
   let ext = '';
+  let rawUrl = '';
+  let storageTier: 'vm' | 'nas' | 'zalo' | undefined = undefined;
 
-  // 1. Try parsing JSON content first (contains rich info: title, params.fileSize, params.fileExt)
+  // 1. Direct plain link (e.g. https://fg41.dlfl.vn/...)
+  if (typeof msg.content === 'string' && msg.content.trim().startsWith('http') && isZaloFileUrl(msg.content)) {
+    rawUrl = msg.content.trim();
+  }
+
+  // 2. Try parsing JSON content first (contains rich info: title, params.fileSize, params.fileExt)
   if (msg.content?.startsWith('{')) {
     try {
       const p = JSON.parse(msg.content);
@@ -3529,14 +3809,21 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
         return null;
       }
       const params = typeof p.params === 'string' ? JSON.parse(p.params) : p.params;
-      title = p.title || p.name || '';
-      href = p.href || p.url || p.downloadUrl || '';
+      const candidateTitle = p.title || p.name || p.fileName || params?.fileName || params?.title || '';
+      if (candidateTitle && candidateTitle !== 'sendBubbleMessage' && !candidateTitle.includes('":') && !candidateTitle.includes('{') && !candidateTitle.includes('}')) {
+        title = candidateTitle.trim();
+      }
+      const candidateHref = p.href || p.url || p.downloadUrl || p.hdUrl || '';
+      if (typeof candidateHref === 'string' && candidateHref.startsWith('http')) {
+        href = candidateHref;
+        if (!rawUrl && isZaloFileUrl(candidateHref)) rawUrl = candidateHref;
+      }
       ext = (params?.fileExt || (title.includes('.') ? title.split('.').pop() : '') || '').toLowerCase();
       bytes = parseInt(params?.fileSize || p.size || p.fileSize || '0') || 0;
     } catch {}
   }
 
-  // 2. Check attachments or fileInfo (safely search for item with url or localKey)
+  // 3. Check attachments or fileInfo (safely search for item with url or localKey)
   const attList = Array.isArray((msg as any).attachments) ? (msg as any).attachments : [];
   const attIndex = attList.findIndex((a: any) => a && typeof a === 'object' && (a.localKey || a.url || a.href));
   const att = attIndex !== -1 ? attList[attIndex] : ((msg as any).fileInfo || attList[0]);
@@ -3544,11 +3831,32 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
     if (att.localKey && msg.id) {
       const token = localStorage.getItem('token') || '';
       href = `/api/v1/media/messages/${msg.id}/attachment/${attIndex}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      storageTier = 'vm';
     } else {
       if (!href) href = att.url || att.href || (msg as any).mediaUrl || '';
     }
-    if (!title) title = att.title || att.fileName || att.name || '';
+    if (!rawUrl && typeof att.originalUrl === 'string' && att.originalUrl.startsWith('http')) {
+      rawUrl = att.originalUrl;
+    }
+    if (!rawUrl && typeof att.url === 'string' && att.url.startsWith('http') && isZaloFileUrl(att.url)) {
+      rawUrl = att.url;
+    }
+    if (!title) {
+      const candidateAttTitle = att.title || att.fileName || att.name || '';
+      if (candidateAttTitle && !candidateAttTitle.includes('":') && !candidateAttTitle.includes('{') && !candidateAttTitle.includes('}')) {
+        title = candidateAttTitle.trim();
+      }
+    }
     if (!bytes) bytes = parseInt(att.size || att.fileSize || att.sizeBytes || '0') || 0;
+  }
+
+  if (!href && rawUrl) {
+    if (msg.id) {
+      const token = localStorage.getItem('token') || '';
+      href = `/api/v1/media/messages/${msg.id}/attachment/0${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    } else {
+      href = rawUrl;
+    }
   }
 
   if (!href && (msg as any).mediaUrl) {
@@ -3560,55 +3868,157 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
   const isDoc =
     msg.contentType === 'file' ||
     msg.contentType === 'document' ||
-    Boolean(href && (href.includes('dlf1.vn') || href.includes('zfcloud.zdn.vn') || href.includes('dlfl.vn') || href.includes('zdn.vn')));
-
-  // If there is no download link and this is not explicitly a document type, ensure it has a valid file extension
-  if (!isDoc && !href) {
-    if (!title || !/\.(pdf|docx?|xlsx?|pptx?|zip|rar|csv|txt)$/i.test(title)) {
-      return null;
-    }
-  }
+    Boolean(href && isZaloFileUrl(href)) ||
+    Boolean(rawUrl && isZaloFileUrl(rawUrl));
 
   if (!isDoc && !href && !title) return null;
 
-  if (href || title) {
+  // Check reactive cache for resolved metadata
+  const cacheKey = rawUrl || href;
+  if (cacheKey && fileMetaCache.value[cacheKey]) {
+    const cached = fileMetaCache.value[cacheKey];
+    if (cached.fileName && !cached.fileName.includes('":') && !cached.fileName.includes('{') && (!title || title.startsWith('attachment_') || title.startsWith('Tài liệu') || title === 'Tập tin')) {
+      title = cached.fileName;
+    }
+    if (cached.sizeBytes && !bytes) {
+      bytes = cached.sizeBytes;
+    }
+    if (cached.tier) {
+      storageTier = cached.tier;
+    }
+  } else if (rawUrl) {
+    fetchFileMetadata(rawUrl);
+  }
+
+  if (href || title || rawUrl) {
     if (!ext) {
-      const hrefExt = href.split('?')[0].split('.').pop()?.toLowerCase() || '';
-      ext = (title.includes('.') ? title.split('.').pop()?.toLowerCase() : '') || (hrefExt.length <= 4 && hrefExt.length >= 2 ? hrefExt : '') || 'pdf';
+      const hrefExt = (title || rawUrl || href).split('?')[0].split('.').pop()?.toLowerCase() || '';
+      ext = (title.includes('.') ? title.split('.').pop()?.toLowerCase() : '') || (hrefExt.length <= 5 && hrefExt.length >= 2 ? hrefExt : '') || 'file';
     }
 
-    let finalName = title || (href ? href.split('/').pop()?.split('?')[0] : '') || `Tài liệu.${ext}`;
-    if (!finalName.includes('.') && ext) {
+    let finalName = title.trim();
+
+    // If title has json artifacts or is empty or pure numeric id, provide clean descriptive name
+    if (!finalName || finalName.includes('":') || finalName.includes('{') || finalName.includes('}') || finalName.includes('"') || /^\d{12,}$/.test(finalName)) {
+      if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+        finalName = 'Bảng tính Excel';
+      } else if (ext === 'docx' || ext === 'doc') {
+        finalName = 'Tài liệu Word';
+      } else if (ext === 'pdf') {
+        finalName = 'Tài liệu PDF';
+      } else if (ext === 'pptx' || ext === 'ppt') {
+        finalName = 'Bản thuyết trình';
+      } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+        finalName = 'Tệp nén';
+      } else {
+        finalName = 'Tập tin đính kèm';
+      }
+    }
+
+    if (ext && ext !== 'file' && !finalName.toLowerCase().endsWith(`.${ext}`)) {
       finalName = `${finalName}.${ext}`;
     }
 
     const sizeStr = bytes > 1048576
       ? `${(bytes / 1048576).toFixed(1)} MB`
-      : (bytes > 0 ? `${Math.round(bytes / 1024)} KB` : 'Tài liệu');
+      : (bytes > 0 ? `${Math.round(bytes / 1024)} KB` : 'Tập tin');
 
-    return { name: finalName, size: sizeStr, href };
+    return {
+      name: finalName,
+      size: sizeStr,
+      href: href || rawUrl,
+      ext: ext.toLowerCase(),
+      tier: storageTier,
+      rawBytes: bytes,
+    };
   }
   return null;
 }
 
-function getFileIcon(name: string = '') {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (['pdf'].includes(ext)) return 'lucide-file-text';
-  if (['doc', 'docx'].includes(ext)) return 'lucide-file-text';
-  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'lucide-sheet';
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'lucide-archive';
-  if (['mp3', 'wav', 'ogg', 'm4a', 'aac'].includes(ext)) return 'lucide-music';
-  if (['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(ext)) return 'lucide-video';
-  return 'lucide-file';
+function getFileBadgeText(name: string = '', ext: string = ''): string {
+  const finalExt = (ext || name.split('.').pop() || '').toLowerCase();
+  if (['xls', 'xlsx', 'csv'].includes(finalExt)) return 'XLSX';
+  if (['doc', 'docx'].includes(finalExt)) return 'DOCX';
+  if (['pdf'].includes(finalExt)) return 'PDF';
+  if (['ppt', 'pptx'].includes(finalExt)) return 'PPT';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(finalExt)) return 'ZIP';
+  if (['mp3', 'wav', 'ogg', 'm4a'].includes(finalExt)) return 'AUDIO';
+  if (['mp4', 'mov', 'webm'].includes(finalExt)) return 'VIDEO';
+  return (finalExt && finalExt !== 'file' ? finalExt.slice(0, 4).toUpperCase() : 'FILE');
 }
 
-function getFileColor(name: string = '') {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (['pdf'].includes(ext)) return 'red-darken-1';
-  if (['doc', 'docx'].includes(ext)) return 'blue-darken-1';
-  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'green-darken-1';
-  if (['zip', 'rar', '7z'].includes(ext)) return 'amber-darken-2';
-  return 'primary';
+function getFileTheme(name: string = '', ext: string = ''): { bg: string; color: string; icon: string; badgeBg: string; badgeColor: string } {
+  const finalExt = (ext || name.split('.').pop() || '').toLowerCase();
+  if (['pdf'].includes(finalExt)) {
+    return {
+      bg: '#fee2e2',
+      color: '#dc2626',
+      icon: 'lucide-file-text',
+      badgeBg: '#dc2626',
+      badgeColor: '#ffffff',
+    };
+  }
+  if (['xls', 'xlsx', 'csv'].includes(finalExt)) {
+    return {
+      bg: '#dcfce7',
+      color: '#16a34a',
+      icon: 'lucide-sheet',
+      badgeBg: '#16a34a',
+      badgeColor: '#ffffff',
+    };
+  }
+  if (['doc', 'docx'].includes(finalExt)) {
+    return {
+      bg: '#dbeafe',
+      color: '#2563eb',
+      icon: 'lucide-file-text',
+      badgeBg: '#2563eb',
+      badgeColor: '#ffffff',
+    };
+  }
+  if (['ppt', 'pptx'].includes(finalExt)) {
+    return {
+      bg: '#ffedd5',
+      color: '#ea580c',
+      icon: 'lucide-presentation',
+      badgeBg: '#ea580c',
+      badgeColor: '#ffffff',
+    };
+  }
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(finalExt)) {
+    return {
+      bg: '#fef3c7',
+      color: '#d97706',
+      icon: 'lucide-archive',
+      badgeBg: '#d97706',
+      badgeColor: '#ffffff',
+    };
+  }
+  if (['mp3', 'wav', 'ogg', 'm4a', 'aac'].includes(finalExt)) {
+    return {
+      bg: '#f3e8ff',
+      color: '#9333ea',
+      icon: 'lucide-music',
+      badgeBg: '#9333ea',
+      badgeColor: '#ffffff',
+    };
+  }
+  if (['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(finalExt)) {
+    return {
+      bg: '#cffafe',
+      color: '#0891b2',
+      icon: 'lucide-video',
+      badgeBg: '#0891b2',
+      badgeColor: '#ffffff',
+    };
+  }
+  return {
+    bg: '#f1f5f9',
+    color: '#64748b',
+    icon: 'lucide-file',
+    badgeBg: '#64748b',
+    badgeColor: '#ffffff',
+  };
 }
 
 /** Rút gọn tên file nếu quá dài và giữ lại phần mở rộng (...ext) */
@@ -4006,6 +4416,11 @@ function parseDisplayContentHtml(content: string | null): string {
     return `<span class="mention-tag" style="color: #0068ff !important; font-weight: bold; cursor: pointer;">${match}</span>`;
   });
 
+  // Auto-link plain URLs in text messages
+  escapedText = escapedText.replace(/(https?:\/\/[^\s<>"']+)/gi, (match) => {
+    return `<a href="${match}" target="_blank" rel="noopener noreferrer" class="message-inline-link" style="color: #0068ff; text-decoration: underline; word-break: break-all; overflow-wrap: anywhere;" onclick="event.stopPropagation()">${match}</a>`;
+  });
+
   return escapedText;
 }
 
@@ -4172,6 +4587,103 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   border-radius: var(--radius-inputs);
   background: var(--color-soft-stone);
 }
+.file-card-modern {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--color-soft-stone, #f8fafc);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  max-width: 380px;
+  min-width: 260px;
+  box-sizing: border-box;
+  gap: 12px;
+}
+.file-card-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.file-card-clickable:hover {
+  background: rgba(0, 104, 255, 0.06);
+  border-color: rgba(0, 104, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 104, 255, 0.08);
+  transform: translateY(-1px);
+}
+.file-icon-box {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.file-badge-ext {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.file-details-box {
+  display: flex;
+  flex-direction: column;
+}
+.file-name-text {
+  font-size: 13.5px;
+  color: #1e293b;
+  line-height: 1.35;
+}
+.file-meta-sub {
+  font-size: 11.5px;
+  color: #64748b;
+}
+.file-size-badge {
+  font-weight: 500;
+}
+.tier-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  line-height: 1.3;
+}
+.tier-vm {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+.tier-nas {
+  background: #ede9fe;
+  color: #6d28d9;
+  border: 1px solid #ddd6fe;
+}
+.tier-zalo {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+.file-download-btn {
+  background: #ffffff !important;
+  color: #0284c7 !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+  transition: all 0.2s ease !important;
+}
+.file-download-btn:hover {
+  background: #0284c7 !important;
+  color: #ffffff !important;
+  border-color: #0284c7 !important;
+  transform: scale(1.08);
+}
 .file-card {
   display: flex;
   align-items: center;
@@ -4183,14 +4695,6 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   max-width: 340px;
   min-width: 240px;
   box-sizing: border-box;
-}
-.file-card-clickable {
-  cursor: pointer;
-  user-select: none;
-}
-.file-card-clickable:hover {
-  background: rgba(0, 104, 255, 0.07);
-  border-color: rgba(0, 104, 255, 0.28);
 }
 .chat-image-container {
   max-width: 360px;
@@ -4222,6 +4726,24 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(1.5px);
   border-radius: var(--radius-cards, 10px);
+}
+.chat-image-loading-placeholder {
+  min-width: 180px;
+  min-height: 120px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-cards, 10px);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+:deep(.v-theme--dark) .chat-image-loading-placeholder {
+  background: rgba(255, 255, 255, 0.05);
+}
+.image-is-loading {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
 }
 .chat-image-error-box {
   background: rgba(0, 0, 0, 0.04);
@@ -4711,9 +5233,10 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   border-radius: 12px !important;
   display: inline-block;
   min-width: 64px;
+  max-width: 100%;
   box-sizing: border-box;
   word-break: break-word;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   transition: all 0.15s ease;
 }
 
@@ -4728,7 +5251,7 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   font-size: 14px;
   line-height: 1.45;
   word-break: break-word;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
   display: block;
 }
@@ -4740,10 +5263,28 @@ watch(() => props.messages.length, async (newLen, oldLen) => {
   word-break: break-all;
   overflow-wrap: anywhere;
   text-decoration: underline;
+  display: inline;
 }
 
 .message-link:hover {
   color: #004bb5;
+}
+
+.link-card-bubble {
+  max-width: 100%;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.link-url-text {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.inline-link-icon {
+  vertical-align: -2px;
+  display: inline-block;
 }
 
 /* ── Inbound Message Bubble (Other members / Contact) ── */

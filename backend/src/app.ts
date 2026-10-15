@@ -114,10 +114,10 @@ async function bootstrap() {
     },
   });
 
-  // Multipart file upload support (25 MB limit)
+  // Multipart file upload support (100 MB limit)
   await app.register(multipart, {
     limits: {
-      fileSize: 25 * 1024 * 1024, // 25 MB
+      fileSize: 100 * 1024 * 1024, // 100 MB
     },
   });
 

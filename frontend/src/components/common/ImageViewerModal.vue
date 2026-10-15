@@ -296,7 +296,9 @@
                   :alt="img.title || `Thumbnail ${idx + 1}`"
                   loading="lazy"
                   @error="(e: any) => {
-                    if (img.rawUrl && e.target.src !== img.rawUrl) {
+                    if (img.serverUrl && e.target.src !== img.serverUrl) {
+                      e.target.src = img.serverUrl;
+                    } else if (img.rawUrl && e.target.src !== img.rawUrl) {
                       e.target.src = img.rawUrl;
                     } else {
                       e.target.style.opacity = '0.35';
@@ -347,28 +349,70 @@ const emit = defineEmits<{
   (e: 'change', index: number): void;
 }>();
 
+const DOC_EXTENSIONS = new Set([
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+  'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'txt', 'csv',
+  'json', 'xml', 'html', 'exe', 'apk', 'dmg', 'iso', 'bin'
+]);
+
+function getFileExtension(pathOrUrl: string): string {
+  if (!pathOrUrl || typeof pathOrUrl !== 'string') return '';
+  const clean = pathOrUrl.split('?')[0].split('#')[0];
+  const parts = clean.split('.');
+  return parts.length > 1 ? parts.pop()!.toLowerCase() : '';
+}
+
 // ── Normalize images prop into uniform array ─────────────────────────────────
 const normalizedImages = computed<ViewerImageItem[]>(() => {
   if (!props.images) return [];
   const list = Array.isArray(props.images) ? props.images : [props.images];
-  return list.map((item, idx) => {
+  const items = list.map((item, idx) => {
     if (typeof item === 'string') {
       return { url: item, title: `Ảnh ${idx + 1}` };
     }
     return item;
   });
+
+  const seen = new Set<string>();
+  const deduplicated: ViewerImageItem[] = [];
+  for (const it of items) {
+    if (!it) continue;
+
+    // Discard any document/file from image viewer modal
+    const name = it.name || it.title || '';
+    const url = it.url || it.rawUrl || '';
+    const ext = getFileExtension(name) || getFileExtension(url);
+    if (ext && DOC_EXTENSIONS.has(ext)) {
+      continue;
+    }
+
+    const cleanUrl = (it.url || '').split('?')[0];
+    const cleanRaw = (it.rawUrl || '').split('?')[0];
+    const key = cleanRaw || cleanUrl || it.id;
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      deduplicated.push(it);
+    } else if (!key) {
+      deduplicated.push(it);
+    }
+  }
+
+  return deduplicated;
 });
 
 const currentIndex = ref(0);
-const failedUrls = ref<Record<string, boolean>>({});
+const fallbackStage = ref<Record<string, number>>({}); // key -> 1: Zalo CDN, 2: Máy chủ (VM) / NAS
 const currentItem = computed(() => normalizedImages.value[currentIndex.value] || null);
 const currentImageUrl = computed(() => {
   const item = currentItem.value;
   if (!item) return '';
-  if (item.url && failedUrls.value[item.url]) {
-    return item.rawUrl || item.url;
+  const itemKey = item.id || item.url || `${currentIndex.value}`;
+  const stage = fallbackStage.value[itemKey] || 1;
+  // Nếu đã ở tầng 2 hoặc link Zalo bị lỗi -> ưu tiên máy chủ VM / NAS
+  if (stage >= 2 && item.serverUrl) {
+    return item.serverUrl;
   }
-  return item.url || '';
+  return item.url || item.serverUrl || item.rawUrl || '';
 });
 
 const canGoPrev = computed(() => currentIndex.value > 0);
@@ -454,14 +498,34 @@ function onImageLoad() {
   imageError.value = false;
 }
 
-function onImageError() {
+function onImageError(e?: Event) {
   const current = currentItem.value;
-  if (current && current.rawUrl && current.url && current.rawUrl !== current.url && !failedUrls.value[current.url]) {
-    failedUrls.value[current.url] = true;
-    imageLoading.value = true;
-    imageError.value = false;
+  if (!current) {
+    imageLoading.value = false;
+    imageError.value = true;
     return;
   }
+
+  const itemKey = current.id || current.url || `${currentIndex.value}`;
+  const stage = fallbackStage.value[itemKey] || 1;
+  const fallback = current.serverUrl;
+
+  // ── 3-TIER RESILIENT FALLBACK: Link Zalo -> Máy chủ (VM) / NAS ──
+  // Nếu Lớp 1 (Zalo CDN) bị lỗi hoặc link hết hạn, tự động chuyển sang Lớp 2 (Máy chủ) & Lớp 3 (NAS)
+  if (stage === 1 && fallback && fallback !== currentImageUrl.value) {
+    fallbackStage.value[itemKey] = 2;
+    imageLoading.value = true;
+    imageError.value = false;
+    if (imageRef.value) {
+      imageRef.value.src = fallback;
+    }
+    if (e?.target) {
+      (e.target as HTMLImageElement).src = fallback;
+    }
+    return;
+  }
+
+  // Cả các tầng đều không hiển thị được -> Lúc này mới đánh dấu thất bại
   imageLoading.value = false;
   imageError.value = true;
 }
@@ -469,6 +533,11 @@ function onImageError() {
 function reloadImage() {
   imageError.value = false;
   imageLoading.value = true;
+  const current = currentItem.value;
+  if (current?.serverUrl) {
+    const itemKey = current.id || current.url || `${currentIndex.value}`;
+    fallbackStage.value[itemKey] = 2;
+  }
   if (imageRef.value) {
     const src = currentImageUrl.value;
     imageRef.value.src = '';
@@ -828,6 +897,9 @@ watch(
       document.body.style.overflow = 'hidden';
       nextTick(() => {
         overlayRef.value?.focus();
+        if (imageRef.value && currentImageUrl.value) {
+          imageRef.value.src = currentImageUrl.value;
+        }
       });
       window.addEventListener('keydown', handleKeyDown);
     } else {

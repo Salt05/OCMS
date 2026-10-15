@@ -57,27 +57,38 @@
             class="media-thumb-box cursor-pointer rounded-xl overflow-hidden position-relative elevation-1"
             @click="openLightbox(item)"
           >
-            <!-- Image Thumbnail -->
-            <v-img
-              v-if="item.isImage"
-              :src="item.thumbUrl || item.url"
-              cover
-              aspect-ratio="1"
-              class="bg-grey-lighten-4 w-100 h-100"
-              @error="handleThumbnailError(item)"
-            >
-              <template #placeholder>
-                <div class="d-flex align-center justify-center fill-height">
-                  <v-progress-circular indeterminate size="20" width="2" color="primary" />
-                </div>
-              </template>
-              <template #error>
-                <div class="d-flex flex-column align-center justify-center fill-height bg-grey-lighten-3 text-grey-darken-1 pa-2 text-center">
-                  <v-icon size="22" color="grey">lucide-image-off</v-icon>
-                  <span style="font-size: 9px;" class="mt-1 font-weight-medium">Không tải được ảnh</span>
-                </div>
-              </template>
-            </v-img>
+            <!-- Image Thumbnail (3-Tier Direct Resilient Loading) -->
+            <div v-if="item.isImage" class="w-100 h-100 position-relative d-flex align-center justify-center bg-grey-lighten-4">
+              <!-- Error state: Chỉ hiện khi CẢ 3 TẦNG ĐỀU THẤT BẠI -->
+              <div
+                v-if="mediaFailed[item.id || item.contentKey || item.url]"
+                class="d-flex flex-column align-center justify-center fill-height w-100 bg-grey-lighten-3 text-grey-darken-1 pa-2 text-center"
+              >
+                <v-icon size="22" color="grey">lucide-image-off</v-icon>
+                <span style="font-size: 9px;" class="mt-1 font-weight-medium">Không tải được ảnh</span>
+              </div>
+
+              <!-- Loading placeholder: Hiện trong lúc đang tải ảnh (kể cả khi đang fallback từ Zalo sang Máy chủ VM) -->
+              <div
+                v-if="mediaLoading[item.id || item.contentKey || item.url] !== false && !mediaFailed[item.id || item.contentKey || item.url]"
+                class="gallery-thumb-loading position-absolute w-100 h-100 d-flex flex-column align-center justify-center bg-grey-lighten-4"
+              >
+                <v-progress-circular indeterminate size="22" width="2" color="primary" />
+                <span style="font-size: 10px;" class="mt-1 font-weight-medium text-grey-darken-1">Đang tải...</span>
+              </div>
+
+              <!-- Thẻ ảnh thực tế: Chuyển tầng ngầm tự động -->
+              <img
+                v-if="!mediaFailed[item.id || item.contentKey || item.url]"
+                :src="getItemDisplayUrl(item)"
+                :alt="item.name || 'Ảnh'"
+                class="gallery-thumb-img"
+                :class="{ 'opacity-0': mediaLoading[item.id || item.contentKey || item.url] !== false }"
+                loading="lazy"
+                @load="onThumbLoad(item)"
+                @error="onThumbError(item, $event)"
+              />
+            </div>
 
             <!-- Video Thumbnail -->
             <div v-else-if="item.isVideo" class="video-thumb-placeholder d-flex align-center justify-center bg-grey-darken-4 h-100 w-100 position-relative">
@@ -558,8 +569,8 @@ const mediaItems = computed(() => {
 
     const detectedExt = paramExt || titleExt || urlExt;
 
-    // STRICT CHECK: If it's a PDF or document or fType 1, DO NOT treat as image/video!
-    const isDoc = DOC_EXTENSIONS.includes(detectedExt) || m.contentType === 'file' || m.contentType === 'document' || params?.fType === 1;
+    // STRICT CHECK: If it's a link, PDF, document, or fType 1, DO NOT treat as image/video!
+    const isDoc = DOC_EXTENSIONS.includes(detectedExt) || m.contentType === 'file' || m.contentType === 'document' || m.contentType === 'link' || params?.fType === 1;
     if (isDoc) {
       continue;
     }
@@ -647,9 +658,12 @@ const mediaItems = computed(() => {
       } else if (m.mediaUrl) {
         imgUrl = m.mediaUrl;
         imgThumb = m.mediaUrl;
-      } else if (typeof rawContent === 'string' && rawContent.startsWith('http')) {
-        imgUrl = rawContent;
-        imgThumb = rawContent;
+      } else if (typeof rawContent === 'string' && rawContent.startsWith('http') && m.contentType === 'image') {
+        const cleanRaw = rawContent.split('?')[0].toLowerCase();
+        if (IMAGE_EXTENSIONS.some((ext) => cleanRaw.endsWith(`.${ext}`)) || cleanRaw.includes('photo-') || cleanRaw.includes('zdn.vn')) {
+          imgUrl = rawContent;
+          imgThumb = rawContent;
+        }
       }
 
       // Attachments array check
@@ -657,25 +671,60 @@ const mediaItems = computed(() => {
         const atts = Array.isArray(m.attachments) ? m.attachments : parseJsonSafe(m.attachments);
         if (Array.isArray(atts) && atts.length > 0) {
           let hasValidAttachment = false;
+          const seenInThisMsg = new Set<string>();
+
           for (let attIdx = 0; attIdx < atts.length; attIdx++) {
             const att = atts[attIdx];
             if (!att || typeof att !== 'object') continue;
-            const u = att.url || att.thumbUrl || att.href;
+            // Skip non-media metadata (like cliMsgId)
+            if (att.cliMsgId && !att.url && !att.localKey) continue;
+            if (att.type === 'file' || att.type === 'document') continue;
+            if (att.mimeType && !att.mimeType.startsWith('image/') && !att.mimeType.startsWith('video/')) continue;
+
+            const u = att.originalUrl || att.url || att.thumbUrl || att.href;
             const attExt = getFileExtension(att.title || att.name || u || '');
-            if (u && !DOC_EXTENSIONS.includes(attExt)) {
+            if (DOC_EXTENSIONS.includes(attExt)) continue;
+
+            // Disqualify web links disguised as attachments
+            if (u && /^https?:\/\//i.test(u)) {
+              const cleanU = u.toLowerCase();
+              const isZaloPhoto = cleanU.includes('zdn.vn') && (cleanU.includes('/jpg/') || cleanU.includes('/png/') || cleanU.includes('/webp/') || cleanU.includes('photo-'));
+              const hasImgExt = IMAGE_EXTENSIONS.includes(attExt) || IMAGE_EXTENSIONS.some((ext) => cleanU.split('?')[0].endsWith(`.${ext}`));
+              if (!isZaloPhoto && !hasImgExt && att.type !== 'video') {
+                continue;
+              }
+            }
+
+            if (u || att.localKey) {
+              const cleanUrl = (u || '').split('?')[0].split('#')[0];
+              const cleanBase = cleanUrl.split('/').pop() || '';
+              const localKeyBase = (att.localKey || '').split('/').pop() || '';
+              const contentKey = cleanBase || localKeyBase || `${m.id}`;
+
+              // If already displayed an image from earlier tier for this photo, skip the remaining duplicate tier entries!
+              if (seenInThisMsg.has(contentKey)) {
+                continue;
+              }
+              seenInThisMsg.add(contentKey);
+
               const token = localStorage.getItem('token') || '';
-              // 3-Tier Protection URL: ALWAYS route through internal endpoint if message ID exists
-              // Tier 1: Local VM -> Tier 2: NAS Archive -> Tier 3: Zalo CDN 302 Redirect + Background Auto-Save
-              const resolvedUrl = m.id
+              // 3-Tier Layering: Lớp 1: Zalo CDN URL trước tiên; Lớp 2 & 3: Máy chủ VM & NAS khi link hết hạn
+              const serverUrl = m.id
                 ? `/api/v1/media/messages/${m.id}/attachment/${attIdx}${token ? `?token=${encodeURIComponent(token)}` : ''}`
-                : u;
+                : '';
+              const zaloUrl = (u && typeof u === 'string' && u.startsWith('http')) ? u : '';
+              const initialUrl = zaloUrl || serverUrl;
+
               list.push({
                 id: `${m.id}-att-${attIdx}`,
+                messageId: m.id,
+                contentKey,
                 isImage: att.type !== 'video',
                 isVideo: att.type === 'video',
-                url: resolvedUrl,
-                rawUrl: u,
-                thumbUrl: resolvedUrl,
+                url: initialUrl,
+                serverUrl: serverUrl,
+                rawUrl: zaloUrl || cleanUrl || u,
+                thumbUrl: initialUrl,
                 name: sanitizeFileName(att.title || att.name, att.type === 'video' ? 'Video' : 'Ảnh'),
                 date,
                 fullDate,
@@ -690,18 +739,25 @@ const mediaItems = computed(() => {
       }
 
       if (imgUrl && typeof imgUrl === 'string' && imgUrl.startsWith('http') && !imgUrl.startsWith('{')) {
+        const cleanFallback = (imgThumb || imgUrl).split('?')[0].split('#')[0];
+        const contentKey = cleanFallback.split('/').pop() || `${m.id}`;
         const token = localStorage.getItem('token') || '';
-        const fallback = imgThumb || imgUrl;
-        const resolvedUrl = m.id
+        const serverUrl = m.id
           ? `/api/v1/media/messages/${m.id}/attachment/0${token ? `?token=${encodeURIComponent(token)}` : ''}`
-          : fallback;
+          : '';
+        const zaloUrl = (imgUrl && imgUrl.startsWith('http')) ? imgUrl : (imgThumb && imgThumb.startsWith('http') ? imgThumb : '');
+        const initialUrl = zaloUrl || serverUrl || cleanFallback;
+
         list.push({
           id: m.id,
+          messageId: m.id,
+          contentKey,
           isImage: true,
           isVideo: false,
-          url: resolvedUrl,
-          rawUrl: fallback,
-          thumbUrl: resolvedUrl,
+          url: initialUrl,
+          serverUrl: serverUrl,
+          rawUrl: zaloUrl || cleanFallback,
+          thumbUrl: initialUrl,
           name: imgTitle || 'Ảnh',
           date,
           fullDate,
@@ -710,14 +766,15 @@ const mediaItems = computed(() => {
     }
   }
 
-  // Deduplicate items that have identical clean URL or rawUrl
-  const seenUrls = new Set<string>();
+  // Deduplicate items that have identical contentKey or clean URL
+  const seenKeys = new Set<string>();
   const deduplicatedList: any[] = [];
   for (const item of list) {
-    const rawClean = (item.rawUrl || item.url || '').split('?')[0];
-    const key = rawClean || item.id;
-    if (!seenUrls.has(key)) {
-      seenUrls.add(key);
+    const rawClean = (item.rawUrl || '').split('?')[0].split('#')[0];
+    const cleanBase = rawClean.split('/').pop() || '';
+    const key = item.contentKey || cleanBase || rawClean || item.id;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
       deduplicatedList.push(item);
     }
   }
@@ -943,30 +1000,72 @@ function isMediaOrCdnUrl(url: string, title?: string, rawParsed?: any, contentTy
   return false;
 }
 
+// ── 3-Tier Resilient Thumbnail Loading State (Link Zalo CDN -> Máy chủ VM & NAS) ──
+const mediaDisplayUrls = ref<Record<string, string>>({});
+const mediaLoading = ref<Record<string, boolean>>({});
+const mediaFailed = ref<Record<string, boolean>>({});
+const mediaFallbackStage = ref<Record<string, number>>({});
+
+function getItemDisplayUrl(item: any): string {
+  if (!item) return '';
+  const key = item.id || item.contentKey || item.url;
+  if (mediaDisplayUrls.value[key]) {
+    return mediaDisplayUrls.value[key];
+  }
+  return item.thumbUrl || item.url || item.serverUrl || '';
+}
+
+function onThumbLoad(item: any) {
+  const key = item?.id || item?.contentKey || item?.url;
+  if (key) {
+    mediaLoading.value[key] = false;
+    mediaFailed.value[key] = false;
+  }
+}
+
+function onThumbError(item: any, event?: Event) {
+  const key = item?.id || item?.contentKey || item?.url;
+  if (!key) return;
+
+  const stage = mediaFallbackStage.value[key] || 1;
+  const serverUrl = item?.serverUrl;
+  const currentUrl = mediaDisplayUrls.value[key] || item.thumbUrl || item.url;
+
+  // ── 3-TIER RESILIENT FALLBACK: Zalo CDN -> Máy chủ VM & NAS ──
+  // Nếu Lớp 1 (Zalo CDN) bị lỗi hoặc hết hạn, tự động chuyển ngay sang Lớp 2 (Máy chủ VM) & Lớp 3 (NAS)
+  if (stage === 1 && serverUrl && serverUrl !== currentUrl) {
+    mediaFallbackStage.value[key] = 2; // Đang lấy từ Máy chủ VM / NAS
+    mediaDisplayUrls.value[key] = serverUrl;
+    mediaLoading.value[key] = true; // Giữ nguyên trạng thái ĐANG TẢI, tuyệt đối KHÔNG chớp lỗi "Không tải được ảnh"
+    if (event?.target) {
+      (event.target as HTMLImageElement).src = serverUrl;
+    }
+    return;
+  }
+
+  // Cả các tầng đều không hiển thị được -> Lúc này mới đánh dấu thất bại
+  mediaLoading.value[key] = false;
+  mediaFailed.value[key] = true;
+}
+
 const galleryImages = computed(() => {
   return mediaItems.value
     .filter((item: any) => item.isImage)
-    .map((item: any) => ({
-      id: item.id,
-      url: item.url,
-      thumb: item.thumbUrl || item.url,
-      title: item.name || 'Ảnh',
-      date: item.fullDate || item.date,
-      name: item.name || 'anh.jpg',
-      rawUrl: item.rawUrl || item.url,
-    }));
+    .map((item: any) => {
+      const key = item.id || item.contentKey || item.url;
+      const resolvedUrl = mediaDisplayUrls.value[key] || item.url;
+      return {
+        id: item.id,
+        url: resolvedUrl,
+        serverUrl: item.serverUrl || item.url,
+        thumb: resolvedUrl,
+        title: item.name || 'Ảnh',
+        date: item.fullDate || item.date,
+        name: item.name || 'anh.jpg',
+        rawUrl: item.rawUrl || item.url,
+      };
+    });
 });
-
-function handleThumbnailError(item: any) {
-  if (item && item.rawUrl) {
-    if (item.thumbUrl !== item.rawUrl) {
-      item.thumbUrl = item.rawUrl;
-    }
-    if (item.url !== item.rawUrl) {
-      item.url = item.rawUrl;
-    }
-  }
-}
 
 function openLightbox(item: any) {
   lightboxImageError.value = false;
@@ -1012,6 +1111,7 @@ async function downloadFile(url?: string, filename?: string) {
     const res = await api.get('/files/download', {
       params: { url, filename: cleanName },
       responseType: 'blob',
+      timeout: 0,
     });
     const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
     const a = document.createElement('a');
@@ -1080,6 +1180,21 @@ async function downloadFile(url?: string, filename?: string) {
 .media-thumb-box:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12) !important;
+}
+
+.gallery-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: opacity 0.2s ease;
+}
+
+.gallery-thumb-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background-color: rgba(var(--v-theme-on-surface), 0.04);
 }
 
 .video-play-badge {

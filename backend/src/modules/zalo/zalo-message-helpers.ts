@@ -217,13 +217,24 @@ export function detectContentType(msgType: string | undefined, content: any): st
   if (isCallEvent(msgType, content)) return 'call';
   if (isBankCardContent(msgType, content)) return 'bank_card';
   if (isContactCardContent(msgType, content)) return 'contact_card';
+  if (msgType && msgType.includes('link')) return 'link';
+  if (typeof content === 'object' && content !== null && (content.action === 'recommened.link' || content.action === 'recommended.link')) {
+    return 'link';
+  }
+  // Check if content is a standalone web URL
+  if (typeof content === 'string' && /^https?:\/\/[^\s]+$/i.test(content.trim())) {
+    const clean = content.trim().split('?')[0].toLowerCase();
+    const isDirectMedia = /\.(jpe?g|png|webp|gif|svg|bmp|mp4|mov|webm|mp3|m4a|wav|pdf|docx?|xlsx?|pptx?|zip|rar|7z)(\?|$)/i.test(clean) || clean.includes('chat-photo') || clean.includes('zfcloud.zdn.vn');
+    if (!isDirectMedia) {
+      return 'link';
+    }
+  }
   if (!msgType) return 'text';
   if (msgType.includes('photo') || msgType.includes('image')) return 'image';
   if (msgType.includes('sticker')) return 'sticker';
   if (msgType.includes('video')) return 'video';
   if (msgType.includes('voice')) return 'voice';
   if (msgType.includes('gif')) return 'gif';
-  if (msgType.includes('link')) return 'link';
   if (msgType.includes('location')) return 'location';
   if (msgType.includes('file') || msgType.includes('doc')) {
     if (typeof content === 'object' && content !== null) {
@@ -266,6 +277,10 @@ export function extractAttachments(msgType: string | undefined, content: any): a
   if (typeof parsed === 'object' && parsed !== null) {
     const items = Array.isArray(parsed) ? parsed : [parsed];
     for (const item of items) {
+      // Disqualify web link items (action: recommened.link) from being saved as fake image attachments
+      if (item.action === 'recommened.link' || item.action === 'recommended.link' || msgType?.includes('link')) {
+        continue;
+      }
       const url = item.hdUrl || item.href || item.url || item.thumb || item.normalUrl;
       const thumbUrl = item.thumb || item.url || item.href || item.normalUrl;
       if (url || thumbUrl) {

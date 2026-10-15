@@ -22,6 +22,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
+import { mediaService, resolveStandardMimeType, parseContentDispositionFilename } from '../media/media-service.js';
 
 export const pendingReplies = new Map<string, string>(); // conversationId -> replyToId
 export const pendingSenders = new Map<string, { userId: string; fullName: string; timestamp: number }>(); // conversationId -> sender info
@@ -1032,6 +1033,7 @@ export async function chatRoutes(app: FastifyInstance) {
   );
 
   // ── Proxy download file with original filename ─────────────────────────
+  // ── Proxy download file with 3-Tier Architecture (Tier 1: VM -> Tier 2: NAS -> Tier 3: Zalo CDN) ──
   app.get(
     '/api/v1/files/download',
     async (
@@ -1043,75 +1045,85 @@ export async function chatRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'URL required' });
       }
 
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          return reply.status(response.status).send({ error: 'Failed to fetch file from source' });
-        }
-
-        let rawName = (filename || 'download').trim();
-
-        // Detect extension from URL or Content-Type if missing from filename
-        let contentType = response.headers.get('content-type') || 'application/octet-stream';
-        const urlWithoutQuery = url.split('?')[0].split('#')[0];
-        const extFromUrl = urlWithoutQuery.split('.').pop()?.toLowerCase();
-        
-        if (!rawName.includes('.')) {
-          if (extFromUrl && ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'mp4', 'mov', 'pdf'].includes(extFromUrl)) {
-            rawName = `${rawName}.${extFromUrl}`;
-          } else if (contentType.includes('image/jpeg') || contentType.includes('image/jpg')) {
-            rawName = `${rawName}.jpg`;
-          } else if (contentType.includes('image/png')) {
-            rawName = `${rawName}.png`;
-          } else if (contentType.includes('image/webp')) {
-            rawName = `${rawName}.webp`;
-          } else if (contentType.includes('image/gif')) {
-            rawName = `${rawName}.gif`;
-          } else if (contentType.includes('video/mp4')) {
-            rawName = `${rawName}.mp4`;
-          } else {
-            rawName = `${rawName}.jpg`;
-          }
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        // Magic bytes detection: Check if content is actually a PDF (%PDF-)
-        if (buffer.length >= 4 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
-          contentType = 'application/pdf';
-          if (!rawName.toLowerCase().endsWith('.pdf')) {
-            rawName = rawName.includes('.') ? `${rawName.substring(0, rawName.lastIndexOf('.'))}.pdf` : `${rawName}.pdf`;
-          }
-        } else {
-          // Correct octet-stream/text-plain content-type if filename indicates document/image
-          const ext = rawName.split('.').pop()?.toLowerCase();
-          if (contentType === 'application/octet-stream' || contentType === 'text/plain' || !contentType) {
-            if (ext === 'jpg' || ext === 'jpeg') contentType = 'image/jpeg';
-            else if (ext === 'png') contentType = 'image/png';
-            else if (ext === 'webp') contentType = 'image/webp';
-            else if (ext === 'gif') contentType = 'image/gif';
-            else if (ext === 'mp4') contentType = 'video/mp4';
-            else if (ext === 'pdf') contentType = 'application/pdf';
-          }
-        }
-
-        const safeFilename = encodeURIComponent(rawName).replace(/['()]/g, escape);
-        const asciiFilename = rawName.replace(/[^\x20-\x7E]/g, '_');
+      // 1. TIER 1 (VM) & TIER 2 (NAS): Check if already downloaded/archived!
+      const existing = mediaService.findMediaInTiers(url, filename);
+      if (existing && fs.existsSync(existing.fullPath)) {
+        logger.info(`[chat:download] Serving file from Tier ${existing.tier.toUpperCase()} (${existing.fullPath})`);
+        const mimeType = existing.mimeType || resolveStandardMimeType(existing.fullPath);
+        const dlName = (filename && filename.includes('.')) ? filename : existing.fileName;
+        const safeFilename = encodeURIComponent(dlName).replace(/['()]/g, escape);
+        const asciiFilename = dlName.replace(/[^\x20-\x7E]/g, '_');
 
         reply.header(
           'Content-Disposition',
           `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`,
         );
+        reply.header('Content-Type', mimeType);
+        reply.header('Content-Length', existing.sizeBytes);
+        reply.header('X-Storage-Tier', existing.tier);
 
-        reply.header('Content-Type', contentType);
-        reply.header('Content-Length', buffer.length);
+        return reply.send(fs.createReadStream(existing.fullPath));
+      }
 
-        return reply.send(buffer);
-      } catch (err) {
-        logger.error('[chat] File proxy download error:', err);
+      // 2. TIER 3 (Zalo CDN): Fetch from remote Zalo CDN, then save to VM and mirror to NAS!
+      try {
+        logger.info(`[chat:download] Tier 1 & 2 missed. Fetching from Tier 3 Zalo CDN: ${url}`);
+        const saved = await mediaService.downloadAndSave(url, filename);
+        if (saved && fs.existsSync(saved.fullPath)) {
+          const mimeType = saved.mimeType || resolveStandardMimeType(saved.fullPath);
+          const dlName = (filename && filename.includes('.')) ? filename : saved.fileName;
+          const safeFilename = encodeURIComponent(dlName).replace(/['()]/g, escape);
+          const asciiFilename = dlName.replace(/[^\x20-\x7E]/g, '_');
+
+          reply.header(
+            'Content-Disposition',
+            `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`,
+          );
+          reply.header('Content-Type', mimeType);
+          reply.header('Content-Length', saved.sizeBytes);
+          reply.header('X-Storage-Tier', 'zalo-saved');
+
+          return reply.send(fs.createReadStream(saved.fullPath));
+        }
+
+        // If downloadAndSave failed (Zalo CDN link expired or HTTP error)
+        return reply.status(410).send({
+          error: 'Tập tin đã hết hạn trên Zalo và không tìm thấy bản lưu trên Máy ảo hoặc NAS.',
+          expiredUrl: url,
+        });
+      } catch (err: any) {
+        logger.error('[chat] File 3-tier proxy download error:', err);
         return reply.status(500).send({ error: 'Download error' });
       }
+    },
+  );
+
+  // ── Resolve File 3-Tier Storage & Metadata ─────────────────────────────
+  app.get(
+    '/api/v1/files/resolve-info',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { url } = request.query as { url?: string };
+      if (!url) {
+        return reply.status(400).send({ error: 'URL required' });
+      }
+
+      // Check Tier 1 & Tier 2
+      const existing = mediaService.findMediaInTiers(url);
+      if (existing) {
+        return reply.send({
+          exists: true,
+          tier: existing.tier, // 'vm' or 'nas'
+          fileName: existing.fileName,
+          sizeBytes: existing.sizeBytes,
+          mimeType: existing.mimeType,
+        });
+      }
+
+      // If not in VM/NAS, it's currently on Zalo CDN (Tier 3)
+      return reply.send({
+        exists: false,
+        tier: 'zalo',
+      });
     },
   );
 

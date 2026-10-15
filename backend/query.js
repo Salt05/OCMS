@@ -7,18 +7,21 @@ const client = new Client({
 
 async function main() {
   await client.connect();
-  const res = await client.query(`
-    SELECT m.id, m.created_at, m.sender_type, m.content, m.conversation_id
-    FROM messages m
-    WHERE m.content ILIKE '%chó 2 tháng tuổi%'
-    ORDER BY m.created_at DESC
-    LIMIT 20;
+  const conv = await client.query(`
+    SELECT c.id, ct.zalo_name, za.display_name
+    FROM conversations c
+    LEFT JOIN contacts ct ON c.contact_id = ct.id
+    LEFT JOIN zalo_accounts za ON c.zalo_account_id = za.id
+    WHERE c.id = '354bdf91-3a13-48f4-8861-e82337e582e6';
   `);
+  console.log('Conversation:', conv.rows[0]);
 
-  console.log(`Found ${res.rows.length} messages containing the keyword`);
-  res.rows.forEach(row => {
-    console.log(`[${row.created_at.toISOString()}] ${row.sender_type}: ${row.content}`);
-  });
+  const msg = await client.query(`
+    SELECT id, content_type, attachments
+    FROM messages
+    WHERE id = 'a7af047c-a4bd-4059-93be-8986e636598f';
+  `);
+  console.log('Attachments:', JSON.stringify(msg.rows[0]?.attachments, null, 2));
 }
 
 main().catch(console.error).finally(() => client.end());
