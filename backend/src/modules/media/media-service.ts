@@ -106,7 +106,7 @@ export function extractUrlsFromContent(content: string | null): string[] {
     // Check if URL is an actual media/file asset or Zalo CDN media
     const clean = content.split('?')[0].toLowerCase();
     const hasMediaExt = /\.(jpe?g|png|webp|gif|svg|bmp|mp4|mov|webm|mp3|m4a|wav|pdf|docx?|xlsx?|pptx?|zip|rar|7z)(\?|$)/i.test(content);
-    const isZaloMediaCdn = clean.includes('zdn.vn') || clean.includes('dlfl.vn') || clean.includes('dlf1.vn') || clean.includes('zfcloud.zdn.vn') || clean.includes('dl.zdn.vn');
+    const isZaloMediaCdn = clean.includes('zdn.vn') || clean.includes('dlfl.vn') || clean.includes('dlf1.vn') || clean.includes('zfcloud.zdn.vn') || clean.includes('dl.zdn.vn') || clean.includes('dlmd.me') || clean.includes('zadn.vn');
     if (hasMediaExt || isZaloMediaCdn) {
       return [content];
     }
@@ -125,7 +125,7 @@ export function extractUrlsFromContent(content: string | null): string[] {
       if (candidate && typeof candidate === 'string' && candidate.startsWith('http')) {
         const clean = candidate.split('?')[0].toLowerCase();
         const hasMediaExt = /\.(jpe?g|png|webp|gif|svg|bmp|mp4|mov|webm|mp3|m4a|wav|pdf|docx?|xlsx?|pptx?|zip|rar|7z)(\?|$)/i.test(candidate);
-        const isZaloMediaCdn = clean.includes('zdn.vn') || clean.includes('dlfl.vn') || clean.includes('dlf1.vn') || clean.includes('zfcloud.zdn.vn') || clean.includes('dl.zdn.vn');
+        const isZaloMediaCdn = clean.includes('zdn.vn') || clean.includes('dlfl.vn') || clean.includes('dlf1.vn') || clean.includes('zfcloud.zdn.vn') || clean.includes('dl.zdn.vn') || clean.includes('dlmd.me') || clean.includes('zadn.vn');
         if (hasMediaExt || isZaloMediaCdn) {
           urls.push(candidate);
         }

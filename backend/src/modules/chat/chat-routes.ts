@@ -1034,23 +1034,119 @@ export async function chatRoutes(app: FastifyInstance) {
 
   // ── Proxy download file with original filename ─────────────────────────
   // ── Proxy download file with 3-Tier Architecture (Tier 1: VM -> Tier 2: NAS -> Tier 3: Zalo CDN) ──
-  app.get(
-    '/api/v1/files/download',
-    async (
-      request: FastifyRequest,
-      reply: FastifyReply,
-    ) => {
-      const { url, filename } = request.query as { url?: string; filename?: string };
-      if (!url) {
-        return reply.status(400).send({ error: 'URL required' });
-      }
+  // ── Proxy download file with 3-Tier Architecture (Tier 1: VM -> Tier 2: NAS -> Tier 3: Zalo CDN) ──
+  const handleDownloadFile = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    const { url, filename } = request.query as { url?: string; filename?: string };
+    if (!url) {
+      return reply.status(400).send({ error: 'URL required' });
+    }
 
-      // 1. TIER 1 (VM) & TIER 2 (NAS): Check if already downloaded/archived!
-      const existing = mediaService.findMediaInTiers(url, filename);
-      if (existing && fs.existsSync(existing.fullPath)) {
-        logger.info(`[chat:download] Serving file from Tier ${existing.tier.toUpperCase()} (${existing.fullPath})`);
-        const mimeType = existing.mimeType || resolveStandardMimeType(existing.fullPath);
-        const dlName = (filename && filename.includes('.')) ? filename : existing.fileName;
+    // A. Handle internal media attachment URLs passed to download (e.g. /api/v1/media/messages/:id/attachment/:idx)
+    const mediaMatch = url.match(/\/media\/messages\/([a-zA-Z0-9_-]+)(?:\/attachment\/(\d+))?/);
+    if (mediaMatch) {
+      try {
+        const messageId = mediaMatch[1];
+        const attachmentIndex = parseInt(mediaMatch[2] || '0', 10);
+        const message = await prisma.message.findUnique({
+          where: { id: messageId },
+          select: { id: true, content: true, attachments: true, contentType: true },
+        });
+
+        if (message) {
+          const attachments = Array.isArray(message.attachments) ? (message.attachments as any[]) : [];
+          const mediaAttachments = attachments.filter((a) => a && typeof a === 'object' && (a.localKey || a.url || a.href || a.thumbUrl || a.originalUrl));
+          const rawAtt = attachments[attachmentIndex];
+          const targetAtt =
+            rawAtt && typeof rawAtt === 'object' && (rawAtt.localKey || rawAtt.url || rawAtt.originalUrl || rawAtt.href)
+              ? rawAtt
+              : (mediaAttachments[attachmentIndex] || mediaAttachments[0] || {});
+
+          let contentUrl = '';
+          let contentTitle = '';
+          if (message.content && typeof message.content === 'string') {
+            if (message.content.startsWith('{')) {
+              try {
+                const p = JSON.parse(message.content);
+                const params = typeof p.params === 'string' ? JSON.parse(p.params) : p.params;
+                contentTitle = p.title || p.name || p.fileName || params?.fileName || params?.title || '';
+                contentUrl = p.href || p.url || p.downloadUrl || p.hdUrl || p.thumb || '';
+                if (!contentUrl && params?.hd) contentUrl = params.hd;
+              } catch {}
+            } else if (message.content.startsWith('http')) {
+              contentUrl = message.content.trim();
+            }
+          }
+
+          const preferredName = filename || targetAtt?.fileName || targetAtt?.title || contentTitle;
+          const remoteUrl = targetAtt?.originalUrl || targetAtt?.url || targetAtt?.href || contentUrl;
+
+          // Check Tier 1 & 2 by localKey
+          if (targetAtt?.localKey) {
+            const found = mediaService.findMediaInTiers(targetAtt.localKey, preferredName);
+            if (found && fs.existsSync(found.fullPath)) {
+              const mimeType = found.mimeType || resolveStandardMimeType(found.fullPath);
+              const dlName = (preferredName && preferredName.includes('.')) ? preferredName : found.fileName;
+              const safeFilename = encodeURIComponent(dlName).replace(/['()]/g, escape);
+              const asciiFilename = dlName.replace(/[^\x20-\x7E]/g, '_');
+              reply.header('Content-Disposition', `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`);
+              reply.header('Content-Type', mimeType);
+              reply.header('Content-Length', found.sizeBytes);
+              reply.header('X-Storage-Tier', found.tier);
+              return reply.send(fs.createReadStream(found.fullPath));
+            }
+          }
+
+          // Fallback to Tier 3 download from remote CDN
+          if (remoteUrl && typeof remoteUrl === 'string' && remoteUrl.startsWith('http')) {
+            const saved = await mediaService.downloadAndSave(remoteUrl, preferredName, { forceDownload: true });
+            if (saved && fs.existsSync(saved.fullPath)) {
+              const mimeType = saved.mimeType || resolveStandardMimeType(saved.fullPath);
+              const dlName = (preferredName && preferredName.includes('.')) ? preferredName : saved.fileName;
+              const safeFilename = encodeURIComponent(dlName).replace(/['()]/g, escape);
+              const asciiFilename = dlName.replace(/[^\x20-\x7E]/g, '_');
+              reply.header('Content-Disposition', `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`);
+              reply.header('Content-Type', mimeType);
+              reply.header('Content-Length', saved.sizeBytes);
+              reply.header('X-Storage-Tier', 'zalo-saved');
+              return reply.send(fs.createReadStream(saved.fullPath));
+            }
+          }
+        }
+      } catch (err: any) {
+        logger.error('[chat:download] Failed to resolve internal media attachment:', err);
+      }
+    }
+
+    // 1. TIER 1 (VM) & TIER 2 (NAS): Check if already downloaded/archived!
+    const existing = mediaService.findMediaInTiers(url, filename);
+    if (existing && fs.existsSync(existing.fullPath)) {
+      logger.info(`[chat:download] Serving file from Tier ${existing.tier.toUpperCase()} (${existing.fullPath})`);
+      const mimeType = existing.mimeType || resolveStandardMimeType(existing.fullPath);
+      const dlName = (filename && filename.includes('.')) ? filename : existing.fileName;
+      const safeFilename = encodeURIComponent(dlName).replace(/['()]/g, escape);
+      const asciiFilename = dlName.replace(/[^\x20-\x7E]/g, '_');
+
+      reply.header(
+        'Content-Disposition',
+        `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`,
+      );
+      reply.header('Content-Type', mimeType);
+      reply.header('Content-Length', existing.sizeBytes);
+      reply.header('X-Storage-Tier', existing.tier);
+
+      return reply.send(fs.createReadStream(existing.fullPath));
+    }
+
+    // 2. TIER 3 (Zalo CDN): Fetch from remote Zalo CDN, then save to VM and mirror to NAS!
+    try {
+      logger.info(`[chat:download] Tier 1 & 2 missed. Fetching from Tier 3 Zalo CDN: ${url}`);
+      const saved = await mediaService.downloadAndSave(url, filename);
+      if (saved && fs.existsSync(saved.fullPath)) {
+        const mimeType = saved.mimeType || resolveStandardMimeType(saved.fullPath);
+        const dlName = (filename && filename.includes('.')) ? filename : saved.fileName;
         const safeFilename = encodeURIComponent(dlName).replace(/['()]/g, escape);
         const asciiFilename = dlName.replace(/[^\x20-\x7E]/g, '_');
 
@@ -1059,44 +1155,26 @@ export async function chatRoutes(app: FastifyInstance) {
           `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`,
         );
         reply.header('Content-Type', mimeType);
-        reply.header('Content-Length', existing.sizeBytes);
-        reply.header('X-Storage-Tier', existing.tier);
+        reply.header('Content-Length', saved.sizeBytes);
+        reply.header('X-Storage-Tier', 'zalo-saved');
 
-        return reply.send(fs.createReadStream(existing.fullPath));
+        return reply.send(fs.createReadStream(saved.fullPath));
       }
 
-      // 2. TIER 3 (Zalo CDN): Fetch from remote Zalo CDN, then save to VM and mirror to NAS!
-      try {
-        logger.info(`[chat:download] Tier 1 & 2 missed. Fetching from Tier 3 Zalo CDN: ${url}`);
-        const saved = await mediaService.downloadAndSave(url, filename);
-        if (saved && fs.existsSync(saved.fullPath)) {
-          const mimeType = saved.mimeType || resolveStandardMimeType(saved.fullPath);
-          const dlName = (filename && filename.includes('.')) ? filename : saved.fileName;
-          const safeFilename = encodeURIComponent(dlName).replace(/['()]/g, escape);
-          const asciiFilename = dlName.replace(/[^\x20-\x7E]/g, '_');
+      // If downloadAndSave failed (Zalo CDN link expired or HTTP error)
+      return reply.status(410).send({
+        error: 'Tập tin đã hết hạn trên Zalo và không tìm thấy bản lưu trên Máy ảo hoặc NAS.',
+        expiredUrl: url,
+      });
+    } catch (err: any) {
+      logger.error('[chat] File 3-tier proxy download error:', err);
+      return reply.status(500).send({ error: 'Download error' });
+    }
+  };
 
-          reply.header(
-            'Content-Disposition',
-            `attachment; filename="${asciiFilename}"; filename*=UTF-8''${safeFilename}`,
-          );
-          reply.header('Content-Type', mimeType);
-          reply.header('Content-Length', saved.sizeBytes);
-          reply.header('X-Storage-Tier', 'zalo-saved');
-
-          return reply.send(fs.createReadStream(saved.fullPath));
-        }
-
-        // If downloadAndSave failed (Zalo CDN link expired or HTTP error)
-        return reply.status(410).send({
-          error: 'Tập tin đã hết hạn trên Zalo và không tìm thấy bản lưu trên Máy ảo hoặc NAS.',
-          expiredUrl: url,
-        });
-      } catch (err: any) {
-        logger.error('[chat] File 3-tier proxy download error:', err);
-        return reply.status(500).send({ error: 'Download error' });
-      }
-    },
-  );
+  app.get('/api/v1/files/download', handleDownloadFile);
+  app.get('/api/v1/api/v1/files/download', handleDownloadFile);
+  app.get('/files/download', handleDownloadFile);
 
   // ── Resolve File 3-Tier Storage & Metadata ─────────────────────────────
   app.get(

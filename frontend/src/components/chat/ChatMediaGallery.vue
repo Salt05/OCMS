@@ -1108,11 +1108,17 @@ async function downloadFile(url?: string, filename?: string) {
   };
 
   try {
-    const res = await api.get('/files/download', {
-      params: { url, filename: cleanName },
-      responseType: 'blob',
-      timeout: 0,
-    });
+    let res;
+    const cleanUrl = url.replace(/^\/?api\/v1\//, '/');
+    if (cleanUrl.startsWith('/media/')) {
+      res = await api.get(cleanUrl, { responseType: 'blob', timeout: 0 });
+    } else {
+      res = await api.get('/files/download', {
+        params: { url, filename: cleanName },
+        responseType: 'blob',
+        timeout: 0,
+      });
+    }
     const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
     const a = document.createElement('a');
     a.href = blobUrl;

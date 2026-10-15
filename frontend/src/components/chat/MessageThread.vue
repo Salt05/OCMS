@@ -3593,8 +3593,10 @@ async function downloadFile(url: string, filename: string) {
   syncSnack.value = { show: true, text: `Đang tải xuống ${targetName || 'tập tin'}...`, color: 'info' };
   try {
     let res;
-    if (url.startsWith('/api/v1/media/')) {
-      res = await api.get(url, { responseType: 'blob', timeout: 0 });
+    // Strip duplicate /api/v1 prefix if present so axios baseURL is not duplicated
+    const cleanUrl = url.replace(/^\/?api\/v1\//, '/');
+    if (cleanUrl.startsWith('/media/')) {
+      res = await api.get(cleanUrl, { responseType: 'blob', timeout: 0 });
     } else {
       res = await api.get('/files/download', {
         params: { url, filename: targetName },
@@ -3639,7 +3641,16 @@ async function downloadFile(url: string, filename: string) {
     };
   } catch (err: any) {
     console.error('Download error:', err);
-    const errText = err?.response?.data?.error || err?.message || 'Lỗi kết nối tải file';
+    let errText = err?.message || 'Lỗi kết nối tải file';
+    if (err?.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        if (json?.error) errText = json.error;
+      } catch {}
+    } else if (err?.response?.data?.error) {
+      errText = err.response.data.error;
+    }
     syncSnack.value = { show: true, text: `Tải xuống ${targetName || 'tập tin'} thất bại: ${errText}`, color: 'error' };
   }
 }
