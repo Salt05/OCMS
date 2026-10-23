@@ -3584,7 +3584,14 @@ async function handleSend() {
     }
   }
 }
-function sendSticker(sticker: any) { emit('send', JSON.stringify(sticker), 'sticker'); }
+function sendSticker(sticker: any) {
+  const payload = JSON.stringify(sticker);
+  if (props.sendFn) {
+    props.sendFn(payload, 'sticker');
+  } else {
+    emit('send', payload, 'sticker');
+  }
+}
 function formatMessageTime(d: string) { return new Date(d).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); }
 
 async function downloadFile(url: string, filename: string) {

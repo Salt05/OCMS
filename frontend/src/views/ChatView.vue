@@ -52,7 +52,7 @@
         :send-friend-request-fn="sendFriendRequest"
         :accept-friend-request-fn="acceptFriendRequest"
         :undo-friend-request-fn="undoFriendRequest"
-        @send="selectedConvId === 'bulk_session' ? handleBulkSendMessage($event) : sendMessage($event)"
+        @send="(content, contentType, isNote, replyToId) => (selectedConvId === 'bulk_session' ? handleBulkSendMessage(content, contentType) : sendMessage(content, contentType, isNote, replyToId))"
         @send-attachment="selectedConvId === 'bulk_session' ? handleBulkSendAttachment($event) : sendAttachment($event)"
         @send-bulk="handleTriggerSendBulk"
         @send-bulk-batch="handleTriggerSendBulkBatch"

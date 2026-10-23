@@ -843,7 +843,7 @@ export async function chatRoutes(app: FastifyInstance) {
         if (contentType === 'sticker') {
           let stickerPayload: any = null;
           try {
-            const parsed = JSON.parse(content);
+            const parsed = typeof content === 'string' ? JSON.parse(content) : content;
             stickerPayload = {
               id: Number(parsed.id || parsed.stickerId || parsed.sticker_id),
               cateId: Number(parsed.cateId || parsed.cate_id || 0),
@@ -856,6 +856,21 @@ export async function chatRoutes(app: FastifyInstance) {
               type: 1,
             };
           }
+
+          // If cateId or type missing/invalid, fetch detail via getStickersDetail
+          if ((!stickerPayload.cateId || !stickerPayload.type) && instance?.api?.getStickersDetail) {
+            try {
+              const details = await instance.api.getStickersDetail([stickerPayload.id]);
+              if (details && details[0]) {
+                if (!stickerPayload.cateId && details[0].cateId) stickerPayload.cateId = Number(details[0].cateId);
+                if (!stickerPayload.type && details[0].type) stickerPayload.type = Number(details[0].type);
+              }
+            } catch (err) {
+              logger.warn(`[chat] Failed to fetch missing sticker details for ${stickerPayload.id}:`, err);
+            }
+          }
+
+          logger.info(`[chat] Sending sticker to thread ${threadId} (type ${threadType}):`, stickerPayload);
           await instance.api.sendSticker(stickerPayload, threadId, threadType);
         } else if (contentType === 'image' || contentType === 'file') {
           const fileOrImgUrl = content.trim();
