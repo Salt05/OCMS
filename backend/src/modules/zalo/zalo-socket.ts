@@ -87,14 +87,11 @@ export function emitScopedChatMessage(
     assignedUserId: data.assignedUserId,
   };
 
-  // 1. Emit to Admins of this Organization
-  io.to(`admin:${data.orgId}`).emit('chat:message', payload);
-
-  // 2. Emit to the assigned staff member (if assigned)
+  // Chain targets together into one emit so Socket.IO automatically deduplicates recipients
+  let emitter = io.to(`admin:${data.orgId}`);
   if (data.assignedUserId) {
-    io.to(`user:${data.assignedUserId}`).emit('chat:message', payload);
+    emitter = emitter.to(`user:${data.assignedUserId}`);
   }
-
-  // 3. Emit to clients currently viewing this conversation room
-  io.to(`conversation:${data.conversationId}`).emit('chat:message', payload);
+  emitter = emitter.to(`conversation:${data.conversationId}`);
+  emitter.emit('chat:message', payload);
 }

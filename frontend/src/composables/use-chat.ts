@@ -98,6 +98,118 @@ function extractStickerId(raw: any): string {
   }
 }
 
+/** Helper to extract URL from message content or JSON object for reliable comparison */
+function extractLinkOrUrl(raw?: string | null): string | null {
+  if (!raw) return null;
+  const str = raw.trim();
+  if (!str) return null;
+  if (/^https?:\/\/[^\s]+$/i.test(str)) {
+    return str;
+  }
+  if (str.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(str);
+      const url = parsed.href || parsed.url || parsed.link;
+      if (typeof url === 'string' && /^https?:\/\//i.test(url.trim())) {
+        return url.trim();
+      }
+      if (typeof parsed.title === 'string' && /^https?:\/\//i.test(parsed.title.trim())) {
+        return parsed.title.trim();
+      }
+    } catch {}
+  }
+  const match = str.match(/https?:\/\/[^\s<>"']+/i);
+  return match ? match[0] : null;
+}
+
+/** Check if an unconfirmed optimistic message matches an incoming confirmed message */
+function isOptimisticMatch(m: Message, incoming: Message): boolean {
+  if (m.id === incoming.id) return true;
+  if (m.zaloMsgId && incoming.zaloMsgId && m.zaloMsgId === incoming.zaloMsgId) return true;
+
+  // An unconfirmed optimistic message has tempId, or opt- id, or null zaloMsgId
+  const isOptimistic = (!!m.tempId || m.id.startsWith('opt-') || (!m.isNote && !m.zaloMsgId)) && m.senderType === 'self';
+  if (!isOptimistic || incoming.senderType !== 'self') return false;
+
+  // Internal notes must strictly match notes
+  if (Boolean(m.isNote) !== Boolean(incoming.isNote)) return false;
+
+  const isTextOrLinkM = !m.contentType || m.contentType === 'text' || m.contentType === 'link';
+  const isTextOrLinkInc = !incoming.contentType || incoming.contentType === 'text' || incoming.contentType === 'link';
+
+  // 1. Text / Link / Note match:
+  if (isTextOrLinkM && isTextOrLinkInc) {
+    if (m.content?.trim() === incoming.content?.trim()) {
+      return true;
+    }
+    const urlM = extractLinkOrUrl(m.content);
+    const urlInc = extractLinkOrUrl(incoming.content);
+    const normalizeUrl = (u: string) => u.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (urlM && urlInc && (urlM === urlInc || normalizeUrl(urlM) === normalizeUrl(urlInc))) {
+      return true;
+    }
+    if (urlM && (incoming.content?.includes(urlM) || (normalizeUrl(urlM) && incoming.content?.includes(normalizeUrl(urlM))))) {
+      return true;
+    }
+    if (urlInc && (m.content?.includes(urlInc) || (normalizeUrl(urlInc) && m.content?.includes(normalizeUrl(urlInc))))) {
+      return true;
+    }
+  }
+
+  // 2. Sticker match:
+  if (m.contentType === 'sticker' && incoming.contentType === 'sticker') {
+    const id1 = extractStickerId(m.content);
+    const id2 = extractStickerId(incoming.content);
+    if (id1 && id2 && id1 === id2) {
+      return true;
+    }
+    return Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000;
+  }
+
+  // 3. Attachment / Image / File match:
+  if (
+    (m.contentType === 'image' || m.contentType === 'file') &&
+    (incoming.contentType === 'image' || incoming.contentType === 'file') &&
+    Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000
+  ) {
+    return true;
+  }
+
+  // 4. General fallback: same content type (or both text/link) within 60s
+  if (
+    (m.contentType === incoming.contentType || (isTextOrLinkM && isTextOrLinkInc)) &&
+    Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/** Reconcile an incoming server message with an existing list (replacing matching optimistic msg or appending) */
+function reconcileIncomingMessage(currentList: Message[], incoming: Message): Message[] {
+  const optIndex = currentList.findIndex(m => isOptimisticMatch(m, incoming));
+  if (optIndex !== -1) {
+    const updated = [...currentList];
+    updated[optIndex] = {
+      ...incoming,
+      status: 'sent',
+      tempId: undefined, // Cleared so it won't match future incoming messages
+    };
+    return updated;
+  }
+
+  // Extra deduplication: Only drop if exact same message ID or zaloMsgId already exists
+  const isDuplicate = currentList.some(m =>
+    m.id === incoming.id ||
+    (m.zaloMsgId && incoming.zaloMsgId && m.zaloMsgId === incoming.zaloMsgId)
+  );
+  if (!isDuplicate) {
+    return sortMessagesChronologically([...currentList, { ...incoming, status: 'sent' }]);
+  }
+  return currentList;
+}
+
 function sortConversations(list: Conversation[]): Conversation[] {
   return list.sort((a, b) => {
     if (a.isPinned && !b.isPinned) return -1;
@@ -262,19 +374,7 @@ export function useChat() {
       let merged = fetched;
       if (optimistic.length > 0) {
         const nonDuplicated = optimistic.filter(opt => {
-          return !fetched.some(f => {
-            if (f.id === opt.id) return true;
-            if (f.senderType === 'self' && Math.abs(new Date(f.sentAt).getTime() - new Date(opt.sentAt).getTime()) < 60000) {
-              if (f.content === opt.content) return true;
-              if (f.contentType === 'sticker' && opt.contentType === 'sticker') {
-                const s1 = extractStickerId(f.content);
-                const s2 = extractStickerId(opt.content);
-                if (s1 && s2 && s1 === s2) return true;
-              }
-              if ((f.contentType === 'image' || f.contentType === 'file') && (opt.contentType === 'image' || opt.contentType === 'file')) return true;
-            }
-            return false;
-          });
+          return !fetched.some(f => isOptimisticMatch(opt, f));
         });
         merged = sortMessagesChronologically([...fetched, ...nonDuplicated]);
       }
@@ -345,6 +445,15 @@ export function useChat() {
   async function sendMessage(content: string, contentType: string = 'text', isNote?: boolean, replyToId?: string, existingTempId?: string) {
     if (!selectedConvId.value || !content.trim()) return;
 
+    let effectiveContentType = contentType;
+    if (contentType === 'text' && !isNote && /^https?:\/\/[^\s]+$/i.test(content.trim())) {
+      const clean = content.trim().split('?')[0].toLowerCase();
+      const isDirectMedia = /\.(jpe?g|png|webp|gif|svg|bmp|mp4|mov|webm|mp3|m4a|wav|pdf|docx?|xlsx?|pptx?|zip|rar|7z)(\?|$)/i.test(clean) || clean.includes('chat-photo') || clean.includes('zfcloud.zdn.vn');
+      if (!isDirectMedia) {
+        effectiveContentType = 'link';
+      }
+    }
+
     const convId = selectedConvId.value;
     const authStore = useAuthStore();
     const currentUserName = authStore.user?.fullName || authStore.user?.email || 'Tôi';
@@ -369,7 +478,7 @@ export function useChat() {
       id: tempId,
       tempId,
       content: content.trim(),
-      contentType,
+      contentType: effectiveContentType,
       senderType: 'self',
       senderName: currentUserName,
       senderUid: authStore.user?.id || null,
@@ -397,7 +506,7 @@ export function useChat() {
         `/conversations/${convId}/messages`,
         {
           content: content.trim(),
-          contentType,
+          contentType: effectiveContentType,
           isNote,
           replyToId,
         },
@@ -563,86 +672,13 @@ export function useChat() {
 
       // Add to messages if viewing this conversation
       if (data.conversationId === selectedConvId.value) {
-        const incoming = data.message;
-        // Look for matching optimistic message waiting for confirmation
-        const optIndex = messages.value.findIndex(m => {
-          if (m.id === incoming.id) return true;
-          if (m.zaloMsgId && incoming.zaloMsgId && m.zaloMsgId === incoming.zaloMsgId) return true;
-
-          // An unconfirmed optimistic message has tempId, or opt- id, or null zaloMsgId
-          const isOptimistic = (!!m.tempId || m.id.startsWith('opt-') || (!m.isNote && !m.zaloMsgId)) && m.senderType === 'self';
-          if (!isOptimistic || incoming.senderType !== 'self') return false;
-
-          // 1. Text / Note match:
-          if (
-            (m.contentType === 'text' || !m.contentType) &&
-            (incoming.contentType === 'text' || !incoming.contentType) &&
-            m.content?.trim() === incoming.content?.trim() &&
-            Boolean(m.isNote) === Boolean(incoming.isNote)
-          ) {
-            return true;
-          }
-
-          // 2. Sticker match:
-          if (m.contentType === 'sticker' && incoming.contentType === 'sticker') {
-            const id1 = extractStickerId(m.content);
-            const id2 = extractStickerId(incoming.content);
-            if (id1 && id2 && id1 === id2) {
-              return true;
-            }
-            return Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000;
-          }
-
-          // 3. Attachment / Image / File match:
-          if (
-            (m.contentType === 'image' || m.contentType === 'file') &&
-            (incoming.contentType === 'image' || incoming.contentType === 'file') &&
-            Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000
-          ) {
-            return true;
-          }
-
-          // 4. General fallback: same content type within 60s
-          if (
-            m.contentType === incoming.contentType &&
-            Math.abs(new Date(incoming.sentAt).getTime() - new Date(m.sentAt).getTime()) < 60000
-          ) {
-            return true;
-          }
-
-          return false;
-        });
-
-        if (optIndex !== -1) {
-          messages.value[optIndex] = {
-            ...incoming,
-            status: 'sent',
-            tempId: undefined, // Cleared so it won't match future incoming messages
-          };
-          messages.value = [...messages.value];
-        } else {
-          // Extra deduplication: Only drop if exact same message ID or zaloMsgId already exists
-          const isDuplicate = messages.value.some(m =>
-            m.id === incoming.id ||
-            (m.zaloMsgId && incoming.zaloMsgId && m.zaloMsgId === incoming.zaloMsgId)
-          );
-          if (!isDuplicate) {
-            messages.value = sortMessagesChronologically([...messages.value, { ...incoming, status: 'sent' }]);
-          }
-        }
-
+        messages.value = reconcileIncomingMessage(messages.value, data.message);
         messagesCache.set(data.conversationId, messages.value);
       } else {
         // Update cache if conversation is in cache
         const cached = messagesCache.get(data.conversationId);
         if (cached) {
-          const isDuplicate = cached.some(m =>
-            m.id === data.message.id ||
-            (m.zaloMsgId && data.message.zaloMsgId && m.zaloMsgId === data.message.zaloMsgId)
-          );
-          if (!isDuplicate) {
-            messagesCache.set(data.conversationId, sortMessagesChronologically([...cached, data.message]));
-          }
+          messagesCache.set(data.conversationId, reconcileIncomingMessage(cached, data.message));
         }
       }
 
