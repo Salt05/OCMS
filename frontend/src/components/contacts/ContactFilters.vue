@@ -51,7 +51,7 @@
       <div v-if="showFilters" class="mt-2.5 pa-3 bg-surface-variant rounded-lg border">
         <v-row dense class="align-center">
           <!-- Status filter -->
-          <v-col cols="12" sm="6" md="3">
+          <v-col cols="12" sm="6" :md="isAdmin ? 4 : 3" :lg="isAdmin ? 2 : 3">
             <v-select
               v-model="filters.status"
               :items="statusOptions"
@@ -67,7 +67,7 @@
           </v-col>
 
           <!-- Type filter -->
-          <v-col cols="12" sm="6" md="3">
+          <v-col cols="12" sm="6" :md="isAdmin ? 4 : 3" :lg="isAdmin ? 2 : 3">
             <v-select
               v-model="filters.contactType"
               :items="typeOptions"
@@ -83,7 +83,7 @@
           </v-col>
 
           <!-- Tags filter -->
-          <v-col cols="12" sm="6" md="3">
+          <v-col cols="12" sm="6" :md="isAdmin ? 4 : 3" :lg="isAdmin ? 3 : 3">
             <v-autocomplete
               v-model="filters.tags"
               :items="tagItems"
@@ -119,8 +119,8 @@
             </v-autocomplete>
           </v-col>
 
-          <!-- Zalo Account filter (Thay thế Sale phụ trách) -->
-          <v-col cols="12" sm="6" md="3">
+          <!-- Zalo Account filter -->
+          <v-col cols="12" sm="6" :md="isAdmin ? 6 : 3" :lg="isAdmin ? 2 : 3">
             <v-select
               v-model="filters.zaloAccountId"
               :items="accountOptions"
@@ -134,6 +134,39 @@
               @update:model-value="emit('search')"
             />
           </v-col>
+
+          <!-- Sale filter (Admin only) -->
+          <v-col v-if="isAdmin" cols="12" sm="6" md="6" lg="3">
+            <v-autocomplete
+              v-model="filters.assignedUserId"
+              :items="userItems"
+              item-title="fullName"
+              item-value="id"
+              label="Nhân viên sale"
+              density="compact"
+              variant="outlined"
+              clearable
+              hide-details
+              autocomplete="off"
+              @update:model-value="emit('search')"
+            >
+              <template #item="{ props, item }">
+                <v-list-item v-bind="props">
+                  <template #title>
+                    {{ ((item as any).raw || item as any).fullName }}
+                  </template>
+                  <template #subtitle v-if="((item as any).raw || item as any).id !== 'unassigned'">
+                    <span v-if="((item as any).raw || item as any).odooName">
+                      Odoo: {{ ((item as any).raw || item as any).odooName }}
+                    </span>
+                    <span v-else-if="((item as any).raw || item as any).email">
+                      {{ ((item as any).raw || item as any).email }}
+                    </span>
+                  </template>
+                </v-list-item>
+              </template>
+            </v-autocomplete>
+          </v-col>
         </v-row>
       </div>
     </v-expand-transition>
@@ -141,14 +174,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import type { ContactFilters } from '@/composables/use-contacts';
 import { STATUS_OPTIONS, CONTACT_TYPE_OPTIONS } from '@/composables/use-contacts';
 import { useTags } from '@/composables/use-tags';
 import { useZaloAccounts } from '@/composables/use-zalo-accounts';
+import { useAuthStore } from '@/stores/auth';
+import { useUsers } from '@/composables/use-users';
 
 const props = defineProps<{ filters: ContactFilters }>();
 const emit = defineEmits<{ search: [] }>();
+
+const authStore = useAuthStore();
+const isAdmin = computed(() => authStore.isAdmin);
 
 const showFilters = ref(false);
 
@@ -177,11 +215,25 @@ const accountOptions = computed(() => {
   }));
 });
 
+const { users, fetchUsers } = useUsers();
+const userItems = computed(() => {
+  return [
+    { id: 'unassigned', fullName: 'Chưa phân công', email: '', odooName: '' },
+    ...users.value.map((u) => ({
+      id: u.id,
+      fullName: u.fullName || u.email,
+      email: u.email,
+      odooName: u.odooName || '',
+    })),
+  ];
+});
+
 const activeFilterCount = computed(() => {
   let count = 0;
   if (props.filters.status) count++;
   if (props.filters.contactType) count++;
   if (props.filters.zaloAccountId) count++;
+  if (props.filters.assignedUserId) count++;
   if (props.filters.tags && props.filters.tags.length > 0) count++;
   return count;
 });
@@ -198,6 +250,7 @@ function resetFilters() {
   props.filters.status = '';
   props.filters.contactType = '';
   props.filters.zaloAccountId = '';
+  props.filters.assignedUserId = '';
   props.filters.tags = [];
   emit('search');
 }
@@ -205,6 +258,18 @@ function resetFilters() {
 onMounted(() => {
   fetchTags();
   fetchAccounts();
+  if (isAdmin.value) {
+    fetchUsers();
+  }
+  if (props.filters.assignedUserId) {
+    showFilters.value = true;
+  }
+});
+
+watch(isAdmin, (admin) => {
+  if (admin && users.value.length === 0) {
+    fetchUsers();
+  }
 });
 </script>
 

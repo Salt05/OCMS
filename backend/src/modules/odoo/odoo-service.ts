@@ -684,6 +684,41 @@ class OdooService {
     }
   }
 
+  /**
+   * Batch get Odoo users (res.users) by multiple IDs.
+   * Returns a Map<idString, string> mapping Odoo ID to user display name.
+   */
+  async getOdooUsersByIds(userIds: (number | string)[]): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    const numericIds = Array.from(
+      new Set(
+        userIds
+          .map(id => parseInt(String(id).trim(), 10))
+          .filter(id => !isNaN(id) && id > 0)
+      )
+    );
+
+    if (numericIds.length === 0) return map;
+
+    try {
+      const users = await this.executeKw<any[]>('res.users', 'search_read', [
+        [['id', 'in', numericIds]],
+      ], {
+        fields: ['id', 'name', 'login'],
+        limit: numericIds.length,
+      });
+
+      if (Array.isArray(users)) {
+        for (const u of users) {
+          map.set(String(u.id), u.name || u.login || '');
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[odoo] getOdooUsersByIds error: ${err.message}`);
+    }
+    return map;
+  }
+
   async checkProductInventory(odooProductId: number): Promise<{
     odooId: number;
     isInStock: boolean;

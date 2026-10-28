@@ -246,7 +246,7 @@
         <!-- Slot container -->
         <div
           :class="[
-            isChatPage ? 'zalo-chat-page-wrapper' : 'zalo-general-page-wrapper pa-3 pa-md-4 overflow-y-auto',
+            isChatPage ? 'zalo-chat-page-wrapper' : (isKanbanPage ? 'zalo-kanban-page-wrapper' : 'zalo-general-page-wrapper pa-3 pa-md-4 overflow-y-auto'),
             isMobile && isChatPage ? 'mobile-chat-wrapper' : ''
           ]"
         >
@@ -376,6 +376,14 @@
                 to="/zalo-accounts"
                 prepend-icon="lucide-cloud"
                 title="Tài khoản Zalo Cloud"
+                rounded="lg"
+                class="mb-1"
+                @click="showMobileMoreDrawer = false"
+              />
+              <v-list-item
+                to="/contacts/care-kanban"
+                prepend-icon="lucide-kanban"
+                title="Kanban Chăm sóc KH"
                 rounded="lg"
                 class="mb-1"
                 @click="showMobileMoreDrawer = false"
@@ -574,6 +582,7 @@ watch(() => route.path, () => {
 
 const isFullWidthPage = computed(() => route.path === '/chat' || route.path.startsWith('/ai-assistant') || route.path.startsWith('/chatbot-test'));
 const isChatPage = computed(() => isFullWidthPage.value);
+const isKanbanPage = computed(() => route.path === '/contacts/care-kanban' || route.name === 'CustomerCareKanban');
 
 // In Chat view on mobile: if an active chat thread is opened (query.id is present), hide top bar and bottom nav
 const isMobileActiveChatOpen = computed(() => {
@@ -626,6 +635,7 @@ const currentPageTitle = computed(() => {
     case 'Dashboard': return 'Tổng quan kinh doanh';
     case 'Chat': return 'Tin nhắn';
     case 'Contacts': return 'Quản lý khách hàng';
+    case 'CustomerCareKanban': return 'Kanban Chăm sóc Khách hàng';
     case 'ZaloAccounts': return 'Tài khoản Zalo kết nối';
     case 'Orders': return 'Quản lý đơn hàng';
     case 'Products': return 'Quản lý sản phẩm & Phân loại';
@@ -1038,6 +1048,18 @@ function logout() {
 
 .mobile-chat-wrapper {
   height: 100% !important;
+}
+
+.zalo-kanban-page-wrapper {
+  height: calc(100vh - 56px);
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: #fcf9f2;
+}
+
+.is-mobile .zalo-kanban-page-wrapper {
+  height: 100%;
 }
 
 .zalo-general-page-wrapper {

@@ -13,6 +13,7 @@ export interface OrgUser {
   isActive: boolean;
   teamId: string | null;
   odooId?: string | null;
+  odooName?: string | null;
   createdAt: string;
   team?: { id: string; name: string } | null;
 }

@@ -2,8 +2,17 @@
   <div class="contacts-page-wrapper">
     <!-- Toolbar -->
     <div class="d-flex align-center mb-3 flex-wrap gap-2 justify-space-between">
-      <div class="d-flex align-center gap-2">
-        <h1 class="editorial-heading text-h6 font-weight-bold">Khách hàng</h1>
+      <div class="d-flex align-center gap-2 flex-wrap">
+        <v-btn-toggle mandatory density="comfortable" rounded="lg" color="primary" variant="outlined" :model-value="'list'">
+          <v-btn value="list" class="text-none font-weight-bold">
+            <v-icon start size="16">lucide-list</v-icon>
+            Danh sách liên hệ
+          </v-btn>
+          <v-btn value="kanban" to="/contacts/care-kanban" class="text-none font-weight-medium">
+            <v-icon start size="16">lucide-kanban</v-icon>
+            Kanban Chăm sóc KH
+          </v-btn>
+        </v-btn-toggle>
         <v-chip size="small" variant="tonal" color="primary" class="font-weight-medium">
           {{ total.toLocaleString('vi-VN') }} liên hệ
         </v-chip>

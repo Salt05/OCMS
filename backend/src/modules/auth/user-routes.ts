@@ -9,6 +9,7 @@ import { authMiddleware } from './auth-middleware.js';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../shared/utils/logger.js';
+import { odooService } from '../odoo/odoo-service.js';
 
 export async function userRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -31,7 +32,26 @@ export async function userRoutes(app: FastifyInstance) {
       },
       orderBy: { createdAt: 'asc' },
     });
-    return { users };
+
+    const odooIds = users
+      .map(u => u.odooId)
+      .filter((id): id is string => Boolean(id && id.trim()));
+
+    let odooNameMap = new Map<string, string>();
+    if (odooIds.length > 0) {
+      try {
+        odooNameMap = await odooService.getOdooUsersByIds(odooIds);
+      } catch (err: any) {
+        logger.warn(`[user-routes] Failed to resolve Odoo user names: ${err?.message || err}`);
+      }
+    }
+
+    const usersWithOdooName = users.map(u => ({
+      ...u,
+      odooName: u.odooId ? (odooNameMap.get(String(u.odooId).trim()) || null) : null,
+    }));
+
+    return { users: usersWithOdooName };
   });
 
   // POST /api/v1/users — create user (owner/admin only)

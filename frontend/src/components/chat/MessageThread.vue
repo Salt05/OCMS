@@ -10,11 +10,11 @@
 
     <template v-else>
       <!-- Zalo Chat Header (Responsive for Desktop & Mobile) -->
-      <div class="zalo-chat-header d-flex align-center justify-space-between border-b px-2 px-md-3">
+      <div v-if="!hideHeader" class="zalo-chat-header d-flex align-center justify-space-between border-b px-2 px-md-3">
         <!-- Left: Back button (Mobile) + Avatar + Title + Subtitle -->
         <div class="d-flex align-center overflow-hidden mr-2 flex-shrink-0" style="max-width: 50%;">
           <v-btn
-            v-if="isMobile"
+            v-if="isMobile || readonly"
             icon
             variant="text"
             size="small"
@@ -80,7 +80,7 @@
         <!-- Middle: Header Tags (Visible on Desktop when tags exist and space permits) -->
         <div
           ref="tagsBarRef"
-          v-if="!isBulkMode && contactTags.length > 0 && !isMobile"
+          v-if="!isBulkMode && !readonly && contactTags.length > 0 && !isMobile"
           class="header-tags-bar d-flex align-center gap-1.5 mx-2 flex-grow-1 flex-nowrap"
           style="min-width: 0;"
           @wheel.passive="handleTagsWheel"
@@ -98,12 +98,12 @@
             #{{ getTagName(tag) }}
           </v-chip>
         </div>
-        <div v-else-if="isBulkMode" class="flex-grow-1"></div>
+        <div v-else class="flex-grow-1"></div>
 
         <!-- Right: Action Icons (Add User, Video, Search, Info Sidebar Toggle) -->
         <div class="d-flex align-center gap-1 gap-md-2 flex-shrink-0">
           <!-- Zalo Friend Status & Action Buttons (Only for 1-1 chats) -->
-          <template v-if="!isBulkMode && conversation?.threadType === 'user' && !isMobile">
+          <template v-if="!isBulkMode && !readonly && conversation?.threadType === 'user' && !isMobile">
             <!-- 1. Đã là bạn bè -->
             <v-chip
               v-if="friendState?.isFriend"
@@ -180,7 +180,7 @@
 
           <!-- AI Auto Chat Control Badge (Only visible for 'customer' contacts) -->
           <v-menu
-            v-if="!isBulkMode && conversation?.threadType === 'user' && conversation?.contact?.contactType === 'customer'"
+            v-if="!isBulkMode && !readonly && conversation?.threadType === 'user' && conversation?.contact?.contactType === 'customer'"
             location="bottom end"
             :close-on-content-click="true"
           >
@@ -246,7 +246,7 @@
           </v-menu>
 
           <button
-            v-if="!isBulkMode && conversation"
+            v-if="!isBulkMode && !readonly && conversation"
             type="button"
             class="zalo-header-btn"
             :class="{ 'is-active': conversation.isPinned }"
@@ -258,7 +258,34 @@
             </v-icon>
           </button>
 
+          <!-- Open full chat page button & Close button in readonly preview mode -->
+          <template v-if="readonly">
+            <v-btn
+              v-if="conversation"
+              variant="tonal"
+              size="small"
+              color="primary"
+              class="text-none font-weight-medium rounded-lg px-2.5 mr-1"
+              prepend-icon="lucide-external-link"
+              :to="{ path: '/chat', query: { id: conversation.id } }"
+              title="Mở toàn màn hình trang Chat để nhắn tin"
+            >
+              Mở trang Chat
+            </v-btn>
+            <v-btn
+              icon
+              variant="text"
+              size="small"
+              class="ml-1"
+              @click="$emit('back')"
+              title="Đóng xem tin nhắn"
+            >
+              <v-icon size="20">lucide-x</v-icon>
+            </v-btn>
+          </template>
+
           <button
+            v-if="!readonly"
             type="button"
             class="zalo-header-btn"
             :class="{ 'is-active': showContactPanel }"
@@ -379,7 +406,7 @@
 
             <div class="message-container position-relative" :class="isBulkMode ? 'ml-auto' : ''" style="max-width: 70%; min-width: 0;">
               <!-- Floating Reaction Bar on hover (Hidden completely in bulk mode) -->
-              <div v-if="!isBulkMode" class="message-action-bar" :class="msg.senderType === 'self' ? 'message-action-bar-self' : 'message-action-bar-contact'">
+              <div v-if="!isBulkMode && !readonly" class="message-action-bar" :class="msg.senderType === 'self' ? 'message-action-bar-self' : 'message-action-bar-contact'">
                 <div class="floating-reaction-bar elevation-2">
                   <button
                     v-for="r in quickReactions"
@@ -1169,6 +1196,7 @@
 
       <!-- Input -->
       <div
+        v-if="!readonly"
         class="chat-input-area bg-surface"
         :class="{ 'is-drag-over': isDraggingOver }"
         style="position: relative;"
@@ -1227,7 +1255,7 @@
             Ghi chú (Private)
           </v-btn>
           <v-btn
-            v-if="!isBulkMode"
+            v-if="!isBulkMode && !hideCreateOrder"
             size="small"
             :color="showOrderPanel ? 'success' : 'grey-darken-1'"
             class="font-weight-bold"
@@ -1952,6 +1980,9 @@ const props = defineProps<{
   isMobile?: boolean;
   isBulkMode?: boolean;
   bulkRecipientsCount?: number;
+  readonly?: boolean;
+  hideHeader?: boolean;
+  hideCreateOrder?: boolean;
   sendFn?: (content: string, contentType?: string, isNote?: boolean, replyToId?: string) => Promise<any>;
   sendAttachmentFn?: (file: File) => Promise<any>;
   undoFn?: (conversationId: string, messageId: string) => Promise<any>;
@@ -4572,21 +4603,43 @@ function onScroll() {
   }
 }
 
-// Scroll to bottom on initial conversation load or when sending/receiving new message at bottom
-watch(() => props.conversation?.id, async () => {
-  await nextTick();
-  if (messagesContainer.value) {
+function scrollToBottom(force = false) {
+  nextTick(() => {
+    if (!messagesContainer.value) return;
     messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
-    isNearBottom = true;
+    if (force) isNearBottom = true;
+  });
+}
+
+function scrollNewestWithRetries() {
+  scrollToBottom(true);
+  setTimeout(() => scrollToBottom(true), 50);
+  setTimeout(() => scrollToBottom(true), 150);
+  setTimeout(() => scrollToBottom(true), 350);
+  setTimeout(() => scrollToBottom(true), 600);
+}
+
+onMounted(() => {
+  scrollNewestWithRetries();
+});
+
+// Scroll to bottom on initial conversation load or when sending/receiving new message at bottom
+watch(() => props.conversation?.id, () => {
+  scrollNewestWithRetries();
+});
+
+watch(() => props.loading, (loading, prev) => {
+  if (prev && !loading) {
+    scrollNewestWithRetries();
   }
 });
 
 watch(() => props.messages.length, async (newLen, oldLen) => {
   await nextTick();
   if (!messagesContainer.value) return;
-  // If new messages appended at bottom and user was near bottom, scroll down
-  if (isNearBottom && newLen > (oldLen || 0)) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+  // In readonly preview mode or initial load, always jump to the newest message
+  if (props.readonly || oldLen === 0 || (isNearBottom && newLen > (oldLen || 0))) {
+    scrollNewestWithRetries();
   }
 });
 </script>

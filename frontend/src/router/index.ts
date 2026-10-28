@@ -33,6 +33,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/contacts/care-kanban',
+    name: 'CustomerCareKanban',
+    component: () => import('@/views/CustomerCareKanbanView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/zalo-accounts',
     name: 'ZaloAccounts',
     component: () => import('@/views/ZaloAccountsView.vue'),

@@ -584,22 +584,9 @@
                     </span>
                   </div>
 
-                  <div class="d-flex align-center gap-1 flex-shrink-0">
-                    <button
-                      type="button"
-                      class="zalo-conv-pin-btn"
-                      :class="{ 'is-pinned': conv.isPinned }"
-                      :title="conv.isPinned ? 'Bỏ ghim cuộc trò chuyện' : 'Ghim cuộc trò chuyện lên đầu'"
-                      @click.stop="togglePinConv(conv)"
-                    >
-                      <v-icon size="13" :color="conv.isPinned ? 'amber-darken-2' : 'grey'">
-                        {{ conv.isPinned ? 'lucide-pin-off' : 'lucide-pin' }}
-                      </v-icon>
-                    </button>
-                    <span class="zalo-conv-time text-caption text-grey">
-                      {{ formatTime(conv.lastMessageAt) }}
-                    </span>
-                  </div>
+                  <span class="zalo-conv-time text-caption text-grey flex-shrink-0">
+                    {{ formatTime(conv.lastMessageAt) }}
+                  </span>
                 </div>
 
                 <!-- Bottom Row: Snippet + Unread Badge -->
@@ -709,22 +696,9 @@
                 </span>
               </div>
 
-              <div class="d-flex align-center gap-1 flex-shrink-0">
-                <button
-                  type="button"
-                  class="zalo-conv-pin-btn"
-                  :class="{ 'is-pinned': conv.isPinned }"
-                  :title="conv.isPinned ? 'Bỏ ghim cuộc trò chuyện' : 'Ghim cuộc trò chuyện lên đầu'"
-                  @click.stop="togglePinConv(conv)"
-                >
-                  <v-icon size="13" :color="conv.isPinned ? 'amber-darken-2' : 'grey'">
-                    {{ conv.isPinned ? 'lucide-pin-off' : 'lucide-pin' }}
-                  </v-icon>
-                </button>
-                <span class="zalo-conv-time text-caption text-grey">
-                  {{ formatTime(conv.lastMessageAt) }}
-                </span>
-              </div>
+              <span class="zalo-conv-time text-caption text-grey flex-shrink-0">
+                {{ formatTime(conv.lastMessageAt) }}
+              </span>
             </div>
 
             <!-- Bottom Row: Snippet + Unread Badge -->

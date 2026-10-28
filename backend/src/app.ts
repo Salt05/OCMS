@@ -22,6 +22,7 @@ import { authRoutes } from './modules/auth/auth-routes.js';
 import { zaloRoutes } from './modules/zalo/zalo-routes.js';
 import { chatRoutes } from './modules/chat/chat-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
+import { careKanbanRoutes } from './modules/contacts/care-kanban-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
 import { bulkChatRoutes } from './modules/chat/bulk-chat-routes.js';
 import { appointmentRoutes } from './modules/contacts/appointment-routes.js';
@@ -181,6 +182,7 @@ async function bootstrap() {
   await app.register(chatRoutes);
   await app.register(bulkChatRoutes);
   await app.register(contactRoutes);
+  await app.register(careKanbanRoutes);
   await app.register(contactSubResourceRoutes);
   await app.register(appointmentRoutes);
   await app.register(dashboardRoutes);

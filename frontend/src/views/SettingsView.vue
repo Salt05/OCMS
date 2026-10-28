@@ -6,7 +6,7 @@
     </h1>
 
     <v-tabs v-model="tab" class="mb-4" :grow="$vuetify.display.smAndDown" show-arrows>
-      <v-tab value="users">Nhân viên</v-tab>
+      <v-tab v-if="authStore.isAdmin" value="users">Nhân viên</v-tab>
       <v-tab value="teams">Đội nhóm</v-tab>
       <v-tab value="org">Tổ chức</v-tab>
       <v-tab value="tags">Thẻ & Nhóm tag</v-tab>
@@ -19,8 +19,8 @@
     </v-tabs>
 
     <v-window v-model="tab" :touch="false">
-      <!-- Tab 1: User management -->
-      <v-window-item value="users">
+      <!-- Tab 1: User management (Admin only) -->
+      <v-window-item v-if="authStore.isAdmin" value="users">
         <div class="d-flex align-center mb-4">
           <v-btn v-if="authStore.isAdmin" color="primary" prepend-icon="lucide-plus" @click="openCreate">
             Thêm nhân viên
@@ -33,6 +33,12 @@
 
         <v-card>
           <v-data-table :headers="headers" :items="users" :loading="loading" no-data-text="Chưa có nhân viên nào">
+            <template #item.odooName="{ item }">
+              <span v-if="getOdooDisplayName(item) !== '—'" :title="item.odooId ? `Odoo ID: #${item.odooId}` : undefined">
+                {{ getOdooDisplayName(item) }}
+              </span>
+              <span v-else class="text-medium-emphasis">—</span>
+            </template>
             <template #item.role="{ item }">
               <v-chip :color="roleColor(item.role)" size="small" variant="flat">{{ roleLabel(item.role) }}</v-chip>
             </template>
@@ -224,7 +230,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { api } from '@/api';
 import { useUsers, type OrgUser } from '@/composables/use-users';
 import { useAuthStore } from '@/stores/auth';
@@ -238,7 +244,18 @@ import IntegrationsSettingsTab from '@/components/settings/IntegrationsSettingsT
 const { users, loading, error, fetchUsers, createUser, updateUser, resetPassword, toggleUserActive } = useUsers();
 const authStore = useAuthStore();
 
-const tab = ref('users');
+const tab = ref(authStore.isAdmin ? 'users' : 'teams');
+
+watch(
+  () => authStore.isAdmin,
+  (isAdmin) => {
+    if (!isAdmin && tab.value === 'users') {
+      tab.value = 'teams';
+    }
+  },
+  { immediate: true }
+);
+
 const showCreate = ref(false);
 const showEdit = ref(false);
 const showPassword = ref(false);
@@ -262,11 +279,19 @@ const roleOptions = [
 const headers = [
   { title: 'Họ tên', key: 'fullName', sortable: true },
   { title: 'Email', key: 'email' },
-  { title: 'Odoo ID', key: 'odooId' },
+  { title: 'Tên trên Odoo', key: 'odooName', sortable: true },
   { title: 'Vai trò', key: 'role', sortable: true },
   { title: 'Trạng thái', key: 'isActive', sortable: true },
   { title: 'Hành động', key: 'actions', sortable: false, align: 'end' as const },
 ];
+
+function getOdooDisplayName(user: OrgUser): string {
+  if (user.odooName) return user.odooName;
+  if (!user.odooId) return '—';
+  const found = odooUsers.value.find(o => String(o.id) === String(user.odooId));
+  if (found?.name) return found.name;
+  return `#${user.odooId}`;
+}
 
 function roleColor(role: string) {
   if (role === 'owner') return 'primary';
@@ -404,5 +429,10 @@ async function handlePassword() {
   if (res.ok) { showPassword.value = false; } else { dialogError.value = res.error || ''; }
 }
 
-onMounted(fetchUsers);
+onMounted(() => {
+  if (authStore.isAdmin) {
+    fetchUsers();
+    fetchOdooUsersList('');
+  }
+});
 </script>

@@ -472,48 +472,28 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         },
       });
 
-      // ── Sync salesperson to Odoo via Router when assignedUserId changes ──
-      if (body.assignedUserId !== undefined && updated.customerId) {
+      // ── Phân quyền tài khoản tương tác trên OCMS (KHÔNG sửa đổi user_id trên Odoo) ──
+      if (body.assignedUserId !== undefined) {
         try {
-          const partnerId = parseInt(updated.customerId);
-          if (!isNaN(partnerId) && partnerId > 0) {
-            if (body.assignedUserId) {
-              // User assigned: find their Odoo user ID and sync via Router
-              const assignedUser = await prisma.user.findUnique({
-                where: { id: body.assignedUserId },
-                select: { odooId: true, fullName: true },
-              });
-              if (assignedUser?.odooId) {
-                const odooUserId = parseInt(assignedUser.odooId);
-                if (!isNaN(odooUserId) && odooUserId > 0) {
-                  await routerClient.updateCustomer({
-                    partner_id: partnerId,
-                    data: { user_id: odooUserId },
-                  });
-                  // Update local salesperson name
-                  await prisma.contact.update({
-                    where: { id },
-                    data: { salesperson: assignedUser.fullName },
-                  });
-                  logger.info(`[contacts] Synced salesperson to Odoo via Router: partner #${partnerId} → user #${odooUserId} (${assignedUser.fullName})`);
-                }
-              }
-            } else {
-              // NV CSKH was cleared: clear salesperson on Odoo too via Router
-              await routerClient.updateCustomer({
-                partner_id: partnerId,
-                data: { user_id: false as any },
-              });
-              await prisma.contact.update({
-                where: { id },
-                data: { salesperson: null },
-              });
-              logger.info(`[contacts] Cleared salesperson on Odoo via Router for partner #${partnerId}`);
-            }
+          if (body.assignedUserId) {
+            const assignedUser = await prisma.user.findUnique({
+              where: { id: body.assignedUserId },
+              select: { fullName: true },
+            });
+            await prisma.contact.update({
+              where: { id },
+              data: { salesperson: assignedUser?.fullName || null },
+            });
+            logger.info(`[contacts] Phân quyền tương tác OCMS: contact #${id} → user #${body.assignedUserId} (${assignedUser?.fullName})`);
+          } else {
+            await prisma.contact.update({
+              where: { id },
+              data: { salesperson: null },
+            });
+            logger.info(`[contacts] Xóa phân quyền tương tác OCMS: contact #${id}`);
           }
         } catch (err: any) {
-          logger.warn(`[contacts] Failed to sync salesperson to Odoo via Router: ${err.message}`);
-          // Non-blocking: don't fail the contact update
+          logger.warn(`[contacts] Lỗi cập nhật quyền nhân viên nội bộ: ${err.message}`);
         }
       }
 
